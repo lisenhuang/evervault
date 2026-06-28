@@ -1,0 +1,7 @@
+{
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": "Write a detailed commit message, not a one-line summary. Use the Conventional Commits format for the subject line: `type(scope): summary` where type is one of feat, fix, docs, style, refactor, perf, test, build, ci, chore. Keep the subject line in the imperative mood and under 72 characters. Always include a body separated from the subject by a blank line. In the body, explain WHAT changed and WHY (the motivation and context), not just how, wrapping lines at ~72 characters. Use bullet points (`- `) when several distinct changes are included. Reference any related issue or ticket if it appears in the branch name or diff. Do not commit or push to main automatically — leave that for a human."
+    }
+  ]
+}
