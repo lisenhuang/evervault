@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+# pnpm content-addressable store (a cache; never commit). Normally lives in the
+# global store (~/Library/pnpm); can leak here from a containerized `make dev`.
+.pnpm-store/
 /.pnp
 .pnp.*
 .yarn/*
