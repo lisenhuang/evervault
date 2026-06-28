@@ -2,10 +2,11 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.24.0",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 38373",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 38373",
     "lint": "eslint"
   },
   "dependencies": {

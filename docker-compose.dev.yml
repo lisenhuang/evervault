@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      target: dev
+    image: evervault-app:dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_USE_POLLING_FILE_WATCHER: "1"
+      DOTNET_WATCH_RESTART_ON_RUDE_EDIT: "1"
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      NEXT_PUBLIC_API_BASE: /api
+      API_BASE_URL: http://localhost:38372/api
+    volumes:
+      # Bind-mount source for hot reload.
+      - ./web:/workspace/web
+      - ./backend:/workspace/backend
+      # Anonymous volumes shield container-built artifacts from the macOS host mount.
+      # MUST come AFTER the bind mounts so they mask the matching subpaths.
+      - /workspace/web/node_modules
+      - /workspace/web/.next
+      - /workspace/backend/Evervault.Api/bin
+      - /workspace/backend/Evervault.Api/obj
+    restart: unless-stopped

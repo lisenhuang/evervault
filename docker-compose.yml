@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prod
+    image: evervault-app:prod
+    ports:
+      # Defaults to 38378 with no .env; set HOST_PORT=80 on the server (Cloudflare origin).
+      - "${HOST_PORT:-38378}:38378"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # Browser uses same-origin "/api"; server-side uses the in-container backend.
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-/api}
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:38372/api}
+    restart: unless-stopped

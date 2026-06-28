@@ -1,0 +1,37 @@
+# VCS / docs / tooling
+.git
+.gitignore
+plans/
+*.md
+**/CLAUDE.md
+**/AGENTS.md
+
+# Node / Next (rebuilt in the image)
+web/node_modules
+web/.next
+web/out
+web/.vercel
+**/*.tsbuildinfo
+
+# .NET build outputs (rebuilt in the image)
+backend/**/bin
+backend/**/obj
+backend/.vs
+
+# The Expo app/ is not part of this image
+app/
+
+# Env & local secrets (keep the example)
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+
+# OS junk
+.DS_Store
+**/.DS_Store
+
+# Docker / make meta (not needed inside the build context)
+docker-compose*.yml
+Makefile
