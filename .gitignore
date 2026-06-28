@@ -1,0 +1,34 @@
+# Root .gitignore — repo-wide conventions only.
+# Build artifacts and dependencies are handled by each project's own .gitignore
+# (app/, web/, backend/). Do not re-list those here.
+
+# Local planning scratch — not tracked
+/plans/
+
+# OS files (apply repo-wide; the per-project .gitignores only cover their subtrees)
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+
+# VS Code: keep the shared settings tracked, ignore everything else
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Logs
+*.log
+logs/
+
+# Root-level local env files (project-level env is ignored by app/web/backend)
+/.env
+/.env.local
+/.env.*.local
