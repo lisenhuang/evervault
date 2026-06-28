@@ -9,10 +9,22 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
 
 dev: ## Dev with hot reload (edit & save, no rebuild)
+	@echo "🔥 Starting dev — ready at 👉 http://localhost:38378 once compiled (watch the logs)"
 	$(COMPOSE_DEV) up --build
 
-up: ## Build + run the prod image (detached) on :38378
+up: ## Build + run prod (detached), wait until ready, print the URL
 	$(COMPOSE) up --build -d
+	@port=$${HOST_PORT:-$$(grep -E '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2)}; \
+	port=$${port:-38378}; \
+	url="http://localhost:$$port"; \
+	printf "⏳ Waiting for EverVault to be ready"; \
+	for i in $$(seq 1 60); do \
+		if curl -fsS -o /dev/null "$$url/api/health" 2>/dev/null && curl -fsS -o /dev/null "$$url/" 2>/dev/null; then \
+			printf "\n✅ EverVault is ready 👉 %s\n" "$$url"; exit 0; \
+		fi; \
+		printf "."; sleep 2; \
+	done; \
+	printf "\n⚠️  Timed out waiting for readiness. Check: make logs\n"; exit 1
 
 down: ## Stop & remove the container
 	$(COMPOSE_DEV) down

@@ -36,7 +36,7 @@ One container. One domain. Web + API behind nginx. 🐳
 | Command | What it does |
 |---|---|
 | `make dev` | 🔥 Run with **hot reload** — edit & save, no rebuild |
-| `make up` | 🚀 Build + run the **prod** image (detached) on `:38378` |
+| `make up` | 🚀 Build + run the **prod** image, wait until ready, print the 🔗 URL |
 | `make down` | 🛑 Stop & remove the container |
 | `make logs` | 📜 Tail logs |
 | `make build` | 🔨 Build the prod image only |
