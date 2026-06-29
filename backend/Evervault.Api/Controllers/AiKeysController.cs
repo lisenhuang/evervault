@@ -32,11 +32,19 @@ public class AiKeysController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>Validate every stored key for a provider against the live API.</summary>
+    /// <summary>Validate every stored key for a provider against the live API (result not persisted).</summary>
     [HttpPost("{provider}/check")]
     public async Task<ActionResult<CheckKeysResult>> Check(string provider)
     {
         try { return Ok(new CheckKeysResult(await _keys.CheckAsync(provider))); }
         catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Validate a single stored key against the live API (result not persisted).</summary>
+    [HttpPost("{id:int}/check")]
+    public async Task<ActionResult<KeyCheckResult>> CheckOne(int id)
+    {
+        var result = await _keys.CheckOneAsync(id);
+        return result is null ? NotFound() : Ok(result);
     }
 }

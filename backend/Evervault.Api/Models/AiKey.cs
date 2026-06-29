@@ -3,7 +3,8 @@ namespace Evervault.Api.Models;
 /// <summary>
 /// One AI provider API key (Gemini or OpenRouter). The raw key is encrypted with Data Protection
 /// and never returned to clients — only a masked <see cref="KeyHint"/> is exposed. One row per key so
-/// each key can carry its own validity status and participate in failover ordering.
+/// keys can be ordered for failover. Validity is NOT stored here — it is checked on demand and shown
+/// only in the UI, never persisted.
 /// </summary>
 public class AiKey
 {
@@ -24,13 +25,6 @@ public class AiKey
     /// <summary>Soft on/off without deleting the key.</summary>
     public bool Enabled { get; set; } = true;
 
-    /// <summary>"unknown" | "valid" | "invalid" — last known validation/usage result.</summary>
-    public string Status { get; set; } = "unknown";
-
-    /// <summary>Last validation or failover error message (null when healthy).</summary>
-    public string? LastError { get; set; }
-
-    public DateTimeOffset? LastCheckedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

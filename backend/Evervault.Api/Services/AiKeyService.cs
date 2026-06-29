@@ -8,9 +8,9 @@ namespace Evervault.Api.Services;
 
 /// <summary>
 /// Stores AI provider keys (Gemini / OpenRouter) encrypted with Data Protection — same pattern as
-/// <see cref="StorageService"/>, but one row per key so each carries its own validity status. Raw keys
-/// are never returned; the UI only ever sees a masked <c>KeyHint</c>. "Check" validates every stored
-/// key against the live provider API.
+/// <see cref="StorageService"/>, one row per key. Raw keys are never returned; the UI only ever sees a
+/// masked <c>KeyHint</c>. Validity is checked on demand against the live provider API and returned to the
+/// caller — it is NEVER persisted.
 /// </summary>
 public class AiKeyService : IAiKeyService
 {
@@ -80,45 +80,42 @@ public class AiKeyService : IAiKeyService
     public async Task<IReadOnlyList<KeyCheckResult>> CheckAsync(string provider)
     {
         provider = Normalize(provider);
-        var p = _factory.Get(provider);
-        var keys = await _db.AiKeys.Where(k => k.Provider == provider).OrderBy(k => k.SortOrder).ToListAsync();
+        var keys = await _db.AiKeys.AsNoTracking()
+            .Where(k => k.Provider == provider)
+            .OrderBy(k => k.SortOrder).ThenBy(k => k.Id)
+            .ToListAsync();
 
         var results = new List<KeyCheckResult>();
-        foreach (var k in keys)
-        {
-            string raw;
-            try { raw = _protector.Unprotect(k.KeyEncrypted); }
-            catch
-            {
-                k.Status = "invalid";
-                k.LastError = "Stored key could not be decrypted.";
-                k.LastCheckedAt = DateTimeOffset.UtcNow;
-                results.Add(new KeyCheckResult(k.KeyHint, false, k.LastError));
-                continue;
-            }
-
-            try
-            {
-                var (ok, message) = await p.ValidateKeyAsync(raw, CancellationToken.None);
-                k.Status = ok ? "valid" : "invalid";
-                k.LastError = ok ? null : message;
-                k.LastCheckedAt = DateTimeOffset.UtcNow;
-                results.Add(new KeyCheckResult(k.KeyHint, ok, ok ? "Valid" : message));
-            }
-            catch (Exception ex)
-            {
-                k.Status = "invalid";
-                k.LastError = ex.Message;
-                k.LastCheckedAt = DateTimeOffset.UtcNow;
-                results.Add(new KeyCheckResult(k.KeyHint, false, ex.Message));
-            }
-        }
-        await _db.SaveChangesAsync();
+        foreach (var k in keys) results.Add(await CheckKeyAsync(k));
         return results;
     }
 
+    public async Task<KeyCheckResult?> CheckOneAsync(int id)
+    {
+        var k = await _db.AiKeys.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+        return k is null ? null : await CheckKeyAsync(k);
+    }
+
+    /// <summary>Validate one key against its provider. Read-only — nothing is written to the DB.</summary>
+    private async Task<KeyCheckResult> CheckKeyAsync(AiKey k)
+    {
+        string raw;
+        try { raw = _protector.Unprotect(k.KeyEncrypted); }
+        catch { return new KeyCheckResult(k.Id, k.KeyHint, false, "Stored key could not be decrypted."); }
+
+        try
+        {
+            var (ok, message) = await _factory.Get(k.Provider).ValidateKeyAsync(raw, CancellationToken.None);
+            return new KeyCheckResult(k.Id, k.KeyHint, ok, ok ? "Valid" : message);
+        }
+        catch (Exception ex)
+        {
+            return new KeyCheckResult(k.Id, k.KeyHint, false, ex.Message);
+        }
+    }
+
     private static AiKeyDto Map(AiKey k) =>
-        new(k.Id, k.Provider, k.KeyHint, k.SortOrder, k.Enabled, k.Status, k.LastError, k.LastCheckedAt);
+        new(k.Id, k.Provider, k.KeyHint, k.SortOrder, k.Enabled);
 
     private static string Normalize(string provider)
     {

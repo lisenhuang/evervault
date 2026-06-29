@@ -41,7 +41,6 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         modelBuilder.Entity<AiKey>(e =>
         {
             e.Property(k => k.Provider).HasMaxLength(32);
-            e.Property(k => k.Status).HasMaxLength(16);
             // Failover query path: enabled keys for a provider, in order.
             e.HasIndex(k => new { k.Provider, k.Enabled, k.SortOrder });
         });

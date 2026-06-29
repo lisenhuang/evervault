@@ -8,9 +8,6 @@ export type AiKeyDto = {
   keyHint: string;
   sortOrder: number;
   enabled: boolean;
-  status: string; // "unknown" | "valid" | "invalid"
-  lastError: string | null;
-  lastCheckedAt: string | null;
 };
 
 export type AiKeysDto = {
@@ -18,7 +15,8 @@ export type AiKeysDto = {
   openRouter: AiKeyDto[];
 };
 
-export type KeyCheckResult = { keyHint: string; ok: boolean; message: string };
+// Validity is checked on demand and shown only in the page — never persisted.
+export type KeyCheckResult = { id: number; keyHint: string; ok: boolean; message: string };
 export type CheckKeysResult = { results: KeyCheckResult[] };
 
 export type ModelInfo = {

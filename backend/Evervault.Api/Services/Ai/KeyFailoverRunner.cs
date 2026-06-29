@@ -26,7 +26,7 @@ public class KeyFailoverRunner
     public async Task<T> RunAsync<T>(string provider, Func<IAiProvider, string, Task<T>> op)
     {
         var p = _factory.Get(provider);
-        var keys = await _db.AiKeys
+        var keys = await _db.AiKeys.AsNoTracking()
             .Where(k => k.Provider == provider && k.Enabled)
             .OrderBy(k => k.SortOrder).ThenBy(k => k.Id)
             .ToListAsync();
@@ -48,23 +48,11 @@ public class KeyFailoverRunner
 
             try
             {
-                var result = await op(p, raw);
-                // Success — opportunistically clear a previously-recorded failure.
-                if (k.Status == "invalid")
-                {
-                    k.Status = "valid";
-                    k.LastError = null;
-                    k.LastCheckedAt = DateTimeOffset.UtcNow;
-                    await _db.SaveChangesAsync();
-                }
-                return result;
+                // Always try keys in order; availability is never read from or written to the DB.
+                return await op(p, raw);
             }
             catch (AiProviderException ex) when (ex.Kind is AiErrorKind.Auth or AiErrorKind.Quota or AiErrorKind.Transient)
             {
-                k.Status = "invalid";
-                k.LastError = ex.Message;
-                k.LastCheckedAt = DateTimeOffset.UtcNow;
-                await _db.SaveChangesAsync();
                 errors.Add($"{k.KeyHint}: {ex.Message}");
                 // try the next key
             }

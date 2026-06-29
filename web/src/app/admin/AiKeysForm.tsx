@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./adminApi";
-import type { AiKeyDto, AiKeysDto, Provider } from "./aiTypes";
+import type { AiKeyDto, AiKeysDto, CheckKeysResult, KeyCheckResult, Provider } from "./aiTypes";
 import { Badge, Banner, Button, Card, TextArea } from "./ui";
 
 export default function AiKeysForm() {
@@ -62,6 +62,9 @@ function ProviderKeys({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  // Validity is transient — held here only, shown after a manual check, never loaded from the server.
+  const [results, setResults] = useState<Record<number, { ok: boolean; message: string }>>({});
+  const [checkingId, setCheckingId] = useState<number | null>(null);
 
   async function add() {
     if (!text.trim()) return;
@@ -88,12 +91,29 @@ function ProviderKeys({
     const res = await api(`/api/admin/ai/keys/${provider}/check`, { method: "POST" });
     setBusy(false);
     if (res.ok) {
-      await onReload();
-      const d = await res.json();
-      const ok = d.results.filter((r: { ok: boolean }) => r.ok).length;
+      const d: CheckKeysResult = await res.json();
+      setResults((prev) => {
+        const next = { ...prev };
+        for (const r of d.results) next[r.id] = { ok: r.ok, message: r.message };
+        return next;
+      });
+      const ok = d.results.filter((r) => r.ok).length;
       setMsg({ kind: "info", text: `Checked ${d.results.length} key(s): ${ok} valid, ${d.results.length - ok} invalid.` });
     } else {
       setMsg({ kind: "error", text: "Could not check keys." });
+    }
+  }
+
+  async function checkOne(id: number) {
+    setCheckingId(id);
+    setMsg(null);
+    const res = await api(`/api/admin/ai/keys/${id}/check`, { method: "POST" });
+    setCheckingId(null);
+    if (res.ok) {
+      const r: KeyCheckResult = await res.json();
+      setResults((prev) => ({ ...prev, [r.id]: { ok: r.ok, message: r.message } }));
+    } else {
+      setMsg({ kind: "error", text: "Could not check the key." });
     }
   }
 
@@ -117,32 +137,46 @@ function ProviderKeys({
       <div className="space-y-4">
         {keys.length > 0 ? (
           <ul className="divide-y divide-black/5 rounded-lg border border-black/10 dark:divide-white/5 dark:border-white/10">
-            {keys.map((k) => (
-              <li key={k.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <code className="font-mono text-sm">{k.keyHint}</code>
-                    <StatusBadge status={k.status} />
+            {keys.map((k) => {
+              const r = results[k.id];
+              return (
+                <li key={k.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <code className="font-mono text-sm">{k.keyHint}</code>
+                      {checkingId === k.id ? (
+                        <Badge tone="gray">Checking…</Badge>
+                      ) : r ? (
+                        r.ok ? <Badge tone="green">✓ Valid</Badge> : <Badge tone="red">✕ Invalid</Badge>
+                      ) : null}
+                    </div>
+                    {r && !r.ok && (
+                      <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{r.message}</p>
+                    )}
                   </div>
-                  {k.lastError && <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{k.lastError}</p>}
-                </div>
-                {confirmId === k.id ? (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <span className="text-xs text-black/55 dark:text-white/55">Remove?</span>
-                    <Button variant="danger" size="sm" onClick={() => remove(k.id)} disabled={busy}>
-                      Confirm
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setConfirmId(null)} disabled={busy}>
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
-                  <Button variant="ghost" size="sm" onClick={() => setConfirmId(k.id)} disabled={busy}>
-                    Remove
-                  </Button>
-                )}
-              </li>
-            ))}
+                  {confirmId === k.id ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="text-xs text-black/55 dark:text-white/55">Remove?</span>
+                      <Button variant="danger" size="sm" onClick={() => remove(k.id)} disabled={busy}>
+                        Confirm
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setConfirmId(null)} disabled={busy}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => checkOne(k.id)} disabled={busy || checkingId === k.id}>
+                        Check
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setConfirmId(k.id)} disabled={busy}>
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="text-sm text-black/50 dark:text-white/50">No keys yet.</p>
@@ -168,10 +202,4 @@ function ProviderKeys({
       </div>
     </Card>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "valid") return <Badge tone="green">✓ Valid</Badge>;
-  if (status === "invalid") return <Badge tone="red">✕ Invalid</Badge>;
-  return <Badge tone="gray">Unchecked</Badge>;
 }
