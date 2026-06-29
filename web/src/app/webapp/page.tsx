@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Lock } from "lucide-react";
 import Chat from "./Chat";
 import SignInGate from "./SignInGate";
 import { api, type AuthConfig, type Me } from "./authApi";
@@ -49,7 +50,9 @@ export default function WebappPage() {
       {view === "disabled" && (
         <div className="flex flex-1 items-center justify-center px-4 py-16">
           <div className="w-full max-w-sm rounded-2xl border border-black/10 bg-white/70 p-8 text-center shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">
-            <div className="mx-auto mb-4 text-3xl">🔒</div>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-black/5 dark:bg-white/10">
+              <Lock className="h-6 w-6 text-black/60 dark:text-white/60" aria-hidden="true" />
+            </div>
             <h1 className="text-lg font-semibold">Sign-in isn’t set up yet</h1>
             <p className="mt-2 text-sm text-black/55 dark:text-white/55">
               The administrator hasn’t enabled Google sign-in. Please check back soon.

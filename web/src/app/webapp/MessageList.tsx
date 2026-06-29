@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Loader2, Mic, Volume2 } from "lucide-react";
+import { Loader2, Mic, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "./types";
@@ -63,8 +63,8 @@ export default function MessageList({
           </div>
         ) : (
           <div key={m.id} className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 text-sm shadow-sm">
-              ✨
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
+              <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
             </div>
             <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
               {m.text ? (

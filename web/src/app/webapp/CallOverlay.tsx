@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Mic, MicOff, PhoneOff } from "lucide-react";
+import { Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import type { LiveState } from "./lib/liveSession";
 
 const STATUS: Record<LiveState, string> = {
@@ -49,7 +49,11 @@ export default function CallOverlay({
               speaking ? "scale-110 from-emerald-400 to-teal-500" : "from-blue-500 to-violet-500"
             }`}
           >
-            <span className="text-4xl">{speaking ? "🔊" : "🎙️"}</span>
+            {speaking ? (
+              <Volume2 size={40} className="text-white" aria-hidden="true" />
+            ) : (
+              <Mic size={40} className="text-white" aria-hidden="true" />
+            )}
           </div>
         </div>
 

@@ -120,7 +120,7 @@ export default function GoogleAuthForm() {
             help="Google Cloud Console → APIs &amp; Services → Credentials → your OAuth 2.0 Web client. Public value."
           />
           <Field
-            label={secretConfigured ? "Client secret (configured ✓ — leave blank to keep)" : "Client secret"}
+            label={secretConfigured ? "Client secret (configured — leave blank to keep)" : "Client secret"}
             type="password"
             value={clientSecret}
             onChange={setClientSecret}

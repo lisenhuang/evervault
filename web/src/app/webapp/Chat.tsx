@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, LogOut, Settings2, SquarePen, X } from "lucide-react";
+import { Brain, Hand, LogOut, MessageCircle, Settings2, Sparkles, SquarePen, X } from "lucide-react";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import CallOverlay from "./CallOverlay";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
@@ -224,7 +225,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     recorderRef.current = null;
     setVoiceState("processing");
     setStreaming(true);
-    const userMsg: ChatMessage = { id: uid(), role: "user", text: "🎤", kind: "voice" };
+    const userMsg: ChatMessage = { id: uid(), role: "user", text: "Voice message", kind: "voice" };
     const asstId = uid();
     try {
       const { base64, mimeType } = await rec.stop();
@@ -241,7 +242,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // Record the user's spoken audio file + the assistant's reply text (user audio has no transcript).
       void recordTextTurns(
         [
-          { role: "user", text: "🎤 (voice message)", modality: "voice" },
+          { role: "user", text: "(voice message)", modality: "voice" },
           { role: "assistant", text: reply, modality: "voice" },
         ],
         { audioBase64: base64 },
@@ -335,7 +336,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       <header className="sticky top-0 z-10 border-b border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="text-lg">💬</span>
+            <MessageCircle size={18} className="shrink-0" aria-hidden="true" />
             <span className="font-semibold">EverVault</span>
             <span className="truncate text-xs text-black/40 dark:text-white/40">· {textModel}</span>
           </div>
@@ -364,6 +365,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             >
               <Settings2 size={18} />
             </button>
+            <ThemeToggle />
             <button
               onClick={() => setConfirmLogout(true)}
               title="Sign out"
@@ -395,10 +397,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       <main className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 py-20 text-center">
-            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 text-3xl shadow-md">
-              ✨
+            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 shadow-md">
+              <Sparkles className="h-8 w-8 text-white" aria-hidden="true" />
             </div>
-            <h1 className="text-2xl font-semibold">Hi {user.name?.split(" ")[0] || "there"} 👋</h1>
+            <h1 className="inline-flex items-center gap-2 text-2xl font-semibold">
+              Hi {user.name?.split(" ")[0] || "there"}
+              <Hand className="h-6 w-6 text-amber-500" aria-hidden="true" />
+            </h1>
             <p className="mt-2 max-w-md text-sm text-black/55 dark:text-white/55">
               Ask anything by text, or tap the mic to talk. Replies can be spoken back to you.
             </p>

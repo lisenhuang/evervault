@@ -8,14 +8,16 @@ import LoginForm from "./LoginForm";
 import SetupForm from "./SetupForm";
 import { Button } from "./ui";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import ThemeToggle from "@/components/theme/ThemeToggle";
+import { MessageCircle, KeyRound, Database, LockOpen, Shield, type LucideIcon } from "lucide-react";
 
 type View = "loading" | "setup" | "login" | "dashboard";
 
-const NAV: { href: string; label: string; icon: string; desc: string }[] = [
-  { href: "/admin/chat", label: "Assistant", icon: "💬", desc: "Chat & run actions" },
-  { href: "/admin/ai-keys", label: "AI Keys", icon: "🔑", desc: "Gemini & OpenRouter" },
-  { href: "/admin/storage", label: "Storage", icon: "🗄️", desc: "Cloudflare R2" },
-  { href: "/admin/google", label: "Google Login", icon: "🔓", desc: "Sign-in & binding" },
+const NAV: { href: string; label: string; icon: LucideIcon; desc: string }[] = [
+  { href: "/admin/chat", label: "Assistant", icon: MessageCircle, desc: "Chat & run actions" },
+  { href: "/admin/ai-keys", label: "AI Keys", icon: KeyRound, desc: "Gemini & OpenRouter" },
+  { href: "/admin/storage", label: "Storage", icon: Database, desc: "Cloudflare R2" },
+  { href: "/admin/google", label: "Google Login", icon: LockOpen, desc: "Sign-in & binding" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -53,7 +55,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold">🔐 EverVault Admin</h1>
+          <h1 className="inline-flex items-center justify-center gap-2 text-2xl font-bold">
+            <Shield className="h-6 w-6" aria-hidden="true" />
+            EverVault Admin
+          </h1>
           <p className="mt-1 text-sm text-black/55 dark:text-white/55">Control panel</p>
         </div>
         {view === "loading" && <p className="text-center text-sm text-black/60 dark:text-white/60">Loading…</p>}
@@ -70,12 +75,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <header className="sticky top-0 z-10 border-b border-black/10 bg-white/70 backdrop-blur dark:border-white/10 dark:bg-neutral-950/70">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2 font-semibold">
-            <span className="text-lg">🔐</span>
+            <Shield className="h-5 w-5" aria-hidden="true" />
             <span>EverVault</span>
             <span className="text-black/40 dark:text-white/40">/ Admin</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-black/55 sm:inline dark:text-white/55">{email}</span>
+            <ThemeToggle />
             <Button variant="ghost" size="sm" onClick={() => setConfirmLogout(true)}>
               Log out
             </Button>
@@ -99,7 +105,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       : "hover:bg-black/5 dark:hover:bg-white/10"
                   }`}
                 >
-                  <span className="text-lg">{item.icon}</span>
+                  <item.icon size={18} className="shrink-0" aria-hidden="true" />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">{item.label}</span>
                     <span className={`block text-xs ${active ? "text-white/70" : "text-black/45 dark:text-white/45"}`}>

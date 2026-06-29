@@ -109,7 +109,7 @@ export default function StorageForm() {
           help="R2 → Manage R2 API Tokens → Create API token (permission: Object Read & Write)."
         />
         <Field
-          label={secretConfigured ? "Secret Access Key (configured ✓ — leave blank to keep)" : "Secret Access Key"}
+          label={secretConfigured ? "Secret Access Key (configured — leave blank to keep)" : "Secret Access Key"}
           type="password"
           value={secret}
           onChange={setSecret}

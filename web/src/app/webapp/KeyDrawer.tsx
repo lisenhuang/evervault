@@ -184,7 +184,7 @@ export default function KeyDrawer({
                     ))}
                   </select>
                   <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
-                    Real-time hands-free calls (the 📞 button). Needs a Live-API model.
+                    Real-time hands-free calls (the call button). Needs a Live-API model.
                   </span>
                 </label>
 

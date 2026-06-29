@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { MessageCircle } from "lucide-react";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import { api } from "./authApi";
 
@@ -24,8 +25,8 @@ export default function SignInGate({ clientId, onSignedIn }: { clientId: string;
   return (
     <div className="flex flex-1 items-center justify-center px-4 py-16">
       <div className="w-full max-w-sm rounded-2xl border border-black/10 bg-white/70 p-8 text-center shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">
-        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 text-2xl shadow-md">
-          💬
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 shadow-md">
+          <MessageCircle className="h-7 w-7 text-white" aria-hidden="true" />
         </div>
         <h1 className="text-xl font-semibold">Chat with EverVault</h1>
         <p className="mt-2 text-sm text-black/55 dark:text-white/55">

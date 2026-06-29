@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Check, X } from "lucide-react";
 import { api } from "./adminApi";
 import type {
   AiKeyDto,
@@ -276,7 +277,15 @@ function ProviderKeys({
                       {checkingId === k.id ? (
                         <Badge tone="gray">Checking…</Badge>
                       ) : r ? (
-                        r.ok ? <Badge tone="green">✓ Valid</Badge> : <Badge tone="red">✕ Invalid</Badge>
+                        r.ok ? (
+                          <Badge tone="green">
+                            <Check size={12} aria-hidden="true" /> Valid
+                          </Badge>
+                        ) : (
+                          <Badge tone="red">
+                            <X size={12} aria-hidden="true" /> Invalid
+                          </Badge>
+                        )
                       ) : null}
                     </div>
                     {r && !r.ok && (

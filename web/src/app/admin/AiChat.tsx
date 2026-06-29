@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CreditCard, MessageCircle, RotateCcw, Wrench, X } from "lucide-react";
 import { api } from "./adminApi";
 import type { AiKeyUsage, ChatMessage, ChatTurnResponse, ModelInfo, ModelsResult, ProposedAction, Provider } from "./aiTypes";
 import { Badge, Button, Select } from "./ui";
@@ -236,7 +237,7 @@ export default function AiChat() {
             title="Don't show this again"
             className="shrink-0 rounded px-1 leading-none text-amber-700/70 hover:text-amber-900 dark:text-amber-300/70 dark:hover:text-amber-200"
           >
-            ✕
+            <X size={14} />
           </button>
         </div>
       )}
@@ -244,7 +245,9 @@ export default function AiChat() {
       {usage &&
         (usage.supported && usage.summary ? (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
-            <span>💳 {usage.summary}</span>
+            <span className="inline-flex items-center gap-1">
+              <CreditCard size={13} aria-hidden="true" /> {usage.summary}
+            </span>
             {reset && (
               <span className="text-black/40 dark:text-white/40" title={`Resets ${reset.local}`}>
                 · resets in {reset.countdown} ({reset.local})
@@ -256,7 +259,7 @@ export default function AiChat() {
               className="text-black/40 hover:text-black/70 disabled:opacity-50 dark:text-white/40 dark:hover:text-white/70"
               title="Refresh usage"
             >
-              ↻
+              <RotateCcw size={13} />
             </button>
           </div>
         ) : (
@@ -269,7 +272,7 @@ export default function AiChat() {
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {messages.filter((m) => m.role !== "system").length === 0 && (
           <div className="mx-auto mt-10 max-w-md text-center text-sm text-black/50 dark:text-white/50">
-            <p className="text-3xl">💬</p>
+            <MessageCircle className="mx-auto h-8 w-8 text-black/40 dark:text-white/40" aria-hidden="true" />
             <p className="mt-2 font-medium text-black/70 dark:text-white/70">Ask the admin assistant</p>
             <p className="mt-1">
               It can look things up freely. Any change to the database is shown to you first and only runs after
@@ -293,7 +296,13 @@ export default function AiChat() {
         <div className="border-t border-black/10 bg-amber-50/60 px-4 py-3 dark:border-white/10 dark:bg-amber-950/20">
           <div className="flex items-center gap-2">
             <Badge tone={pending.dangerous ? "red" : "amber"}>
-              {pending.dangerous ? "⚠ Dangerous change" : "Pending change"}
+              {pending.dangerous ? (
+                <>
+                  <AlertTriangle size={12} aria-hidden="true" /> Dangerous change
+                </>
+              ) : (
+                "Pending change"
+              )}
             </Badge>
             <span className="text-xs text-black/50 dark:text-white/50">{pending.toolName}</span>
           </div>
@@ -365,7 +374,10 @@ function MessageBubble({ m }: { m: ChatMessage }) {
   if (m.role === "tool")
     return (
       <details className="text-xs text-black/50 dark:text-white/50">
-        <summary className="cursor-pointer">🔧 ran {m.name}</summary>
+        <summary className="cursor-pointer">
+          <Wrench size={12} className="mr-1 inline align-[-1px]" aria-hidden="true" />
+          ran {m.name}
+        </summary>
         <pre className="mt-1 overflow-x-auto rounded bg-black/5 p-2 dark:bg-white/5">{truncate(m.content ?? "", 1200)}</pre>
       </details>
     );
@@ -375,7 +387,8 @@ function MessageBubble({ m }: { m: ChatMessage }) {
     if (!m.content && hasCalls)
       return (
         <div className="text-xs text-black/45 dark:text-white/45">
-          🔧 calling {m.toolCalls!.map((t) => t.name).join(", ")}…
+          <Wrench size={12} className="mr-1 inline align-[-1px]" aria-hidden="true" />
+          calling {m.toolCalls!.map((t) => t.name).join(", ")}…
         </div>
       );
     return (

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import {
   Sparkles,
   ArrowRight,
@@ -33,13 +34,16 @@ export default function Home() {
             </span>
             <span className="text-[15px] font-semibold tracking-tight">EverVault</span>
           </Link>
-          <Link
-            href="/webapp"
-            className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            Open the web app
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
+          <div className="flex items-center gap-1.5">
+            <ThemeToggle />
+            <Link
+              href="/webapp"
+              className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              Open the web app
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
         </nav>
       </header>
 
