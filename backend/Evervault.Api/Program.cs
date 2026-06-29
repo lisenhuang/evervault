@@ -1,6 +1,8 @@
 using Evervault.Api.Controllers;
 using Evervault.Api.Data;
 using Evervault.Api.Services;
+using Evervault.Api.Services.Ai;
+using Evervault.Api.Services.Ai.Tools;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -55,6 +57,31 @@ builder.Services.AddAuthorization();
 // --- App services ---
 builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
+
+// --- AI: keys, providers, failover, agent chat ---
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<OpenRouterProvider>();
+builder.Services.AddSingleton<GeminiProvider>();
+builder.Services.AddSingleton<IAiProviderFactory, AiProviderFactory>();
+builder.Services.AddSingleton<ProposalSigner>();
+builder.Services.AddScoped<IAiKeyService, AiKeyService>();
+builder.Services.AddScoped<KeyFailoverRunner>();
+builder.Services.AddScoped<AgentService>();
+
+// Agent tools (the only execution surface for the chat).
+builder.Services.AddScoped<IAiTool, ListMemoriesTool>();
+builder.Services.AddScoped<IAiTool, GetMemoryTool>();
+builder.Services.AddScoped<IAiTool, SearchMemoriesTool>();
+builder.Services.AddScoped<IAiTool, DbStatsTool>();
+builder.Services.AddScoped<IAiTool, GetStorageStatusTool>();
+builder.Services.AddScoped<IAiTool, GetAiKeysStatusTool>();
+builder.Services.AddScoped<IAiTool, SqlQueryTool>();
+builder.Services.AddScoped<IAiTool, CreateMemoryTool>();
+builder.Services.AddScoped<IAiTool, UpdateMemoryTool>();
+builder.Services.AddScoped<IAiTool, DeleteMemoryTool>();
+builder.Services.AddScoped<IAiTool, UpdateStorageConfigTool>();
+builder.Services.AddScoped<IAiTool, SqlExecTool>();
+builder.Services.AddScoped<ToolRegistry>();
 
 // Trust the in-container nginx reverse proxy for scheme/host/for headers.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>

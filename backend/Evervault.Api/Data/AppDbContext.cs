@@ -11,6 +11,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<Memory> Memories => Set<Memory>();
     public DbSet<AdminUser> Admins => Set<AdminUser>();
     public DbSet<StorageConfig> StorageConfigs => Set<StorageConfig>();
+    public DbSet<AiKey> AiKeys => Set<AiKey>();
+    public DbSet<ChatConfig> ChatConfigs => Set<ChatConfig>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -34,6 +36,14 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         {
             e.Property(a => a.Email).HasMaxLength(256);
             e.HasIndex(a => a.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<AiKey>(e =>
+        {
+            e.Property(k => k.Provider).HasMaxLength(32);
+            e.Property(k => k.Status).HasMaxLength(16);
+            // Failover query path: enabled keys for a provider, in order.
+            e.HasIndex(k => new { k.Provider, k.Enabled, k.SortOrder });
         });
     }
 }
