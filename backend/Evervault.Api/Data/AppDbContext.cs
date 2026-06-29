@@ -13,6 +13,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<StorageConfig> StorageConfigs => Set<StorageConfig>();
     public DbSet<AiKey> AiKeys => Set<AiKey>();
     public DbSet<ChatConfig> ChatConfigs => Set<ChatConfig>();
+    public DbSet<GoogleAuthConfig> GoogleAuthConfigs => Set<GoogleAuthConfig>();
+    public DbSet<EndUser> EndUsers => Set<EndUser>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -36,6 +38,16 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         {
             e.Property(a => a.Email).HasMaxLength(256);
             e.HasIndex(a => a.Email).IsUnique();
+            e.Property(a => a.GoogleSub).HasMaxLength(64);
+            // Filtered so multiple unbound admins (NULL GoogleSub) are allowed.
+            e.HasIndex(a => a.GoogleSub).IsUnique().HasFilter("\"GoogleSub\" IS NOT NULL");
+        });
+
+        modelBuilder.Entity<EndUser>(e =>
+        {
+            e.Property(u => u.GoogleSub).HasMaxLength(64);
+            e.HasIndex(u => u.GoogleSub).IsUnique();
+            e.Property(u => u.Email).HasMaxLength(256);
         });
 
         modelBuilder.Entity<AiKey>(e =>

@@ -16,10 +16,16 @@ public class AdminController : ControllerBase
     public const string Scheme = "AdminCookie";
 
     private readonly AppDbContext _db;
-    public AdminController(AppDbContext db) => _db = db;
+    private readonly IGoogleAuthService _google;
+    public AdminController(AppDbContext db, IGoogleAuthService google)
+    {
+        _db = db;
+        _google = google;
+    }
 
     public record SetupRequest(string Email, string Password);
     public record LoginRequest(string Email, string Password);
+    public record GoogleLoginRequest(string IdToken);
 
     /// <summary>Whether an admin account already exists (drives setup-vs-login in the UI).</summary>
     [HttpGet("status")]
@@ -66,9 +72,32 @@ public class AdminController : ControllerBase
         return Ok(new { email = admin.Email });
     }
 
+    /// <summary>Sign in with a Google account previously bound to an admin (see GoogleAuthController.Bind).</summary>
+    [HttpPost("login/google")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LoginGoogle(GoogleLoginRequest req)
+    {
+        var payload = await _google.VerifyIdTokenAsync(req.IdToken ?? "");
+        if (payload is null)
+            return Unauthorized(new { error = "Google login is not enabled, or the token is invalid." });
+
+        var admin = await _db.Admins.FirstOrDefaultAsync(a => a.GoogleSub == payload.Subject);
+        if (admin is null)
+            return Unauthorized(new { error = "This Google account is not linked to an admin. Sign in with your password, then connect Google in Settings." });
+
+        await SignInAsync(admin);
+        return Ok(new { email = admin.Email });
+    }
+
     [HttpGet("me")]
     [Authorize]
-    public IActionResult Me() => Ok(new { email = User.FindFirst(ClaimTypes.Email)?.Value });
+    public async Task<IActionResult> Me()
+    {
+        var id = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+        var admin = await _db.Admins.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id);
+        if (admin is null) return Unauthorized();
+        return Ok(new { email = admin.Email, googleEmail = admin.GoogleEmail });
+    }
 
     [HttpPost("logout")]
     [Authorize]

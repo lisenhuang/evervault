@@ -4,15 +4,17 @@ import { useState } from "react";
 import { api } from "./adminApi";
 import AiChat from "./AiChat";
 import AiKeysForm from "./AiKeysForm";
+import GoogleAuthForm from "./GoogleAuthForm";
 import StorageForm from "./StorageForm";
 import { Button } from "./ui";
 
-type Section = "chat" | "aikeys" | "storage";
+type Section = "chat" | "aikeys" | "storage" | "google";
 
 const NAV: { key: Section; label: string; icon: string; desc: string }[] = [
   { key: "chat", label: "Assistant", icon: "💬", desc: "Chat & run actions" },
   { key: "aikeys", label: "AI Keys", icon: "🔑", desc: "Gemini & OpenRouter" },
   { key: "storage", label: "Storage", icon: "🗄️", desc: "Cloudflare R2" },
+  { key: "google", label: "Google Login", icon: "🔓", desc: "Sign-in & binding" },
 ];
 
 export default function Dashboard({ email, onLogout }: { email: string; onLogout: () => void }) {
@@ -76,6 +78,7 @@ export default function Dashboard({ email, onLogout }: { email: string; onLogout
           {section === "chat" && <AiChat />}
           {section === "aikeys" && <AiKeysForm />}
           {section === "storage" && <StorageForm />}
+          {section === "google" && <GoogleAuthForm />}
         </main>
       </div>
     </div>

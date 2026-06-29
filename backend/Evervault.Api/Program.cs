@@ -29,34 +29,38 @@ builder.Services.AddDataProtection()
     .PersistKeysToDbContext<AppDbContext>()
     .SetApplicationName("evervault");
 
-// --- Auth: cookie-based admin session (no JWT secret to manage) ---
+// --- Auth: cookie-based sessions (no JWT secret to manage) ---
+// AdminCookie (default) gates /admin; UserCookie gates the public /webapp end-user session. Both
+// return API status codes instead of 302 redirects.
+static void ApiCookie(CookieAuthenticationOptions options, string cookieName, int days)
+{
+    options.Cookie.Name = cookieName;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; // https at the edge / http locally
+    options.ExpireTimeSpan = TimeSpan.FromDays(days);
+    options.SlidingExpiration = true;
+    options.Events.OnRedirectToLogin = ctx =>
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = ctx =>
+    {
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Task.CompletedTask;
+    };
+}
 builder.Services
     .AddAuthentication(AdminController.Scheme)
-    .AddCookie(AdminController.Scheme, options =>
-    {
-        options.Cookie.Name = "ev_admin";
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Lax;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; // https at the edge / http locally
-        options.ExpireTimeSpan = TimeSpan.FromDays(7);
-        options.SlidingExpiration = true;
-        // This is an API, not MVC pages: return status codes instead of 302 redirects.
-        options.Events.OnRedirectToLogin = ctx =>
-        {
-            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return Task.CompletedTask;
-        };
-        options.Events.OnRedirectToAccessDenied = ctx =>
-        {
-            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
-            return Task.CompletedTask;
-        };
-    });
+    .AddCookie(AdminController.Scheme, options => ApiCookie(options, "ev_admin", 7))
+    .AddCookie(AuthController.Scheme, options => ApiCookie(options, "ev_user", 30));
 builder.Services.AddAuthorization();
 
 // --- App services ---
 builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
+builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 
 // --- AI: keys, providers, failover, agent chat ---
 builder.Services.AddHttpClient();
