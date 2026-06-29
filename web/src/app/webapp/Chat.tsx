@@ -14,6 +14,7 @@ import { embedDocument, embedQuery } from "./lib/embed";
 import { type Content, listModels, type ModelInfo, streamText, synthesizeSpeech } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { store } from "./lib/store";
+import { currentTimeContext, formatMemoryDate } from "./lib/time";
 import { recordTurn, searchMemories, type TurnItem } from "./recordApi";
 import type { Me } from "./authApi";
 import type { ChatMessage } from "./types";
@@ -124,7 +125,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
   async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";
-    for await (const delta of streamText(apiKey, textModel, contents)) {
+    // Tell the model the current local time on every send (covers text + push-to-talk).
+    for await (const delta of streamText(apiKey, textModel, contents, currentTimeContext())) {
       acc += delta;
       setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
     }
@@ -171,7 +173,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (relevant.length === 0) return null;
     const text =
       "Context — things this user shared with you earlier (use only if relevant, don't mention this note):\n" +
-      relevant.map((h) => `- ${h.content}`).join("\n");
+      relevant.map((h) => `- (${formatMemoryDate(h.createdAt)}) ${h.content}`).join("\n");
     return { role: "user", parts: [{ text }] };
   }
 

@@ -72,7 +72,7 @@ function setStoredTheme(theme: Theme) {
 const noopSubscribe = () => () => {};
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const theme = useSyncExternalStore(subscribe, resolveTheme, () => "light");
+  const theme = useSyncExternalStore<Theme>(subscribe, resolveTheme, () => "light");
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
 
   // Keep the <html> class in sync with the resolved theme (e.g. live OS changes).

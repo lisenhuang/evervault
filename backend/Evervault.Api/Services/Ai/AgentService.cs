@@ -168,7 +168,8 @@ public class AgentService
     private static void EnsureSystemPrompt(List<AiChatMessage> messages)
     {
         messages.RemoveAll(m => m.Role == "system");
-        messages.Insert(0, new AiChatMessage("system", SystemPrompt));
+        var prompt = $"{SystemPrompt}\n\nThe current date and time is {DateTimeOffset.UtcNow:dddd, dd MMMM yyyy HH:mm} UTC.";
+        messages.Insert(0, new AiChatMessage("system", prompt));
     }
 
     private const string SystemPrompt =

@@ -28,9 +28,14 @@ export async function* streamText(
   apiKey: string,
   model: string,
   contents: Content[],
+  systemInstruction?: string,
 ): AsyncGenerator<string> {
   const ai = client(apiKey);
-  const stream = await ai.models.generateContentStream({ model, contents });
+  const stream = await ai.models.generateContentStream({
+    model,
+    contents,
+    ...(systemInstruction ? { config: { systemInstruction } } : {}),
+  });
   for await (const chunk of stream) {
     const t = chunk.text;
     if (t) yield t;

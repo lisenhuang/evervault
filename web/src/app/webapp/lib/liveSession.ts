@@ -5,6 +5,7 @@
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServerMessage } from "@google/genai";
 import { AudioPlayer, MicStreamer } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
+import { currentTimeContext } from "./time";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
 
@@ -54,7 +55,8 @@ export class LiveSession {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        systemInstruction: SYSTEM_INSTRUCTION,
+        // Time is captured at connect; a multi-hour call won't refresh it (acceptable for this use).
+        systemInstruction: `${SYSTEM_INSTRUCTION}\n${currentTimeContext()}`,
         // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
         // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
         realtimeInputConfig: {
