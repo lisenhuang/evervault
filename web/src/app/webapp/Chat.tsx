@@ -7,6 +7,7 @@ import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MemoryPanel from "./MemoryPanel";
 import MessageList from "./MessageList";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument, embedQuery } from "./lib/embed";
 import { type Content, listModels, type ModelInfo, streamText, synthesizeSpeech } from "./lib/gemini";
@@ -39,6 +40,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const recorderRef = useRef<Recorder | null>(null);
@@ -363,7 +365,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               <Settings2 size={18} />
             </button>
             <button
-              onClick={onLogout}
+              onClick={() => setConfirmLogout(true)}
               title="Sign out"
               className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
             >
@@ -460,6 +462,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onClose={() => setMemoryPanelOpen(false)}
         memoryOn={memoryOn}
         onToggleMemory={toggleMemory}
+      />
+
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Sign out?"
+        message="You’ll need to sign in again to continue chatting."
+        confirmLabel="Sign out"
+        confirmVariant="danger"
+        onClose={() => setConfirmLogout(false)}
+        onConfirm={() => {
+          setConfirmLogout(false);
+          onLogout();
+        }}
       />
     </div>
   );

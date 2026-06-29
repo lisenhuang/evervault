@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, Search, Trash2, Volume2, X } from "lucide-react";
 import { embedQuery } from "./lib/embed";
 import { clearAllMemories, deleteMemory, type MemoryHit, searchMemories } from "./recordApi";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 export default function MemoryPanel({
   open,
@@ -19,6 +20,8 @@ export default function MemoryPanel({
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<MemoryHit[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
 
   async function run() {
     const query = q.trim();
@@ -118,7 +121,7 @@ export default function MemoryPanel({
                         <Volume2 size={14} />
                       </button>
                     )}
-                    <button onClick={() => remove(h.id)} className="rounded p-1 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40" aria-label="Delete">
+                    <button onClick={() => setConfirmDeleteId(h.id)} className="rounded p-1 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40" aria-label="Delete">
                       <Trash2 size={14} />
                     </button>
                   </span>
@@ -129,12 +132,39 @@ export default function MemoryPanel({
           </ul>
 
           {hits && hits.length > 0 && (
-            <button onClick={clearAll} className="text-xs text-red-600 hover:underline dark:text-red-400">
+            <button onClick={() => setConfirmClearAll(true)} className="text-xs text-red-600 hover:underline dark:text-red-400">
               Clear all memories
             </button>
           )}
         </div>
       </aside>
+
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        title="Delete this memory?"
+        message="This permanently removes it from your saved chats."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={async () => {
+          const id = confirmDeleteId;
+          setConfirmDeleteId(null);
+          if (id !== null) await remove(id);
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmClearAll}
+        title="Clear all memories?"
+        message="This permanently deletes all of your saved chats. This can’t be undone."
+        confirmLabel="Clear all"
+        confirmVariant="danger"
+        onClose={() => setConfirmClearAll(false)}
+        onConfirm={async () => {
+          setConfirmClearAll(false);
+          await clearAll();
+        }}
+      />
     </div>
   );
 }

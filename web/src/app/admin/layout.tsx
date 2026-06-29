@@ -7,6 +7,7 @@ import { api } from "./adminApi";
 import LoginForm from "./LoginForm";
 import SetupForm from "./SetupForm";
 import { Button } from "./ui";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 type View = "loading" | "setup" | "login" | "dashboard";
 
@@ -20,6 +21,7 @@ const NAV: { href: string; label: string; icon: string; desc: string }[] = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [view, setView] = useState<View>("loading");
   const [email, setEmail] = useState("");
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const pathname = usePathname();
 
   const refresh = useCallback(async () => {
@@ -74,7 +76,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-black/55 sm:inline dark:text-white/55">{email}</span>
-            <Button variant="ghost" size="sm" onClick={logout}>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmLogout(true)}>
               Log out
             </Button>
           </div>
@@ -113,6 +115,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {/* Content */}
         <main className="min-w-0 flex-1">{children}</main>
       </div>
+
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Log out?"
+        message="You’ll need to sign in again to access the admin panel."
+        confirmLabel="Log out"
+        confirmVariant="danger"
+        onClose={() => setConfirmLogout(false)}
+        onConfirm={async () => {
+          setConfirmLogout(false);
+          await logout();
+        }}
+      />
     </div>
   );
 }
