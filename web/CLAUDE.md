@@ -10,3 +10,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
   (from `web/`) and confirm it completes without errors. If it fails, read the error
   output and fix the code until the build passes — do not leave the change in a
   broken state.
+
+- **Don't use browser built-in dialogs (`window.alert`, `alert`, `confirm`, `prompt`).**
+  Their native UI is unstyled and inconsistent with our design. Use our own custom
+  components (modals, toasts, confirmation dialogs) instead.
