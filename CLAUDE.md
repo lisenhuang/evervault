@@ -18,6 +18,10 @@ Guidance for Claude Code when working in this repository.
   flag it and propose a migration path (e.g. versioning, dual-write, or a
   deprecation window) instead of breaking current clients.
 
+- **Keep READMEs concise.** Documentation — especially README files — must stay short and
+  skimmable. Prefer tables, diagrams, and one-liners over prose; don't pad with redundant
+  explanation. Add a line only when it earns its place.
+
 - **Minimize human effort; prefer zero-config and automation.** This project is meant to be
   developed and maintained largely by AI with minimal human action. Favor sane defaults and
   automation over steps a human must perform (hand-editing `.env`, managing secrets/passwords,

@@ -19,6 +19,7 @@ export default function AiChat() {
   const [pending, setPending] = useState<ProposedAction | null>(null);
   const [typedConfirm, setTypedConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState<string[]>([]);
 
   // Preferred model per provider, restored from saved config.
   const preferred = useRef<{ gemini: string | null; openrouter: string | null }>({ gemini: null, openrouter: null });
@@ -59,6 +60,24 @@ export default function AiChat() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending, error]);
+
+  // Remember dismissed notices (e.g. the Gemini "no pricing" note) so they don't keep reappearing.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("ev_admin_dismissed_notices");
+      if (raw) setDismissed(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  function dismissNotice(text: string) {
+    setDismissed((d) => {
+      const next = d.includes(text) ? d : [...d, text];
+      try {
+        localStorage.setItem("ev_admin_dismissed_notices", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
 
   function persist(p: Provider, m: string) {
     const body = {
@@ -149,12 +168,16 @@ export default function AiChat() {
         <Select value={model} onChange={changeModel} disabled={busy || loadingModels || shown.length === 0}>
           {loadingModels && <option value="">Loading…</option>}
           {!loadingModels && shown.length === 0 && <option value="">No models</option>}
-          {shown.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-              {m.priceLabel ? ` — ${m.priceLabel}` : ""}
-            </option>
-          ))}
+          {shown.map((m) => {
+            // Only show a price suffix when there's a real price (or "Free") — skip "Pricing not exposed".
+            const showPrice = m.isFree || m.promptPricePerMTok != null;
+            return (
+              <option key={m.id} value={m.id}>
+                {m.name}
+                {showPrice && m.priceLabel ? ` — ${m.priceLabel}` : ""}
+              </option>
+            );
+          })}
         </Select>
         <label
           className={`flex items-center gap-1.5 text-sm ${
@@ -184,10 +207,18 @@ export default function AiChat() {
         )}
       </div>
 
-      {modelWarning && (
-        <p className="border-b border-black/10 px-4 py-2 text-xs text-amber-700 dark:border-white/10 dark:text-amber-300">
-          {modelWarning}
-        </p>
+      {modelWarning && !dismissed.includes(modelWarning) && (
+        <div className="flex items-start justify-between gap-3 border-b border-black/10 px-4 py-2 text-xs text-amber-700 dark:border-white/10 dark:text-amber-300">
+          <span>{modelWarning}</span>
+          <button
+            onClick={() => dismissNotice(modelWarning)}
+            aria-label="Dismiss"
+            title="Don't show this again"
+            className="shrink-0 rounded px-1 leading-none text-amber-700/70 hover:text-amber-900 dark:text-amber-300/70 dark:hover:text-amber-200"
+          >
+            ✕
+          </button>
+        </div>
       )}
 
       {/* Messages */}

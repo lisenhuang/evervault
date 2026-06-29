@@ -16,6 +16,8 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
         app container (nginx+web+.NET)            db container
 ```
 
+> 💡 **Why `db` is its own container:** the app container is disposable — `make up` swaps it for each new version while the DB keeps running, so data survives redeploys and app updates stay ~zero-downtime.
+
 ## 📦 Codebases
 
 | Folder | Stack | |
