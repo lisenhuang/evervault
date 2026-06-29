@@ -61,6 +61,7 @@ function ProviderKeys({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
+  const [confirmId, setConfirmId] = useState<number | null>(null);
 
   async function add() {
     if (!text.trim()) return;
@@ -100,6 +101,7 @@ function ProviderKeys({
     setBusy(true);
     await api(`/api/admin/ai/keys/${id}`, { method: "DELETE" });
     await onReload();
+    setConfirmId(null);
     setBusy(false);
   }
 
@@ -124,9 +126,21 @@ function ProviderKeys({
                   </div>
                   {k.lastError && <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{k.lastError}</p>}
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => remove(k.id)} disabled={busy}>
-                  Remove
-                </Button>
+                {confirmId === k.id ? (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <span className="text-xs text-black/55 dark:text-white/55">Remove?</span>
+                    <Button variant="danger" size="sm" onClick={() => remove(k.id)} disabled={busy}>
+                      Confirm
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setConfirmId(null)} disabled={busy}>
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmId(k.id)} disabled={busy}>
+                    Remove
+                  </Button>
+                )}
               </li>
             ))}
           </ul>

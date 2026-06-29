@@ -23,19 +23,33 @@ export default function AiChat() {
 
   // Preferred model per provider, restored from saved config.
   const preferred = useRef<{ gemini: string | null; openrouter: string | null }>({ gemini: null, openrouter: null });
+  const modelsCache = useRef<Record<string, ModelInfo[]>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const [nowTs, setNowTs] = useState(() => Date.now());
+  const [usageLoading, setUsageLoading] = useState(false);
 
+  // MANUAL ONLY: fetching usage hits the provider's key endpoint, so this never runs automatically.
   const refreshUsage = useCallback(async (p: Provider) => {
+    setUsageLoading(true);
     const u = await api(`/api/admin/ai/usage?provider=${p}`);
     setUsage(u.ok ? await u.json() : null);
+    setUsageLoading(false);
   }, []);
 
+  // Model list is a free catalog endpoint (no credits / no quota). Cached per provider so switching
+  // back and forth doesn't refetch.
   const loadModels = useCallback(async (p: Provider) => {
-    setLoadingModels(true);
-    setModels([]);
     setModelWarning(null);
     setUsage(null);
+    const cached = modelsCache.current[p];
+    if (cached) {
+      setModels(cached);
+      const want = preferred.current[p];
+      setModel(cached.find((m) => m.id === want)?.id ?? cached[0]?.id ?? "");
+      return;
+    }
+    setLoadingModels(true);
+    setModels([]);
     const res = await api(`/api/admin/ai/models?provider=${p}`);
     setLoadingModels(false);
     if (!res.ok) {
@@ -44,12 +58,12 @@ export default function AiChat() {
     }
     const d: ModelsResult = await res.json();
     const sorted = sortModels(d.models);
+    modelsCache.current[p] = sorted;
     setModels(sorted);
     setModelWarning(d.warning);
     const want = preferred.current[p];
     setModel(sorted.find((m) => m.id === want)?.id ?? sorted[0]?.id ?? "");
-    void refreshUsage(p); // best-effort key usage/quota (OpenRouter exposes it; Gemini doesn't)
-  }, [refreshUsage]);
+  }, []);
 
   // On mount: restore the saved provider/model, then load that provider's models.
   useEffect(() => {
@@ -123,7 +137,6 @@ export default function AiChat() {
     setMessages(data.messages);
     if (data.status === "proposal" && data.proposal) setPending(data.proposal);
     else if (data.status === "error") setError(data.error ?? "Something went wrong.");
-    void refreshUsage(provider); // a turn may have consumed a free-model request
   }
 
   async function send() {
@@ -143,7 +156,7 @@ export default function AiChat() {
     setBusy(false);
   }
 
-  async function confirm() {
+  async function confirmAction() {
     if (!pending) return;
     setBusy(true);
     setError(null);
@@ -195,18 +208,23 @@ export default function AiChat() {
             );
           })}
         </Select>
-        {messages.length > 0 && (
-          <button
-            onClick={() => {
-              setMessages([]);
-              setError(null);
-              setPending(null);
-            }}
-            className="ml-auto text-xs text-black/50 hover:text-black/80 dark:text-white/50 dark:hover:text-white/80"
-          >
-            Clear chat
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => refreshUsage(provider)} disabled={usageLoading || busy}>
+            {usageLoading ? "Checking…" : "Key usage"}
+          </Button>
+          {messages.length > 0 && (
+            <button
+              onClick={() => {
+                setMessages([]);
+                setError(null);
+                setPending(null);
+              }}
+              className="text-xs text-black/50 hover:text-black/80 dark:text-white/50 dark:hover:text-white/80"
+            >
+              Clear chat
+            </button>
+          )}
+        </div>
       </div>
 
       {modelWarning && !dismissed.includes(modelWarning) && (
@@ -223,16 +241,29 @@ export default function AiChat() {
         </div>
       )}
 
-      {usage?.supported && usage.summary && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
-          <span>💳 {usage.summary}</span>
-          {reset && (
-            <span className="text-black/40 dark:text-white/40" title={`Resets ${reset.local}`}>
-              · resets in {reset.countdown} ({reset.local})
-            </span>
-          )}
-        </div>
-      )}
+      {usage &&
+        (usage.supported && usage.summary ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
+            <span>💳 {usage.summary}</span>
+            {reset && (
+              <span className="text-black/40 dark:text-white/40" title={`Resets ${reset.local}`}>
+                · resets in {reset.countdown} ({reset.local})
+              </span>
+            )}
+            <button
+              onClick={() => refreshUsage(provider)}
+              disabled={usageLoading}
+              className="text-black/40 hover:text-black/70 disabled:opacity-50 dark:text-white/40 dark:hover:text-white/70"
+              title="Refresh usage"
+            >
+              ↻
+            </button>
+          </div>
+        ) : (
+          <div className="border-b border-black/10 px-4 py-1.5 text-xs text-black/45 dark:border-white/10 dark:text-white/45">
+            No usage/quota info available for {provider}.
+          </div>
+        ))}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -285,7 +316,7 @@ export default function AiChat() {
             </div>
           )}
           <div className="mt-3 flex gap-2">
-            <Button variant={pending.dangerous ? "danger" : "primary"} onClick={confirm} disabled={!confirmReady || busy}>
+            <Button variant={pending.dangerous ? "danger" : "primary"} onClick={confirmAction} disabled={!confirmReady || busy}>
               Confirm &amp; run
             </Button>
             <Button variant="ghost" onClick={cancel} disabled={busy}>
