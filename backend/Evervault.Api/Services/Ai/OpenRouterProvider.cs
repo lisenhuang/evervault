@@ -85,25 +85,36 @@ public class OpenRouterProvider : IAiProvider
         var body = await res.Content.ReadAsStringAsync(ct);
         if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
 
-        using var doc = JsonDocument.Parse(body);
-        var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
-        string? text = message.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
-            ? c.GetString()
-            : null;
-
-        var calls = new List<AiToolCall>();
-        if (message.TryGetProperty("tool_calls", out var tc) && tc.ValueKind == JsonValueKind.Array)
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(body); }
+        catch { throw new AiProviderException(AiErrorKind.Transient, ExtractError(body, res.StatusCode)); }
+        using (doc)
         {
-            foreach (var call in tc.EnumerateArray())
+            var root = doc.RootElement;
+            // OpenRouter can return HTTP 200 with an embedded error when the upstream provider fails.
+            if (root.TryGetProperty("error", out _)) throw MapError(res.StatusCode, body);
+            if (!root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
+                throw new AiProviderException(AiErrorKind.Transient, "OpenRouter returned no choices. " + ExtractError(body, res.StatusCode));
+
+            var message = choices[0].GetProperty("message");
+            string? text = message.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
+                ? c.GetString()
+                : null;
+
+            var calls = new List<AiToolCall>();
+            if (message.TryGetProperty("tool_calls", out var tc) && tc.ValueKind == JsonValueKind.Array)
             {
-                var id = call.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? Guid.NewGuid().ToString("N") : Guid.NewGuid().ToString("N");
-                var fn = call.GetProperty("function");
-                var fname = fn.GetProperty("name").GetString() ?? "";
-                var args = fn.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
-                calls.Add(new AiToolCall(id, fname, string.IsNullOrWhiteSpace(args) ? "{}" : args));
+                foreach (var call in tc.EnumerateArray())
+                {
+                    var id = call.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? Guid.NewGuid().ToString("N") : Guid.NewGuid().ToString("N");
+                    var fn = call.GetProperty("function");
+                    var fname = fn.GetProperty("name").GetString() ?? "";
+                    var args = fn.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}";
+                    calls.Add(new AiToolCall(id, fname, string.IsNullOrWhiteSpace(args) ? "{}" : args));
+                }
             }
+            return new AiCompletion(text, calls);
         }
-        return new AiCompletion(text, calls);
     }
 
     // --- wire mapping ---
@@ -155,21 +166,37 @@ public class OpenRouterProvider : IAiProvider
         return $"{Fmt(promptM)} in / {Fmt(completionM)} out per 1M tokens";
     }
 
+    // Surfaces the FULL error so it can be copied from the chat: parsed message/code/metadata
+    // plus the raw response body (OpenRouter hides the upstream provider's real error in metadata).
     private static string ExtractError(string body, HttpStatusCode status)
+    {
+        var head = $"HTTP {(int)status} {status}";
+        var summary = ParseErrorSummary(body);
+        var raw = string.IsNullOrWhiteSpace(body) ? "(empty response body)" : Truncate(body.Trim(), 4000);
+        return summary is null ? $"{head}. Raw response: {raw}" : $"{head}: {summary}\nRaw response: {raw}";
+    }
+
+    private static string? ParseErrorSummary(string body)
     {
         try
         {
             using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("error", out var err))
-            {
-                if (err.ValueKind == JsonValueKind.Object && err.TryGetProperty("message", out var msg))
-                    return msg.GetString() ?? $"HTTP {(int)status}";
-                if (err.ValueKind == JsonValueKind.String) return err.GetString() ?? $"HTTP {(int)status}";
-            }
+            if (!doc.RootElement.TryGetProperty("error", out var err)) return null;
+            if (err.ValueKind == JsonValueKind.String) return err.GetString();
+            if (err.ValueKind != JsonValueKind.Object) return err.GetRawText();
+
+            var sb = new StringBuilder();
+            if (err.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String) sb.Append(m.GetString());
+            if (err.TryGetProperty("code", out var c)) sb.Append($" [code: {Scalar(c)}]");
+            if (err.TryGetProperty("metadata", out var meta) && meta.ValueKind != JsonValueKind.Null)
+                sb.Append($" metadata: {Truncate(meta.GetRawText(), 3000)}");
+            return sb.Length > 0 ? sb.ToString() : err.GetRawText();
         }
-        catch { /* not JSON */ }
-        return $"HTTP {(int)status}";
+        catch { return null; }
     }
+
+    private static string Scalar(JsonElement e) => e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : e.GetRawText();
+    private static string Truncate(string s, int n) => s.Length > n ? s[..n] + "…(truncated)" : s;
 
     private static AiProviderException MapError(HttpStatusCode status, string body)
     {

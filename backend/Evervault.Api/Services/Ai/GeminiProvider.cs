@@ -169,17 +169,25 @@ public class GeminiProvider : IAiProvider
         }
     }
 
+    // Full error so it can be copied from the chat: parsed message/status plus the raw response body.
     private static string ExtractError(string body, HttpStatusCode status)
     {
+        var head = $"HTTP {(int)status} {status}";
+        string? summary = null;
         try
         {
             using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("error", out var err) &&
-                err.TryGetProperty("message", out var msg))
-                return msg.GetString() ?? $"HTTP {(int)status}";
+            if (doc.RootElement.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object)
+            {
+                var sb = new StringBuilder();
+                if (err.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.String) sb.Append(msg.GetString());
+                if (err.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String) sb.Append($" [status: {st.GetString()}]");
+                summary = sb.Length > 0 ? sb.ToString() : err.GetRawText();
+            }
         }
         catch { /* not JSON */ }
-        return $"HTTP {(int)status}";
+        var raw = string.IsNullOrWhiteSpace(body) ? "(empty response body)" : (body.Trim().Length > 4000 ? body.Trim()[..4000] + "…(truncated)" : body.Trim());
+        return summary is null ? $"{head}. Raw response: {raw}" : $"{head}: {summary}\nRaw response: {raw}";
     }
 
     private static AiProviderException MapError(HttpStatusCode status, string body)
