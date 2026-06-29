@@ -95,6 +95,9 @@ public class AuthController : ControllerBase
             claims.Add(new Claim("picture", user.Picture));
 
         var identity = new ClaimsIdentity(claims, Scheme);
-        return HttpContext.SignInAsync(Scheme, new ClaimsPrincipal(identity));
+        // Persist the cookie across browser restarts so the session lasts its full lifetime
+        // (ev_user: 30 days, sliding) instead of dying as a session cookie on browser close.
+        var props = new AuthenticationProperties { IsPersistent = true };
+        return HttpContext.SignInAsync(Scheme, new ClaimsPrincipal(identity), props);
     }
 }
