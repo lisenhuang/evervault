@@ -15,6 +15,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<ChatConfig> ChatConfigs => Set<ChatConfig>();
     public DbSet<GoogleAuthConfig> GoogleAuthConfigs => Set<GoogleAuthConfig>();
     public DbSet<EndUser> EndUsers => Set<EndUser>();
+    public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();
+    public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -48,6 +50,18 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(u => u.GoogleSub).HasMaxLength(64);
             e.HasIndex(u => u.GoogleSub).IsUnique();
             e.Property(u => u.Email).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<ChatMemory>(e =>
+        {
+            // Dimensionless vector: the admin picks the dimension at runtime, so we can't fix it here.
+            // Searches are always scoped to one EndUserId (tiny candidate set), so exact cosine is fine.
+            e.Property(m => m.Embedding).HasColumnType("vector");
+            e.Property(m => m.Role).HasMaxLength(16);
+            e.Property(m => m.Modality).HasMaxLength(16);
+            e.Property(m => m.ConversationId).HasMaxLength(64);
+            e.HasIndex(m => m.EndUserId);
+            e.HasIndex(m => new { m.EndUserId, m.ConversationId });
         });
 
         modelBuilder.Entity<AiKey>(e =>

@@ -52,6 +52,14 @@ export type ChatConfigDto = {
   openRouterModel: string | null;
 };
 
+export type EmbeddingConfigDto = {
+  provider: string;
+  model: string | null;
+  dimensions: number;
+  locked: boolean;
+  lockedAt: string | null;
+};
+
 export type ToolCall = { id: string; name: string; argumentsJson: string };
 
 export type ChatMessage = {

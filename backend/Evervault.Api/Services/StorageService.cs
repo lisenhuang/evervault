@@ -102,6 +102,46 @@ public class StorageService : IStorageService
             : "";
     }
 
+    /// <summary>Build an S3 client from the stored config (decrypting the secret), or null if unconfigured.</summary>
+    private async Task<(IAmazonS3 Client, string Bucket)?> ResolveClientAsync()
+    {
+        var c = await _db.StorageConfigs.AsNoTracking().FirstOrDefaultAsync();
+        if (c is null || string.IsNullOrWhiteSpace(c.Bucket) || string.IsNullOrWhiteSpace(c.AccountId)
+            || string.IsNullOrWhiteSpace(c.AccessKeyId) || string.IsNullOrEmpty(c.SecretEncrypted))
+            return null;
+        var secret = _protector.Unprotect(c.SecretEncrypted);
+        return (BuildClient(c.AccountId, c.AccessKeyId, secret, c.Endpoint, c.Region, c.Jurisdiction), c.Bucket);
+    }
+
+    public async Task PutObjectAsync(string key, Stream content, string contentType, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync()
+            ?? throw new InvalidOperationException("Storage is not configured.");
+        using var client = r.Client;
+        await client.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = r.Bucket,
+            Key = key,
+            InputStream = content,
+            ContentType = contentType,
+            AutoCloseStream = false,
+        }, ct);
+    }
+
+    public async Task<string?> GetPresignedGetUrlAsync(string key, TimeSpan ttl, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync();
+        if (r is null) return null;
+        using var client = r.Value.Client;
+        return await client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
+        {
+            BucketName = r.Value.Bucket,
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.Add(ttl),
+        });
+    }
+
     private static IAmazonS3 BuildClient(
         string accountId, string accessKeyId, string secret, string? endpoint, string region, string? jurisdiction)
     {

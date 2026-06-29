@@ -31,4 +31,10 @@ public interface IStorageService
     Task<StorageConfigDto?> GetAsync();
     Task SaveAsync(StorageConfigInput input);
     Task<StorageTestResult> TestAsync(StorageConfigInput? input = null);
+
+    /// <summary>Upload an object to the configured R2 bucket. Throws if storage isn't configured.</summary>
+    Task PutObjectAsync(string key, Stream content, string contentType, CancellationToken ct = default);
+
+    /// <summary>A short-lived presigned GET URL for an object, or null if storage isn't configured.</summary>
+    Task<string?> GetPresignedGetUrlAsync(string key, TimeSpan ttl, CancellationToken ct = default);
 }

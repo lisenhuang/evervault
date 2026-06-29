@@ -6,6 +6,8 @@ const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
 const LIVE_MODEL = "ev:liveModel";
 const VOICE = "ev:voice";
+const MEMORY_ON = "ev:memoryOn";
+const NOTICE_SEEN = "ev:memoryNoticeSeen";
 
 export const DEFAULT_TEXT_MODEL = "gemini-2.5-flash";
 export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
@@ -33,4 +35,9 @@ export const store = {
   setLiveModel: (v: string) => set(LIVE_MODEL, v),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
+  // Memory recall is on by default; users can turn it off.
+  getMemoryOn: () => get(MEMORY_ON) !== "0",
+  setMemoryOn: (on: boolean) => set(MEMORY_ON, on ? "1" : "0"),
+  getNoticeSeen: () => get(NOTICE_SEEN) === "1",
+  setNoticeSeen: () => set(NOTICE_SEEN, "1"),
 };

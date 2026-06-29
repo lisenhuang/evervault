@@ -2,8 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./adminApi";
-import type { AiKeyDto, AiKeysDto, CheckKeysResult, KeyCheckResult, Provider } from "./aiTypes";
-import { Badge, Banner, Button, Card, TextArea } from "./ui";
+import type {
+  AiKeyDto,
+  AiKeysDto,
+  CheckKeysResult,
+  EmbeddingConfigDto,
+  KeyCheckResult,
+  ModelsResult,
+  Provider,
+} from "./aiTypes";
+import { Badge, Banner, Button, Card, Select, TextArea } from "./ui";
 
 export default function AiKeysForm() {
   const [data, setData] = useState<AiKeysDto>({ gemini: [], openRouter: [] });
@@ -41,7 +49,128 @@ export default function AiKeysForm() {
         keys={data.openRouter}
         onReload={reload}
       />
+
+      <EmbeddingConfigCard />
     </div>
+  );
+}
+
+function EmbeddingConfigCard() {
+  const [cfg, setCfg] = useState<EmbeddingConfigDto | null>(null);
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [model, setModel] = useState("");
+  const [dimensions, setDimensions] = useState(1536);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
+
+  const loadModels = useCallback(async () => {
+    setLoadingModels(true);
+    const res = await api("/api/admin/ai/models?provider=gemini&kind=embedding");
+    setLoadingModels(false);
+    if (!res.ok) return;
+    const d: ModelsResult = await res.json();
+    setModels(d.models.map((m) => ({ id: m.id, name: m.name })));
+    setModel((prev) => prev || d.models[0]?.id || "");
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await api("/api/admin/ai/embedding-config");
+      if (!res.ok) return;
+      const d: EmbeddingConfigDto = await res.json();
+      setCfg(d);
+      if (d.model) setModel(d.model);
+      if (d.dimensions) setDimensions(d.dimensions);
+      if (!d.locked) void loadModels();
+    })();
+  }, [loadModels]);
+
+  async function save() {
+    if (!model) {
+      setMsg({ kind: "error", text: "Choose an embedding model first." });
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    const res = await api("/api/admin/ai/embedding-config", {
+      method: "PUT",
+      body: JSON.stringify({ model, dimensions }),
+    });
+    setBusy(false);
+    if (res.ok) {
+      setCfg(await res.json());
+      setMsg({ kind: "success", text: "Saved and locked." });
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setMsg({ kind: "error", text: d.error ?? "Could not save the embedding config." });
+    }
+  }
+
+  return (
+    <Card
+      title="Memory embedding"
+      subtitle="Used to turn saved chats into searchable vectors."
+      right={cfg?.locked ? <Badge tone="green">Locked</Badge> : undefined}
+    >
+      <div className="space-y-4">
+        <Banner kind="info">
+          When set, end-user chats (text + audio) are saved so people can recall them. Each user&rsquo;s
+          browser embeds their own messages with their <strong>own</strong> Gemini key using the model and
+          dimension you pick here — your keys are never used for it. This choice is{" "}
+          <strong>permanent</strong> (changing it would invalidate every saved vector), so pick once.
+        </Banner>
+
+        {cfg?.locked ? (
+          <dl className="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+            <dt className="text-black/55 dark:text-white/55">Model</dt>
+            <dd className="font-mono">{cfg.model}</dd>
+            <dt className="text-black/55 dark:text-white/55">Dimension</dt>
+            <dd className="font-mono">{cfg.dimensions}</dd>
+          </dl>
+        ) : (
+          <>
+            <label className="block">
+              <span className="text-sm font-medium">Embedding model</span>
+              <div className="mt-1">
+                <Select value={model} onChange={setModel} disabled={busy || loadingModels}>
+                  {loadingModels && <option value="">Loading…</option>}
+                  {!loadingModels && models.length === 0 && <option value="">No embedding models (add a Gemini key)</option>}
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+                e.g. <code>gemini-embedding-001</code>. Loaded from your Gemini keys.
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium">Vector dimension</span>
+              <div className="mt-1">
+                <Select value={String(dimensions)} onChange={(v) => setDimensions(Number(v))} disabled={busy}>
+                  <option value="768">768 — lean</option>
+                  <option value="1536">1536 — recommended</option>
+                  <option value="3072">3072 — max quality</option>
+                </Select>
+              </div>
+              <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+                1536 ties 3072 on quality at half the storage. Cannot change after saving.
+              </span>
+            </label>
+
+            {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+            <Button onClick={save} disabled={busy || !model}>
+              Save &amp; lock
+            </Button>
+          </>
+        )}
+        {cfg?.locked && msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+      </div>
+    </Card>
   );
 }
 

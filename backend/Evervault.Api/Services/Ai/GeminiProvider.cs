@@ -35,8 +35,16 @@ public class GeminiProvider : IAiProvider
     public Task<AiKeyUsage> GetUsageAsync(string rawKey, CancellationToken ct)
         => Task.FromResult(new AiKeyUsage(false, "Gemini does not expose usage/quota via its API.", null, null, null, null, null, null));
 
-    public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
+    public Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
+        => ListModelsAsync(rawKey, "chat", ct);
+
+    public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, string kind, CancellationToken ct)
     {
+        // "embedding" → models that support embedContent; otherwise chat (generateContent).
+        var wantMethod = string.Equals(kind, "embedding", StringComparison.OrdinalIgnoreCase)
+            ? "embedContent"
+            : "generateContent";
+
         var client = _http.CreateClient();
         using var res = await client.SendAsync(Req(HttpMethod.Get, "/v1beta/models?pageSize=1000", rawKey), ct);
         var body = await res.Content.ReadAsStringAsync(ct);
@@ -48,9 +56,8 @@ public class GeminiProvider : IAiProvider
 
         foreach (var m in models.EnumerateArray())
         {
-            // Only models that can actually do chat (generateContent).
             if (m.TryGetProperty("supportedGenerationMethods", out var methods) &&
-                !methods.EnumerateArray().Any(x => x.GetString() == "generateContent"))
+                !methods.EnumerateArray().Any(x => x.GetString() == wantMethod))
                 continue;
 
             var name = m.GetProperty("name").GetString() ?? "";   // "models/gemini-1.5-flash"

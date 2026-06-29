@@ -1,15 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LogOut, Settings2, SquarePen } from "lucide-react";
+import { Brain, LogOut, Settings2, SquarePen, X } from "lucide-react";
 import CallOverlay from "./CallOverlay";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
+import MemoryPanel from "./MemoryPanel";
 import MessageList from "./MessageList";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
+import { embedDocument, embedQuery } from "./lib/embed";
 import { type Content, listModels, type ModelInfo, streamText, synthesizeSpeech } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { store } from "./lib/store";
+import { recordTurn, searchMemories, type TurnItem } from "./recordApi";
 import type { Me } from "./authApi";
 import type { ChatMessage } from "./types";
 
@@ -47,6 +50,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const liveRef = useRef<LiveSession | null>(null);
   const liveUserIdRef = useRef<string | null>(null);
   const liveAsstIdRef = useRef<string | null>(null);
+  const liveUserTextRef = useRef("");
+  const liveAsstTextRef = useRef("");
+
+  // Memory (recall)
+  const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
+  const [memoryOn, setMemoryOn] = useState(true);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const conversationIdRef = useRef(uid());
 
   const loadModels = useCallback(async (key: string) => {
     if (!key) return;
@@ -67,7 +78,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setApiKey(k);
     if (k) void loadModels(k);
     else setDrawerOpen(true);
+    setMemoryOn(store.getMemoryOn());
+    setNoticeOpen(!store.getNoticeSeen());
   }, [loadModels]);
+
+  function toggleMemory(on: boolean) {
+    store.setMemoryOn(on);
+    setMemoryOn(on);
+  }
+  function dismissNotice() {
+    store.setNoticeSeen();
+    setNoticeOpen(false);
+  }
 
   function saveKey(k: string) {
     store.setKey(k);
@@ -97,7 +119,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setVoice(v);
   }
 
-  async function runAssistant(asstId: string, contents: Content[], speak: boolean) {
+  async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";
     for await (const delta of streamText(apiKey, textModel, contents)) {
       acc += delta;
@@ -114,6 +136,40 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         /* TTS is best-effort; the text reply still stands */
       }
     }
+    return acc;
+  }
+
+  // --- Memory: record finished turns + pull relevant memories into context (RAG) ---
+
+  async function recordTextTurns(items: { role: "user" | "assistant"; text: string; modality: "text" | "voice" | "live" }[], extra?: { audioBase64?: string }) {
+    if (!memoryOn) return;
+    const turns: TurnItem[] = [];
+    for (const it of items) {
+      if (!it.text.trim() && !(it.role === "user" && extra?.audioBase64)) continue;
+      const embedding = it.text.trim() ? (await embedDocument(it.text)) ?? undefined : undefined;
+      turns.push({
+        role: it.role,
+        modality: it.modality,
+        text: it.text,
+        embedding,
+        ...(it.role === "user" && extra?.audioBase64 ? { audioBase64: extra.audioBase64, audioMime: "audio/wav" } : {}),
+      });
+    }
+    recordTurn(conversationIdRef.current, turns);
+  }
+
+  /** Top relevant past memories as a context preface for the next reply, or null. */
+  async function ragPreface(query: string): Promise<Content | null> {
+    if (!memoryOn) return null;
+    const qv = await embedQuery(query);
+    if (!qv) return null; // no key/policy → no auto-recall
+    const hits = await searchMemories(qv, query, 5);
+    const relevant = hits.filter((h) => h.distance == null || h.distance < 0.6).slice(0, 5);
+    if (relevant.length === 0) return null;
+    const text =
+      "Context — things this user shared with you earlier (use only if relevant, don't mention this note):\n" +
+      relevant.map((h) => `- ${h.content}`).join("\n");
+    return { role: "user", parts: [{ text }] };
   }
 
   async function sendText(text: string) {
@@ -127,7 +183,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true }]);
     setStreaming(true);
     try {
-      await runAssistant(asstId, toContents(base), false);
+      const preface = await ragPreface(text);
+      const contents = preface ? [preface, ...toContents(base)] : toContents(base);
+      const reply = await runAssistant(asstId, contents, false);
+      void recordTextTurns([
+        { role: "user", text, modality: "text" },
+        { role: "assistant", text: reply, modality: "text" },
+      ]);
     } catch (e) {
       setMessages((cur) =>
         cur.map((m) => (m.id === asstId ? { ...m, streaming: false, error: true, text: errMsg(e) } : m)),
@@ -173,7 +235,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           parts: [{ inlineData: { mimeType, data: base64 } }, { text: "Respond conversationally to this voice message." }],
         },
       ];
-      await runAssistant(asstId, contents, true);
+      const reply = await runAssistant(asstId, contents, true);
+      // Record the user's spoken audio file + the assistant's reply text (user audio has no transcript).
+      void recordTextTurns(
+        [
+          { role: "user", text: "🎤 (voice message)", modality: "voice" },
+          { role: "assistant", text: reply, modality: "voice" },
+        ],
+        { audioBase64: base64 },
+      );
     } catch (e) {
       setMessages((cur) => {
         const errored: ChatMessage = { id: asstId, role: "assistant", text: errMsg(e), streaming: false, error: true };
@@ -193,6 +263,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
   function appendLiveText(role: "user" | "assistant", delta: string) {
     const ref = role === "user" ? liveUserIdRef : liveAsstIdRef;
+    const txtRef = role === "user" ? liveUserTextRef : liveAsstTextRef;
+    txtRef.current += delta;
     setMessages((cur) => {
       if (ref.current) return cur.map((m) => (m.id === ref.current ? { ...m, text: m.text + delta } : m));
       const id = uid();
@@ -210,6 +282,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setCallMuted(false);
     liveUserIdRef.current = null;
     liveAsstIdRef.current = null;
+    liveUserTextRef.current = "";
+    liveAsstTextRef.current = "";
     const session = new LiveSession(apiKey, liveModel, voice);
     liveRef.current = session;
     setCallState("connecting");
@@ -219,8 +293,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onUserText: (d) => appendLiveText("user", d),
         onModelText: (d) => appendLiveText("assistant", d),
         onTurnComplete: () => {
+          // Record the just-finished spoken turn as transcripts (live audio capture is a fast-follow).
+          void recordTextTurns([
+            { role: "user", text: liveUserTextRef.current, modality: "live" },
+            { role: "assistant", text: liveAsstTextRef.current, modality: "live" },
+          ]);
           liveUserIdRef.current = null;
           liveAsstIdRef.current = null;
+          liveUserTextRef.current = "";
+          liveAsstTextRef.current = "";
         },
         onError: setCallError,
       });
@@ -258,11 +339,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setMessages([])}
+              onClick={() => {
+                setMessages([]);
+                conversationIdRef.current = uid();
+              }}
               title="New chat"
               className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
             >
               <SquarePen size={18} />
+            </button>
+            <button
+              onClick={() => setMemoryPanelOpen(true)}
+              title="Memories"
+              className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
+            >
+              <Brain size={18} />
             </button>
             <button
               onClick={() => setDrawerOpen(true)}
@@ -281,6 +372,23 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           </div>
         </div>
       </header>
+
+      {noticeOpen && (
+        <div className="border-b border-black/10 bg-blue-50 dark:border-white/10 dark:bg-blue-950/30">
+          <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 text-xs text-blue-800 dark:text-blue-200">
+            <span className="flex-1">
+              Your chats are saved so you (and the AI) can recall them later. Manage or turn this off in{" "}
+              <button onClick={() => setMemoryPanelOpen(true)} className="font-medium underline">
+                Memories
+              </button>
+              .
+            </span>
+            <button onClick={dismissNotice} className="rounded p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40" aria-label="Dismiss">
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <main className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
@@ -345,6 +453,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onChangeAudioModel={pickAudioModel}
         onChangeLiveModel={pickLiveModel}
         onChangeVoice={pickVoice}
+      />
+
+      <MemoryPanel
+        open={memoryPanelOpen}
+        onClose={() => setMemoryPanelOpen(false)}
+        memoryOn={memoryOn}
+        onToggleMemory={toggleMemory}
       />
     </div>
   );

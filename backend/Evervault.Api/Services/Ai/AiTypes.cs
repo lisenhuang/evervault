@@ -71,6 +71,10 @@ public interface IAiProvider
     string Name { get; }
     Task<(bool Ok, string Message)> ValidateKeyAsync(string rawKey, CancellationToken ct);
     Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct);
+    /// <summary>List models for a purpose: "chat" (generateContent) or "embedding" (embedContent).
+    /// Defaults to the chat list for providers that don't distinguish.</summary>
+    Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, string kind, CancellationToken ct)
+        => ListModelsAsync(rawKey, ct);
     Task<AiKeyUsage> GetUsageAsync(string rawKey, CancellationToken ct);
     Task<AiCompletion> CompleteAsync(
         string rawKey,
