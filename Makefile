@@ -2,7 +2,7 @@ COMPOSE     = docker compose
 COMPOSE_DEV = docker compose -f docker-compose.yml -f docker-compose.dev.yml
 SERVICE     = app
 
-.PHONY: dev up down logs build sh clean rebuild help
+.PHONY: dev up down logs build sh clean prune rebuild help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -12,8 +12,10 @@ dev: ## Dev with hot reload (edit & save, no rebuild)
 	@echo "🔥 Starting dev — ready at 👉 http://localhost:38378 once compiled (watch the logs)"
 	$(COMPOSE_DEV) up --build
 
-up: ## Build + run prod (detached), wait until ready, print the URL
+up: ## Build + run prod (detached), drop old versions, wait until ready, print URL
 	$(COMPOSE) up --build -d
+	@echo "🧹 Removing old EverVault image versions..."
+	@docker image prune -f --filter "label=app=evervault" >/dev/null 2>&1 || true
 	@port=$${HOST_PORT:-$$(grep -E '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2)}; \
 	port=$${port:-38378}; \
 	url="http://localhost:$$port"; \
@@ -41,5 +43,9 @@ sh: ## Shell into the running container
 clean: ## Tear down + drop volumes/images (forces fresh install)
 	$(COMPOSE_DEV) down -v --remove-orphans
 	-docker image rm evervault-app:dev evervault-app:prod 2>/dev/null || true
+
+prune: ## Reclaim disk: remove dangling images + ALL build cache
+	docker image prune -f
+	docker builder prune -f
 
 rebuild: clean build ## Clean then rebuild the prod image

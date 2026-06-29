@@ -58,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Stage: prod
 ############################################
 FROM runtime-base AS prod
+LABEL app=evervault
 ENV ASPNETCORE_ENVIRONMENT=Production \
     ASPNETCORE_URLS=http://127.0.0.1:38372 \
     NODE_ENV=production \
@@ -86,6 +87,7 @@ CMD ["supervisord", "-c", "/etc/supervisor/supervisord.conf"]
 # Stage: dev  (SDK + node + pnpm + nginx + supervisor; hot reload)
 ############################################
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS dev
+LABEL app=evervault
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg nginx supervisor \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \

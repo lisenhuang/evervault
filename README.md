@@ -36,12 +36,13 @@ One container. One domain. Web + API behind nginx. 🐳
 | Command | What it does |
 |---|---|
 | `make dev` | 🔥 Run with **hot reload** — edit & save, no rebuild |
-| `make up` | 🚀 Build + run the **prod** image, wait until ready, print the 🔗 URL |
+| `make up` | 🚀 Build + run **prod**, auto-drop old versions, wait, print the 🔗 URL |
 | `make down` | 🛑 Stop & remove the container |
 | `make logs` | 📜 Tail logs |
 | `make build` | 🔨 Build the prod image only |
 | `make sh` | 🐚 Shell into the running container |
 | `make clean` | 🧹 Tear down + drop volumes/images (fresh install) |
+| `make prune` | ♻️ Reclaim disk — dangling images + all build cache |
 | `make help` | ❓ List all commands |
 
 ## ⚡ First run
