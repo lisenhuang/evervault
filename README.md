@@ -36,7 +36,7 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
 ## 🔐 Admin & data
 
 - **`/admin`** — first visit creates the admin account (email + password); after that it's the
-  login. Then a dashboard to manage **memories** (vector search) and configure **storage**.
+  login. Then a dashboard to configure **storage**.
 - **Cloudflare R2** is configured from the dashboard (no `.env`) — the form tells you where to
   find each value; the secret is **encrypted** in the DB.
 - **Data persists** in the `pgdata` volume across `make up`/`make down`. ⚠️ `make clean` (`-v`)
