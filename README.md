@@ -65,6 +65,7 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
 | `make sh` | 🐚 Shell into the running container |
 | `make clean` | 🧹 Tear down + drop volumes/images (fresh install) |
 | `make prune` | ♻️ Reclaim disk — dangling images + all build cache |
+| `make reset-admin` | 🔑 Delete the admin account → `/admin` shows first-run setup again |
 | `make help` | ❓ List all commands |
 
 ## ⚡ First run

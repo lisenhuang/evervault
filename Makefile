@@ -2,7 +2,7 @@ COMPOSE     = docker compose
 COMPOSE_DEV = docker compose -f docker-compose.yml -f docker-compose.dev.yml
 SERVICE     = app
 
-.PHONY: dev up down logs build sh clean prune rebuild help
+.PHONY: dev up down logs build sh clean prune rebuild reset-admin help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -47,5 +47,9 @@ clean: ## Tear down + drop volumes/images (forces fresh install)
 prune: ## Reclaim disk: remove dangling images + ALL build cache
 	docker image prune -f
 	docker builder prune -f
+
+reset-admin: ## Delete the admin account(s) → /admin shows first-run setup again (stack must be running)
+	$(COMPOSE) exec -T db psql -U postgres -d evervault -c 'DELETE FROM "Admins";'
+	@echo "✅ Admin cleared. Open /admin to create a new account."
 
 rebuild: clean build ## Clean then rebuild the prod image
