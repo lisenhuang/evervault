@@ -35,6 +35,42 @@ public class OpenRouterProvider : IAiProvider
         return (false, ExtractError(body, res.StatusCode));
     }
 
+    public async Task<AiKeyUsage> GetUsageAsync(string rawKey, CancellationToken ct)
+    {
+        var client = _http.CreateClient();
+        using var res = await client.SendAsync(Req(HttpMethod.Get, "/key", rawKey), ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("data", out var d))
+            return new AiKeyUsage(false, null, null, null, null, null, null, null);
+
+        var usage = GetDecimal(d, "usage");
+        var limit = GetDecimal(d, "limit");
+        var remaining = GetDecimal(d, "limit_remaining");
+        bool? freeTier = d.TryGetProperty("is_free_tier", out var ft) && (ft.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            ? ft.GetBoolean() : null;
+
+        string? rate = null;
+        if (d.TryGetProperty("rate_limit", out var rl) && rl.ValueKind == JsonValueKind.Object)
+        {
+            var reqs = GetDecimal(rl, "requests");
+            var interval = rl.TryGetProperty("interval", out var iv) ? iv.GetString() : null;
+            if (reqs is not null && interval is not null) rate = $"{reqs} req / {interval}";
+        }
+
+        var sb = new StringBuilder();
+        sb.Append(limit is null
+            ? $"Credits used: {Money(usage)} (no preset limit)"
+            : $"Credits: {Money(usage)} used / {Money(limit)} ({Money(remaining)} left)");
+        if (freeTier == true) sb.Append(" · free tier");
+        if (rate is not null) sb.Append($" · {rate}");
+
+        var reset = "Free-model daily limits reset at 00:00 UTC.";
+        return new AiKeyUsage(true, sb.ToString(), usage, limit, remaining, freeTier, rate, reset);
+    }
+
     public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
     {
         var client = _http.CreateClient();
@@ -197,6 +233,16 @@ public class OpenRouterProvider : IAiProvider
 
     private static string Scalar(JsonElement e) => e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : e.GetRawText();
     private static string Truncate(string s, int n) => s.Length > n ? s[..n] + "…(truncated)" : s;
+
+    private static decimal? GetDecimal(JsonElement e, string name)
+    {
+        if (!e.TryGetProperty(name, out var v)) return null;
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)) return d;
+        if (v.ValueKind == JsonValueKind.String && decimal.TryParse(v.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
+        return null;
+    }
+
+    private static string Money(decimal? d) => d is null ? "—" : "$" + d.Value.ToString("0.####", CultureInfo.InvariantCulture);
 
     private static AiProviderException MapError(HttpStatusCode status, string body)
     {

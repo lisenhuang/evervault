@@ -51,6 +51,22 @@ public class AiChatController : ControllerBase
         }
     }
 
+    /// <summary>Credit/quota usage for the provider's key (OpenRouter exposes this; Gemini does not).</summary>
+    [HttpGet("usage")]
+    public async Task<ActionResult<AiKeyUsage>> Usage([FromQuery] string provider)
+    {
+        var p = (provider ?? "").Trim().ToLowerInvariant();
+        try
+        {
+            var usage = await _failover.RunAsync(p, (prov, key) => prov.GetUsageAsync(key, HttpContext.RequestAborted));
+            return Ok(usage);
+        }
+        catch (Exception)
+        {
+            return Ok(new AiKeyUsage(false, null, null, null, null, null, null, null));
+        }
+    }
+
     [HttpGet("config")]
     public async Task<ActionResult<ChatConfigDto>> GetConfig()
     {

@@ -32,6 +32,9 @@ public class GeminiProvider : IAiProvider
         return (false, ExtractError(body, res.StatusCode));
     }
 
+    public Task<AiKeyUsage> GetUsageAsync(string rawKey, CancellationToken ct)
+        => Task.FromResult(new AiKeyUsage(false, "Gemini does not expose usage/quota via its API.", null, null, null, null, null, null));
+
     public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
     {
         var client = _http.CreateClient();

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./adminApi";
-import type { ChatMessage, ChatTurnResponse, ModelInfo, ModelsResult, ProposedAction, Provider } from "./aiTypes";
+import type { AiKeyUsage, ChatMessage, ChatTurnResponse, ModelInfo, ModelsResult, ProposedAction, Provider } from "./aiTypes";
 import { Badge, Button, Select } from "./ui";
 
 export default function AiChat() {
@@ -11,7 +11,7 @@ export default function AiChat() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelWarning, setModelWarning] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [freeOnly, setFreeOnly] = useState(false);
+  const [usage, setUsage] = useState<AiKeyUsage | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -29,6 +29,7 @@ export default function AiChat() {
     setLoadingModels(true);
     setModels([]);
     setModelWarning(null);
+    setUsage(null);
     const res = await api(`/api/admin/ai/models?provider=${p}`);
     setLoadingModels(false);
     if (!res.ok) {
@@ -36,10 +37,16 @@ export default function AiChat() {
       return;
     }
     const d: ModelsResult = await res.json();
-    setModels(d.models);
+    const sorted = sortModels(d.models);
+    setModels(sorted);
     setModelWarning(d.warning);
     const want = preferred.current[p];
-    setModel(d.models.find((m) => m.id === want)?.id ?? d.models[0]?.id ?? "");
+    setModel(sorted.find((m) => m.id === want)?.id ?? sorted[0]?.id ?? "");
+    // Best-effort key usage/quota (OpenRouter exposes it; Gemini doesn't).
+    void (async () => {
+      const u = await api(`/api/admin/ai/usage?provider=${p}`);
+      setUsage(u.ok ? await u.json() : null);
+    })();
   }, []);
 
   // On mount: restore the saved provider/model, then load that provider's models.
@@ -91,7 +98,6 @@ export default function AiChat() {
 
   async function changeProvider(p: Provider) {
     setProvider(p);
-    setFreeOnly(false);
     await loadModels(p);
   }
 
@@ -153,7 +159,7 @@ export default function AiChat() {
     setTypedConfirm("");
   }
 
-  const shown = freeOnly && provider === "openrouter" ? models.filter((m) => m.isFree) : models;
+  const shown = models; // already sorted: free first, then paid cheapest → priciest
   const confirmReady = pending && (!pending.dangerous || typedConfirm.trim() === "CONFIRM");
   const canSend = !busy && !pending && !!model && !!input.trim();
 
@@ -179,20 +185,6 @@ export default function AiChat() {
             );
           })}
         </Select>
-        <label
-          className={`flex items-center gap-1.5 text-sm ${
-            provider === "gemini" ? "opacity-40" : ""
-          }`}
-          title={provider === "gemini" ? "Gemini does not expose pricing" : "Show only free models"}
-        >
-          <input
-            type="checkbox"
-            checked={freeOnly}
-            disabled={provider === "gemini"}
-            onChange={(e) => setFreeOnly(e.target.checked)}
-          />
-          Free only
-        </label>
         {messages.length > 0 && (
           <button
             onClick={() => {
@@ -218,6 +210,13 @@ export default function AiChat() {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {usage?.supported && usage.summary && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
+          <span>💳 {usage.summary}</span>
+          {usage.resetNote && <span className="text-black/40 dark:text-white/40">· {usage.resetNote}</span>}
         </div>
       )}
 
@@ -343,6 +342,20 @@ function MessageBubble({ m }: { m: ChatMessage }) {
     );
   }
   return null;
+}
+
+function sortModels(models: ModelInfo[]): ModelInfo[] {
+  const priceOf = (m: ModelInfo) =>
+    m.promptPricePerMTok != null || m.completionPricePerMTok != null
+      ? (m.promptPricePerMTok ?? 0) + (m.completionPricePerMTok ?? 0)
+      : Number.POSITIVE_INFINITY; // unknown price (e.g. Gemini) sinks below known-priced models
+  return [...models].sort((a, b) => {
+    if (a.isFree !== b.isFree) return a.isFree ? -1 : 1; // free first
+    const pa = a.isFree ? 0 : priceOf(a);
+    const pb = b.isFree ? 0 : priceOf(b);
+    if (pa !== pb) return pa - pb; // cheapest → most expensive
+    return a.name.localeCompare(b.name);
+  });
 }
 
 function prettyArgs(json: string): string {

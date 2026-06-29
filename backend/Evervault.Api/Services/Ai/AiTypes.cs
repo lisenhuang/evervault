@@ -29,6 +29,17 @@ public record AiModelInfo(
 /// JSON-Schema string describing the arguments.</summary>
 public record AiToolSchema(string Name, string Description, string ParametersJson);
 
+/// <summary>Credit/quota usage for a key, where the provider exposes it (OpenRouter does; Gemini does not).</summary>
+public record AiKeyUsage(
+    bool Supported,
+    string? Summary,
+    decimal? Usage,
+    decimal? Limit,
+    decimal? Remaining,
+    bool? IsFreeTier,
+    string? RateLimit,
+    string? ResetNote);
+
 public enum AiErrorKind { Auth, Quota, Transient, Other }
 
 /// <summary>A typed provider error. <see cref="Kind"/> drives key failover (Auth/Quota/Transient
@@ -54,6 +65,7 @@ public interface IAiProvider
     string Name { get; }
     Task<(bool Ok, string Message)> ValidateKeyAsync(string rawKey, CancellationToken ct);
     Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct);
+    Task<AiKeyUsage> GetUsageAsync(string rawKey, CancellationToken ct);
     Task<AiCompletion> CompleteAsync(
         string rawKey,
         string model,

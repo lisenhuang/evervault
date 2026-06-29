@@ -33,6 +33,17 @@ export type ModelInfo = {
 
 export type ModelsResult = { provider: string; models: ModelInfo[]; warning: string | null };
 
+export type AiKeyUsage = {
+  supported: boolean;
+  summary: string | null;
+  usage: number | null;
+  limit: number | null;
+  remaining: number | null;
+  isFreeTier: boolean | null;
+  rateLimit: string | null;
+  resetNote: string | null;
+};
+
 export type ChatConfigDto = {
   selectedProvider: string | null;
   geminiModel: string | null;

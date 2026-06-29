@@ -19,6 +19,15 @@ public class FakeAiProvider : IAiProvider
             ? (true, "Valid")
             : (false, $"Invalid key (fake provider expects the literal 'good'). Got '{Mask(rawKey)}'."));
 
+    public Task<AiKeyUsage> GetUsageAsync(string rawKey, CancellationToken ct)
+    {
+        if (rawKey.Trim() != "good")
+            throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+        return Task.FromResult(new AiKeyUsage(
+            true, "Credits: $1.20 used / $10 ($8.80 left) · free tier · 20 req / 10s",
+            1.20m, 10m, 8.80m, true, "20 req / 10s", "Free-model daily limits reset at 00:00 UTC."));
+    }
+
     public Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
     {
         if (rawKey.Trim() != "good")
