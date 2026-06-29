@@ -2,8 +2,9 @@
 // reply down over a WebSocket — hands-free, with server-side voice-activity detection (no push-to-
 // talk) and barge-in (interrupt the model by speaking). Uses the user's own key, browser → Google.
 
-import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
+import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServerMessage } from "@google/genai";
 import { AudioPlayer, MicStreamer } from "./liveAudio";
+import { EchoLoopback } from "./echoLoopback";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
 
@@ -24,6 +25,7 @@ export class LiveSession {
   private session?: SessionHandle;
   private mic = new MicStreamer();
   private player = new AudioPlayer();
+  private loopback = new EchoLoopback();
   private cb!: LiveCallbacks;
   private stopped = false;
 
@@ -37,6 +39,9 @@ export class LiveSession {
     this.cb = cb;
     cb.onState("connecting");
     await this.player.resume();
+    // Play the model's voice through a WebRTC loopback so the browser's echo canceller removes
+    // it from the mic (fixes the model interrupting itself off the phone speaker; see echoLoopback.ts).
+    await this.loopback.start(this.player.stream);
     this.player.onIdle = () => {
       if (!this.stopped) cb.onState("listening");
     };
@@ -50,6 +55,16 @@ export class LiveSession {
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         systemInstruction: SYSTEM_INSTRUCTION,
+        // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
+        // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
+            endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+            prefixPaddingMs: 300,
+            silenceDurationMs: 800,
+          },
+        },
       },
       callbacks: {
         onopen: () => {},
@@ -98,6 +113,7 @@ export class LiveSession {
   async stop() {
     this.stopped = true;
     this.mic.stop();
+    this.loopback.stop();
     await this.player.close();
     try {
       this.session?.close();
