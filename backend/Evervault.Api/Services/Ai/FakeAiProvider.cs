@@ -23,9 +23,14 @@ public class FakeAiProvider : IAiProvider
     {
         if (rawKey.Trim() != "good")
             throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+        var now = DateTimeOffset.UtcNow;
+        var nextMidnightUtc = new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, TimeSpan.Zero).AddDays(1);
         return Task.FromResult(new AiKeyUsage(
-            true, "Credits: $1.20 used / $10 ($8.80 left) · free tier · 20 req / 10s",
-            1.20m, 10m, 8.80m, true, "20 req / 10s", "Free-model daily limits reset at 00:00 UTC."));
+            true,
+            "Credits: $1.20 used / $10 ($8.80 left) · free tier · free requests today: 20/1000 (980 left)",
+            1.20m, 10m, 8.80m, true, null, null,
+            DailyLimit: 1000, DailyRemaining: 980, DailyUsed: 20,
+            ResetUnixMs: nextMidnightUtc.ToUnixTimeMilliseconds()));
     }
 
     public Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)

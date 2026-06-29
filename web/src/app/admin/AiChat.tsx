@@ -24,6 +24,12 @@ export default function AiChat() {
   // Preferred model per provider, restored from saved config.
   const preferred = useRef<{ gemini: string | null; openrouter: string | null }>({ gemini: null, openrouter: null });
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  const refreshUsage = useCallback(async (p: Provider) => {
+    const u = await api(`/api/admin/ai/usage?provider=${p}`);
+    setUsage(u.ok ? await u.json() : null);
+  }, []);
 
   const loadModels = useCallback(async (p: Provider) => {
     setLoadingModels(true);
@@ -42,12 +48,8 @@ export default function AiChat() {
     setModelWarning(d.warning);
     const want = preferred.current[p];
     setModel(sorted.find((m) => m.id === want)?.id ?? sorted[0]?.id ?? "");
-    // Best-effort key usage/quota (OpenRouter exposes it; Gemini doesn't).
-    void (async () => {
-      const u = await api(`/api/admin/ai/usage?provider=${p}`);
-      setUsage(u.ok ? await u.json() : null);
-    })();
-  }, []);
+    void refreshUsage(p); // best-effort key usage/quota (OpenRouter exposes it; Gemini doesn't)
+  }, [refreshUsage]);
 
   // On mount: restore the saved provider/model, then load that provider's models.
   useEffect(() => {
@@ -67,6 +69,12 @@ export default function AiChat() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending, error]);
+
+  // Tick every minute so the reset countdown stays live.
+  useEffect(() => {
+    const t = setInterval(() => setNowTs(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Remember dismissed notices (e.g. the Gemini "no pricing" note) so they don't keep reappearing.
   useEffect(() => {
@@ -115,6 +123,7 @@ export default function AiChat() {
     setMessages(data.messages);
     if (data.status === "proposal" && data.proposal) setPending(data.proposal);
     else if (data.status === "error") setError(data.error ?? "Something went wrong.");
+    void refreshUsage(provider); // a turn may have consumed a free-model request
   }
 
   async function send() {
@@ -162,6 +171,7 @@ export default function AiChat() {
   const shown = models; // already sorted: free first, then paid cheapest → priciest
   const confirmReady = pending && (!pending.dangerous || typedConfirm.trim() === "CONFIRM");
   const canSend = !busy && !pending && !!model && !!input.trim();
+  const reset = usage?.supported ? resetInfo(usage, nowTs) : null;
 
   return (
     <div className="flex h-[74vh] flex-col rounded-xl border border-black/10 bg-white/60 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/3">
@@ -216,7 +226,11 @@ export default function AiChat() {
       {usage?.supported && usage.summary && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
           <span>💳 {usage.summary}</span>
-          {usage.resetNote && <span className="text-black/40 dark:text-white/40">· {usage.resetNote}</span>}
+          {reset && (
+            <span className="text-black/40 dark:text-white/40" title={`Resets ${reset.local}`}>
+              · resets in {reset.countdown} ({reset.local})
+            </span>
+          )}
         </div>
       )}
 
@@ -342,6 +356,28 @@ function MessageBubble({ m }: { m: ChatMessage }) {
     );
   }
   return null;
+}
+
+function resetInfo(usage: AiKeyUsage, nowTs: number): { local: string; countdown: string } {
+  // Prefer the exact reset from rate-limit headers; otherwise fall back to the next 00:00 UTC.
+  const d = new Date(nowTs);
+  const nextUtcMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
+  const resetMs = usage.resetUnixMs ?? nextUtcMidnight;
+  const local = new Date(resetMs).toLocaleString(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const diff = resetMs - nowTs;
+  let countdown: string;
+  if (diff <= 0) countdown = "now";
+  else {
+    const totalMin = Math.floor(diff / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    countdown = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+  return { local, countdown };
 }
 
 function sortModels(models: ModelInfo[]): ModelInfo[] {

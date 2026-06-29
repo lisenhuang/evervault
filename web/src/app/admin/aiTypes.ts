@@ -42,6 +42,10 @@ export type AiKeyUsage = {
   isFreeTier: boolean | null;
   rateLimit: string | null;
   resetNote: string | null;
+  dailyLimit: number | null;
+  dailyRemaining: number | null;
+  dailyUsed: number | null;
+  resetUnixMs: number | null;
 };
 
 export type ChatConfigDto = {

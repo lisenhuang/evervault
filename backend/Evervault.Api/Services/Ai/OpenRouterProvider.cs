@@ -42,6 +42,12 @@ public class OpenRouterProvider : IAiProvider
         var body = await res.Content.ReadAsStringAsync(ct);
         if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
 
+        // Best-effort: free-model daily allowance is exposed via rate-limit response headers, not the body.
+        long? dailyLimit = HeaderLong(res, "X-RateLimit-Limit");
+        long? dailyRemaining = HeaderLong(res, "X-RateLimit-Remaining");
+        long? resetMs = NormalizeResetMs(HeaderLong(res, "X-RateLimit-Reset"));
+        long? dailyUsed = dailyLimit is not null && dailyRemaining is not null ? dailyLimit - dailyRemaining : null;
+
         using var doc = JsonDocument.Parse(body);
         if (!doc.RootElement.TryGetProperty("data", out var d))
             return new AiKeyUsage(false, null, null, null, null, null, null, null);
@@ -52,12 +58,13 @@ public class OpenRouterProvider : IAiProvider
         bool? freeTier = d.TryGetProperty("is_free_tier", out var ft) && (ft.ValueKind is JsonValueKind.True or JsonValueKind.False)
             ? ft.GetBoolean() : null;
 
+        // Per-window rate limit, only if it's a real positive value (OpenRouter now often returns -1 = none).
         string? rate = null;
         if (d.TryGetProperty("rate_limit", out var rl) && rl.ValueKind == JsonValueKind.Object)
         {
             var reqs = GetDecimal(rl, "requests");
             var interval = rl.TryGetProperty("interval", out var iv) ? iv.GetString() : null;
-            if (reqs is not null && interval is not null) rate = $"{reqs} req / {interval}";
+            if (reqs is > 0 && interval is not null) rate = $"{reqs} req / {interval}";
         }
 
         var sb = new StringBuilder();
@@ -65,10 +72,13 @@ public class OpenRouterProvider : IAiProvider
             ? $"Credits used: {Money(usage)} (no preset limit)"
             : $"Credits: {Money(usage)} used / {Money(limit)} ({Money(remaining)} left)");
         if (freeTier == true) sb.Append(" · free tier");
+        if (dailyLimit is not null)
+            sb.Append($" · free requests today: {dailyUsed}/{dailyLimit} ({dailyRemaining} left)");
         if (rate is not null) sb.Append($" · {rate}");
 
-        var reset = "Free-model daily limits reset at 00:00 UTC.";
-        return new AiKeyUsage(true, sb.ToString(), usage, limit, remaining, freeTier, rate, reset);
+        var reset = resetMs is null ? "Free-model daily limits reset at 00:00 UTC." : null;
+        return new AiKeyUsage(true, sb.ToString(), usage, limit, remaining, freeTier, rate, reset,
+            dailyLimit, dailyRemaining, dailyUsed, resetMs);
     }
 
     public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
@@ -243,6 +253,23 @@ public class OpenRouterProvider : IAiProvider
     }
 
     private static string Money(decimal? d) => d is null ? "—" : "$" + d.Value.ToString("0.####", CultureInfo.InvariantCulture);
+
+    private static long? HeaderLong(HttpResponseMessage res, string name)
+    {
+        if (!res.Headers.TryGetValues(name, out var vals)) return null;
+        var v = vals.FirstOrDefault();
+        return long.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var n) ? n : null;
+    }
+
+    // Reset header may be epoch-ms, epoch-seconds, or seconds-from-now. Normalize to epoch-ms.
+    private static long? NormalizeResetMs(long? value)
+    {
+        if (value is null or <= 0) return null;
+        var v = value.Value;
+        if (v > 100_000_000_000L) return v;            // already epoch milliseconds
+        if (v > 1_000_000_000L) return v * 1000L;       // epoch seconds
+        return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + v * 1000L; // seconds-from-now delta
+    }
 
     private static AiProviderException MapError(HttpStatusCode status, string body)
     {

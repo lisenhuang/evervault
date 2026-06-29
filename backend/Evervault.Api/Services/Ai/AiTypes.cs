@@ -29,7 +29,9 @@ public record AiModelInfo(
 /// JSON-Schema string describing the arguments.</summary>
 public record AiToolSchema(string Name, string Description, string ParametersJson);
 
-/// <summary>Credit/quota usage for a key, where the provider exposes it (OpenRouter does; Gemini does not).</summary>
+/// <summary>Credit/quota usage for a key, where the provider exposes it (OpenRouter does; Gemini does not).
+/// The Daily*/ResetUnixMs fields come from rate-limit response headers (best-effort) and describe the
+/// free-model daily request allowance.</summary>
 public record AiKeyUsage(
     bool Supported,
     string? Summary,
@@ -38,7 +40,11 @@ public record AiKeyUsage(
     decimal? Remaining,
     bool? IsFreeTier,
     string? RateLimit,
-    string? ResetNote);
+    string? ResetNote,
+    long? DailyLimit = null,
+    long? DailyRemaining = null,
+    long? DailyUsed = null,
+    long? ResetUnixMs = null);
 
 public enum AiErrorKind { Auth, Quota, Transient, Other }
 
