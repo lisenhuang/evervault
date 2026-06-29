@@ -9,14 +9,21 @@ Guidance for Claude Code when working in this repository.
   prepare work, but the human performs the actual commit/push to `main`. If a
   commit or push is needed, ask first or create a separate branch.
 
-- **Keep all changes backward compatible.** Code changes must remain compatible
-  with the currently deployed version so the server can roll out the new version
-  without impacting existing users. Don't break existing API contracts, request/
+- **Production is live — keep every change deploy-compatible.** Prod is published and
+  serving real users. A deploy rolls a new app version onto the already-running database
+  while the previous version may still be handling requests, so each change must work
+  against both the old and new state. Don't break existing API contracts, request/
   response shapes, persisted data formats, or client expectations. Add new fields/
-  endpoints rather than changing or removing existing ones; make new parameters
-  optional with safe defaults. If a breaking change is genuinely unavoidable,
-  flag it and propose a migration path (e.g. versioning, dual-write, or a
-  deprecation window) instead of breaking current clients.
+  endpoints rather than changing or removing existing ones; make new parameters optional
+  with safe defaults.
+  - **DB migrations must be backward compatible (expand → migrate → contract).** A
+    migration has to be safe for the *currently deployed* code to run against. Ship only
+    additive/widening changes alongside the code that needs them. Do **not**
+    `DropColumn`/`DropTable`/`RenameColumn`/`RenameTable` or narrow an `AlterColumn` in the
+    same release that stops using it — split it across releases: first deploy code that no
+    longer reads/writes the column, then drop it in a *later* migration.
+  - If a breaking change is genuinely unavoidable, flag it and propose a migration path
+    (versioning, dual-write, or a deprecation window) instead of breaking current clients.
 
 - **Keep READMEs concise.** Documentation — especially README files — must stay short and
   skimmable. Prefer tables, diagrams, and one-liners over prose; don't pad with redundant
