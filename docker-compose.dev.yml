@@ -22,3 +22,8 @@ services:
       - /workspace/backend/Evervault.Api/bin
       - /workspace/backend/Evervault.Api/obj
     restart: unless-stopped
+
+  db:
+    # Publish Postgres for a natively-run backend during dev (the container reaches it as `db`).
+    ports:
+      - "5432:5432"

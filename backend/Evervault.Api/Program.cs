@@ -1,4 +1,11 @@
+using Evervault.Api.Controllers;
+using Evervault.Api.Data;
+using Evervault.Api.Services;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
+using Pgvector.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -7,6 +14,47 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+// --- Database (PostgreSQL + pgvector) ---
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("Default"),
+        npgsql => npgsql.UseVector()));
+
+// Persist Data Protection keys in the DB so admin cookies and the encrypted R2 secret survive
+// container restarts with zero configuration (no keys/secrets on disk or in .env).
+builder.Services.AddDataProtection()
+    .PersistKeysToDbContext<AppDbContext>()
+    .SetApplicationName("evervault");
+
+// --- Auth: cookie-based admin session (no JWT secret to manage) ---
+builder.Services
+    .AddAuthentication(AdminController.Scheme)
+    .AddCookie(AdminController.Scheme, options =>
+    {
+        options.Cookie.Name = "ev_admin";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest; // https at the edge / http locally
+        options.ExpireTimeSpan = TimeSpan.FromDays(7);
+        options.SlidingExpiration = true;
+        // This is an API, not MVC pages: return status codes instead of 302 redirects.
+        options.Events.OnRedirectToLogin = ctx =>
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+        options.Events.OnRedirectToAccessDenied = ctx =>
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+    });
+builder.Services.AddAuthorization();
+
+// --- App services ---
+builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
+builder.Services.AddScoped<IStorageService, StorageService>();
 
 // Trust the in-container nginx reverse proxy for scheme/host/for headers.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -17,7 +65,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-// CORS for the local Next.js (web) and Expo (app) dev clients.
+// CORS for the local Next.js (web) and Expo (app) dev clients (same-origin in Docker).
 const string DevCorsPolicy = "DevClients";
 builder.Services.AddCors(options =>
 {
@@ -27,10 +75,27 @@ builder.Services.AddCors(options =>
                 "http://localhost:8081",   // Expo / Metro dev server
                 "http://localhost:19006")  // Expo web
             .AllowAnyHeader()
-            .AllowAnyMethod());
+            .AllowAnyMethod()
+            .AllowCredentials());          // admin cookie across origins in native dev
 });
 
 var app = builder.Build();
+
+// Apply EF Core migrations on startup, retrying while the DB finishes booting.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    for (var attempt = 1; ; attempt++)
+    {
+        try { db.Database.Migrate(); break; }
+        catch (Exception ex) when (attempt < 15)
+        {
+            app.Logger.LogWarning("Database not ready (attempt {Attempt}): {Message}. Retrying in 2s...",
+                attempt, ex.Message);
+            Thread.Sleep(2000);
+        }
+    }
+}
 
 // Behind nginx: honor X-Forwarded-* before anything else in the pipeline.
 app.UseForwardedHeaders();
@@ -55,11 +120,24 @@ if (app.Configuration["ASPNETCORE_HTTPS_PORTS"] is not null
 
 app.UseCors(DevCorsPolicy);
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
 
-// Health check -> /api/health behind the proxy.
+// Health checks -> /api/health and /api/health/db behind the proxy.
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/db", async (AppDbContext db) =>
+{
+    var canConnect = await db.Database.CanConnectAsync();
+    string? pgvector = null;
+    if (canConnect)
+    {
+        pgvector = await db.Database
+            .SqlQuery<string>($"SELECT extversion AS \"Value\" FROM pg_extension WHERE extname = 'vector'")
+            .FirstOrDefaultAsync();
+    }
+    return Results.Ok(new { db = canConnect ? "ok" : "down", pgvector });
+});
 
 app.Run();
