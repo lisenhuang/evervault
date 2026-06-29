@@ -33,7 +33,7 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
 | **38378** | nginx (public entry) | ✅ host |
 | 38373 | Next.js (web) | 🔒 internal |
 | 38372 | .NET (backend) | 🔒 internal |
-| 5432 | Postgres + pgvector | 🔒 internal (dev only) |
+| 38377 | Postgres + pgvector | 🔒 `127.0.0.1` only (dev) · prod: not published |
 
 ## 🔐 Admin & data
 

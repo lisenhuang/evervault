@@ -25,5 +25,7 @@ services:
 
   db:
     # Publish Postgres for a natively-run backend during dev (the container reaches it as `db`).
+    # Bound to 127.0.0.1 ONLY: reachable from the host (localhost:38377) but never from outside
+    # the machine — Docker listens on loopback, so even a public/open 38377 can't reach the DB.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:38377:5432"

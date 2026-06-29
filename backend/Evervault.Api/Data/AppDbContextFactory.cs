@@ -14,7 +14,7 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql(
-                "Host=localhost;Port=5432;Database=evervault;Username=postgres",
+                "Host=localhost;Port=38377;Database=evervault;Username=postgres",
                 o => o.UseVector())
             .Options;
         return new AppDbContext(options);
