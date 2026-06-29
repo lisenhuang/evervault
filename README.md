@@ -41,6 +41,10 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
   login. Then a dashboard to configure **storage**.
 - **Cloudflare R2** is configured from the dashboard (no `.env`) — the form tells you where to
   find each value; the secret is **encrypted** in the DB.
+- **Google Sign-In** uses Google Identity Services (ID-token flow), so **no client secret is
+  needed** — the backend trusts tokens by verifying Google's signature + the `aud` (Client ID)
+  claim. The Client ID is public by design; the real gate is the **Authorized JS origins** set in
+  the Google Cloud Console, which stops other sites from minting tokens as you.
 - **Data persists** in the `pgdata` volume across `make up`/`make down`. ⚠️ `make clean` (`-v`)
   **wipes the database**; `make down` is the safe stop.
 - Zero secrets to manage: passwordless DB (`trust`, never exposed) + admin cookies/keys auto-stored
