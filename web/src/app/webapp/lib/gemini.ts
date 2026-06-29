@@ -109,9 +109,16 @@ export function textModels(models: ModelInfo[]): ModelInfo[] {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** Voice/speech models (text-to-speech). */
+/** Voice/speech models (text-to-speech), used for the push-to-talk spoken reply. */
 export function audioModels(models: ModelInfo[]): ModelInfo[] {
   return models
     .filter((m) => m.id.includes("tts") && m.methods.includes("generateContent"))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Realtime voice-call models (Live API — bidirectional streaming audio). */
+export function liveModels(models: ModelInfo[]): ModelInfo[] {
+  return models
+    .filter((m) => m.methods.includes("bidiGenerateContent"))
     .sort((a, b) => a.id.localeCompare(b.id));
 }

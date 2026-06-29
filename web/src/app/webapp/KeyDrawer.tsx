@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
-import { audioModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
+import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
 
 export default function KeyDrawer({
   open,
@@ -16,9 +16,11 @@ export default function KeyDrawer({
   onReloadModels,
   textModel,
   audioModel,
+  liveModel,
   voice,
   onChangeTextModel,
   onChangeAudioModel,
+  onChangeLiveModel,
   onChangeVoice,
 }: {
   open: boolean;
@@ -32,9 +34,11 @@ export default function KeyDrawer({
   onReloadModels: () => void;
   textModel: string;
   audioModel: string;
+  liveModel: string;
   voice: string;
   onChangeTextModel: (v: string) => void;
   onChangeAudioModel: (v: string) => void;
+  onChangeLiveModel: (v: string) => void;
   onChangeVoice: (v: string) => void;
 }) {
   const [draft, setDraft] = useState(apiKey);
@@ -46,6 +50,7 @@ export default function KeyDrawer({
 
   const texts = models ? textModels(models) : [];
   const audios = models ? audioModels(models) : [];
+  const lives = models ? liveModels(models) : [];
   const selectCls =
     "mt-1 w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition focus:border-blue-500 dark:border-white/20 dark:bg-neutral-900";
 
@@ -164,7 +169,22 @@ export default function KeyDrawer({
                     ))}
                   </select>
                   <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
-                    Used to speak replies. The text model above understands what you say.
+                    Used to speak replies to voice messages.
+                  </span>
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-medium text-black/70 dark:text-white/70">Live voice-call model</span>
+                  <select value={liveModel} onChange={(e) => onChangeLiveModel(e.target.value)} className={selectCls}>
+                    {lives.length === 0 && <option value={liveModel}>{liveModel}</option>}
+                    {lives.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
+                    Real-time hands-free calls (the 📞 button). Needs a Live-API model.
                   </span>
                 </label>
 

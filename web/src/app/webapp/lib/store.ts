@@ -4,10 +4,12 @@
 const KEY = "ev:geminiKey";
 const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
+const LIVE_MODEL = "ev:liveModel";
 const VOICE = "ev:voice";
 
 export const DEFAULT_TEXT_MODEL = "gemini-2.5-flash";
 export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
+export const DEFAULT_LIVE_MODEL = "gemini-2.0-flash-live-001";
 export const DEFAULT_VOICE = "Kore";
 
 function get(key: string): string {
@@ -27,6 +29,8 @@ export const store = {
   setTextModel: (v: string) => set(TEXT_MODEL, v),
   getAudioModel: () => get(AUDIO_MODEL) || DEFAULT_AUDIO_MODEL,
   setAudioModel: (v: string) => set(AUDIO_MODEL, v),
+  getLiveModel: () => get(LIVE_MODEL) || DEFAULT_LIVE_MODEL,
+  setLiveModel: (v: string) => set(LIVE_MODEL, v),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
 };

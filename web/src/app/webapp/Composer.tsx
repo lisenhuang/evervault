@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Loader2, Mic, Send, Square } from "lucide-react";
+import { Loader2, Mic, Phone, Send, Square } from "lucide-react";
 
 export type VoiceState = "idle" | "recording" | "processing";
 
@@ -9,6 +9,7 @@ export default function Composer({
   onSendText,
   onStartVoice,
   onStopVoice,
+  onStartCall,
   voiceState,
   disabled,
   hasKey,
@@ -17,6 +18,7 @@ export default function Composer({
   onSendText: (text: string) => void;
   onStartVoice: () => void;
   onStopVoice: () => void;
+  onStartCall: () => void;
   voiceState: VoiceState;
   disabled: boolean;
   hasKey: boolean;
@@ -53,6 +55,14 @@ export default function Composer({
     else if (voiceState === "idle") onStartVoice();
   }
 
+  function callClick() {
+    if (!hasKey) {
+      onNeedKey();
+      return;
+    }
+    onStartCall();
+  }
+
   const recording = voiceState === "recording";
   const processing = voiceState === "processing";
 
@@ -66,6 +76,14 @@ export default function Composer({
           </div>
         )}
         <div className="flex items-end gap-2">
+          <button
+            onClick={callClick}
+            disabled={disabled || recording || processing}
+            title="Start a live voice call"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+          >
+            <Phone size={18} />
+          </button>
           <button
             onClick={micClick}
             disabled={disabled || processing}

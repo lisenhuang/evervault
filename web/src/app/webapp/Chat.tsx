@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LogOut, Settings2, SquarePen } from "lucide-react";
+import CallOverlay from "./CallOverlay";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
 import { type Content, listModels, type ModelInfo, streamText, synthesizeSpeech } from "./lib/gemini";
+import { LiveSession, type LiveState } from "./lib/liveSession";
 import { store } from "./lib/store";
 import type { Me } from "./authApi";
 import type { ChatMessage } from "./types";
@@ -28,6 +30,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [apiKey, setApiKey] = useState("");
   const [textModel, setTextModel] = useState(store.getTextModel());
   const [audioModel, setAudioModel] = useState(store.getAudioModel());
+  const [liveModel, setLiveModel] = useState(store.getLiveModel());
   const [voice, setVoice] = useState(store.getVoice());
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -36,6 +39,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const recorderRef = useRef<Recorder | null>(null);
+
+  // Realtime voice call (Live API)
+  const [callState, setCallState] = useState<LiveState | null>(null);
+  const [callMuted, setCallMuted] = useState(false);
+  const [callError, setCallError] = useState("");
+  const liveRef = useRef<LiveSession | null>(null);
+  const liveUserIdRef = useRef<string | null>(null);
+  const liveAsstIdRef = useRef<string | null>(null);
 
   const loadModels = useCallback(async (key: string) => {
     if (!key) return;
@@ -76,6 +87,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   function pickAudioModel(v: string) {
     store.setAudioModel(v);
     setAudioModel(v);
+  }
+  function pickLiveModel(v: string) {
+    store.setLiveModel(v);
+    setLiveModel(v);
   }
   function pickVoice(v: string) {
     store.setVoice(v);
@@ -174,6 +189,64 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (m.audio) void playPcm16(m.audio.base64, m.audio.sampleRate);
   }
 
+  // --- Realtime voice call (Live API) ---
+
+  function appendLiveText(role: "user" | "assistant", delta: string) {
+    const ref = role === "user" ? liveUserIdRef : liveAsstIdRef;
+    setMessages((cur) => {
+      if (ref.current) return cur.map((m) => (m.id === ref.current ? { ...m, text: m.text + delta } : m));
+      const id = uid();
+      ref.current = id;
+      return [...cur, { id, role, text: delta }];
+    });
+  }
+
+  async function startCall() {
+    if (!apiKey) {
+      setDrawerOpen(true);
+      return;
+    }
+    setCallError("");
+    setCallMuted(false);
+    liveUserIdRef.current = null;
+    liveAsstIdRef.current = null;
+    const session = new LiveSession(apiKey, liveModel, voice);
+    liveRef.current = session;
+    setCallState("connecting");
+    try {
+      await session.start({
+        onState: setCallState,
+        onUserText: (d) => appendLiveText("user", d),
+        onModelText: (d) => appendLiveText("assistant", d),
+        onTurnComplete: () => {
+          liveUserIdRef.current = null;
+          liveAsstIdRef.current = null;
+        },
+        onError: setCallError,
+      });
+    } catch (e) {
+      setCallError(errMsg(e));
+      setCallState("error");
+    }
+  }
+
+  async function endCall() {
+    const s = liveRef.current;
+    liveRef.current = null;
+    await s?.stop();
+    setCallState(null);
+  }
+
+  function toggleMute() {
+    setCallMuted((m) => {
+      const next = !m;
+      liveRef.current?.setMuted(next);
+      return next;
+    });
+  }
+
+  useEffect(() => () => void liveRef.current?.stop(), []);
+
   return (
     <div className="flex h-screen flex-col bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <header className="sticky top-0 z-10 border-b border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
@@ -237,11 +310,22 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onSendText={sendText}
         onStartVoice={startVoice}
         onStopVoice={stopVoice}
+        onStartCall={startCall}
         voiceState={voiceState}
         disabled={streaming}
         hasKey={!!apiKey}
         onNeedKey={() => setDrawerOpen(true)}
       />
+
+      {callState && (
+        <CallOverlay
+          state={callState}
+          muted={callMuted}
+          error={callError}
+          onToggleMute={toggleMute}
+          onEnd={endCall}
+        />
+      )}
 
       <KeyDrawer
         open={drawerOpen}
@@ -255,9 +339,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onReloadModels={() => loadModels(apiKey)}
         textModel={textModel}
         audioModel={audioModel}
+        liveModel={liveModel}
         voice={voice}
         onChangeTextModel={pickTextModel}
         onChangeAudioModel={pickAudioModel}
+        onChangeLiveModel={pickLiveModel}
         onChangeVoice={pickVoice}
       />
     </div>
