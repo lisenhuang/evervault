@@ -12,6 +12,17 @@ function makeCtx(): AudioContext {
   return new Ctor();
 }
 
+/**
+ * iOS / iPadOS (incl. an iPad reporting itself as a Mac). Every browser there is WebKit, where
+ * Web Audio output routed through a WebRTC loopback plays back silently — so the echo-cancelling
+ * loopback can't be used and we fall back to direct speaker output.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
 export class MicStreamer {
   private ctx?: AudioContext;
   private stream?: MediaStream;

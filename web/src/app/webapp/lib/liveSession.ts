@@ -3,7 +3,7 @@
 // talk) and barge-in (interrupt the model by speaking). Uses the user's own key, browser → Google.
 
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServerMessage } from "@google/genai";
-import { AudioPlayer, MicStreamer } from "./liveAudio";
+import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { currentTimeContext } from "./time";
 
@@ -82,17 +82,24 @@ export class LiveSession {
       this.session?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
     });
 
-    // Now that the mic is capturing, play the model's voice through the echo-cancelling loopback —
-    // this removes the speaker echo so the model doesn't interrupt itself (see echoLoopback.ts).
-    // iOS only lets a MediaStream element play with sound while the page is already capturing,
-    // which is why this comes after mic.start(). If it still can't start, fall back to plain
-    // speaker output so the user always hears the model (echo cancellation is lost in that case).
-    try {
-      await this.loopback.start(this.player.stream);
-    } catch (e) {
-      console.warn("[live] echo-cancelling loopback unavailable; using direct speaker output", e);
-      this.loopback.stop();
+    // Play the model's voice. On desktop/Android, route it through the echo-cancelling loopback
+    // (puts it on the path the browser's echo canceller references, so the model doesn't interrupt
+    // itself — see echoLoopback.ts). It comes after mic.start() because iOS only lets a MediaStream
+    // element play while the page is already capturing.
+    //
+    // On iOS the loopback plays back SILENTLY (WebKit can't carry Web Audio output through it), so
+    // there we play straight to the speaker to stay audible; iOS echo is left to the VAD tuning
+    // above (and is the candidate for an in-app echo canceller if that proves insufficient).
+    if (isIOS()) {
       this.player.useDirectOutput();
+    } else {
+      try {
+        await this.loopback.start(this.player.stream);
+      } catch (e) {
+        console.warn("[live] echo-cancelling loopback unavailable; using direct speaker output", e);
+        this.loopback.stop();
+        this.player.useDirectOutput();
+      }
     }
 
     cb.onState("listening");
