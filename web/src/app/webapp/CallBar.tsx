@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import type { LiveState } from "./lib/liveSession";
+import { formatDuration } from "./lib/time";
 
 const STATUS: Record<LiveState, string> = {
   connecting: "Connecting…",
@@ -24,12 +26,15 @@ export default function CallBar({
   state,
   muted,
   error,
+  startedAt,
   onToggleMute,
   onEnd,
 }: {
   state: LiveState;
   muted: boolean;
   error: string;
+  /** ms timestamp of when the call connected, or null while still connecting. Drives the live timer. */
+  startedAt: number | null;
   onToggleMute: () => void;
   onEnd: () => void;
 }) {
@@ -40,6 +45,21 @@ export default function CallBar({
   const speaking = state === "speaking";
   // "Live" = audio is actively flowing (listening or speaking) and not muted.
   const live = (speaking || state === "listening") && !muted && !connecting && !terminal;
+
+  // Tick the elapsed-time display once a second while the call is connected. On cleanup (the call
+  // going terminal, or unmount) we snap once more to the real clock, so the frozen readout reflects
+  // the true end instant — not a stale last tick — and matches the duration logged to chat history.
+  // (The initial 0–1s reads "00:00" because elapsed is clamped to 0 until the first tick.)
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt == null || terminal) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => {
+      clearInterval(id);
+      setNowMs(Date.now());
+    };
+  }, [startedAt, terminal]);
+  const elapsed = startedAt != null ? formatDuration((nowMs - startedAt) / 1000) : null;
 
   return (
     <div className="border-t border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
@@ -97,7 +117,15 @@ export default function CallBar({
 
         {/* Status — announced to assistive tech as the call state changes */}
         <div className="min-w-0 flex-1" role="status" aria-live="polite">
-          <p className="text-sm font-medium text-black dark:text-white">{STATUS[state]}</p>
+          <p className="flex items-center gap-2 text-sm font-medium text-black dark:text-white">
+            <span>{STATUS[state]}</span>
+            {/* aria-hidden so the polite live region announces only state changes, not every 1s tick */}
+            {elapsed && (
+              <span aria-hidden="true" className="font-mono text-xs tabular-nums text-black/50 dark:text-white/50">
+                {elapsed}
+              </span>
+            )}
+          </p>
           <p className="truncate text-xs text-black/50 dark:text-white/50">
             {error
               ? error

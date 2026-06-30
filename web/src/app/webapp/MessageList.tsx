@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Loader2, Mic, Sparkles, Volume2 } from "lucide-react";
+import { Loader2, Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "./types";
+import { formatDuration } from "./lib/time";
 
 const md: Components = {
   p: (props) => <p className="mb-2 last:mb-0" {...props} />,
@@ -52,7 +53,17 @@ export default function MessageList({
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
       {messages.map((m) =>
-        m.role === "user" ? (
+        m.kind === "call" ? (
+          // Centered system chip logged when a realtime call ends — shows how long it lasted.
+          <div key={m.id} className="flex justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
+              <PhoneOff size={13} aria-hidden="true" />
+              Call ended
+              <span aria-hidden="true">·</span>
+              <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
+            </span>
+          </div>
+        ) : m.role === "user" ? (
           <div key={m.id} className="flex items-start justify-end gap-3">
             <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm">
               {m.kind === "voice" ? (

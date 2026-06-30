@@ -59,6 +59,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [callState, setCallState] = useState<LiveState | null>(null);
   const [callMuted, setCallMuted] = useState(false);
   const [callError, setCallError] = useState("");
+  // ms timestamp of when the current call connected (null until connected / when no call is active).
+  // Drives the live mm:ss timer in the CallBar; the ref mirror lets the end/close handlers read it
+  // without a stale closure when they log the call duration into chat history.
+  const [callStartedAt, setCallStartedAtState] = useState<number | null>(null);
+  const callStartedAtRef = useRef<number | null>(null);
+  const setCallStartedAt = useCallback((v: number | null) => {
+    callStartedAtRef.current = v;
+    setCallStartedAtState(v);
+  }, []);
   const liveRef = useRef<LiveSession | null>(null);
   const liveUserIdRef = useRef<string | null>(null);
   const liveAsstIdRef = useRef<string | null>(null);
@@ -360,6 +369,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     });
   }
 
+  // Log a "call ended" summary chip into chat history with how long the call lasted. Idempotent:
+  // reads + clears the start time, so the manual-End and server-close paths can both call it safely
+  // (the second call sees a null start and no-ops). Calls that never connected leave no chip.
+  function finishCall() {
+    const startedAt = callStartedAtRef.current;
+    setCallStartedAt(null);
+    if (startedAt == null) return;
+    // Floor (not round) to match the live CallBar timer, which floors — so the chip never reads a
+    // second more than the last value the user watched tick, and sub-1s blips stay suppressed.
+    const durationSec = Math.floor((Date.now() - startedAt) / 1000);
+    if (durationSec < 1) return;
+    setMessages((cur) => [...cur, { id: uid(), role: "assistant", text: "", kind: "call", durationSec }]);
+  }
+
   async function startCall() {
     if (!apiKey) {
       setDrawerOpen(true);
@@ -367,6 +390,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
     setCallError("");
     setCallMuted(false);
+    setCallStartedAt(null);
     liveUserIdRef.current = null;
     liveAsstIdRef.current = null;
     liveUserTextRef.current = "";
@@ -378,7 +402,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setCallState("connecting");
     try {
       await session.start({
-        onState: setCallState,
+        onState: (s) => {
+          setCallState(s);
+          // Start the clock the moment audio first flows (first connected state), so the recorded
+          // duration is the time actually spent talking — not the connecting handshake.
+          if ((s === "listening" || s === "speaking") && callStartedAtRef.current == null) {
+            setCallStartedAt(Date.now());
+          }
+        },
         onUserText: (d) => appendLiveText("user", d),
         onModelText: (d) => appendLiveText("assistant", d),
         onTurnComplete: () => {
@@ -403,6 +434,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   async function endCall() {
     const s = liveRef.current;
     liveRef.current = null;
+    finishCall();
     await s?.stop();
     setCallState(null);
   }
@@ -425,10 +457,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (callState !== "closed" && callState !== "error") return;
     void liveRef.current?.stop();
     liveRef.current = null;
+    finishCall(); // log the duration once; no-ops if End already handled it or the call never connected
     if (callState === "closed") {
       const t = setTimeout(() => setCallState(null), 1500);
       return () => clearTimeout(t);
     }
+    // finishCall reads a ref and is safe to omit from deps; rerunning only on callState is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callState]);
 
   return (
@@ -437,6 +472,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         user={user}
         textModel={textModel}
         onNewChat={() => {
+          if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
           void runExtraction(2); // distil the conversation we're leaving before clearing it
           setMessages([]);
           conversationIdRef.current = uid();
@@ -518,6 +554,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             state={callState}
             muted={callMuted}
             error={callError}
+            startedAt={callStartedAt}
             onToggleMute={toggleMute}
             onEnd={endCall}
           />
