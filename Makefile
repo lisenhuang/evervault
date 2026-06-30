@@ -2,6 +2,10 @@ COMPOSE     = docker compose
 COMPOSE_DEV = docker compose -f docker-compose.yml -f docker-compose.dev.yml
 SERVICE     = app
 
+# Best-effort LAN IP so other devices on the same Wi-Fi can reach the app.
+# Sets $$ip: macOS active interface (via route) → en0/en1; Linux → hostname -I.
+LAN_IP_SH = ip=$$(route -n get default 2>/dev/null | awk '/interface:/{print $$2}' | xargs -I{} ipconfig getifaddr {} 2>/dev/null); [ -z "$$ip" ] && ip=$$(ipconfig getifaddr en0 2>/dev/null) || true; [ -z "$$ip" ] && ip=$$(ipconfig getifaddr en1 2>/dev/null) || true; [ -z "$$ip" ] && ip=$$(hostname -I 2>/dev/null | awk '{print $$1}') || true;
+
 .PHONY: dev up down logs build sh clean prune rebuild reset-admin help
 
 help: ## Show this help
@@ -9,7 +13,12 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
 
 dev: ## Dev with hot reload (edit & save, no rebuild)
-	@echo "🔥 Starting dev — ready at 👉 http://localhost:38378 once compiled (watch the logs)"
+	@port=$${HOST_PORT:-$$(grep -E '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2)}; \
+	port=$${port:-38378}; \
+	$(LAN_IP_SH) \
+	echo "🔥 Starting dev — ready once compiled (watch the logs):"; \
+	echo "   • Local    👉 http://localhost:$$port"; \
+	[ -n "$$ip" ] && echo "   • Network  👉 http://$$ip:$$port  (same Wi-Fi)" || true
 	$(COMPOSE_DEV) up --build
 
 up: ## Build + run prod (detached), drop old versions, wait until ready, print URL
@@ -19,10 +28,14 @@ up: ## Build + run prod (detached), drop old versions, wait until ready, print U
 	@port=$${HOST_PORT:-$$(grep -E '^HOST_PORT=' .env 2>/dev/null | cut -d= -f2)}; \
 	port=$${port:-38378}; \
 	url="http://localhost:$$port"; \
+	$(LAN_IP_SH) \
 	printf "⏳ Waiting for EverVault to be ready"; \
 	for i in $$(seq 1 60); do \
 		if curl -fsS -o /dev/null "$$url/api/health" 2>/dev/null && curl -fsS -o /dev/null "$$url/" 2>/dev/null; then \
-			printf "\n✅ EverVault is ready 👉 %s\n" "$$url"; exit 0; \
+			printf "\n✅ EverVault is ready:\n"; \
+			printf "   • Local    👉 %s\n" "$$url"; \
+			[ -n "$$ip" ] && printf "   • Network  👉 http://%s:%s  (same Wi-Fi)\n" "$$ip" "$$port" || true; \
+			exit 0; \
 		fi; \
 		printf "."; sleep 2; \
 	done; \
