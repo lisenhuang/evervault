@@ -67,7 +67,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
   // Memory (recall)
   const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
-  const [memoryOn, setMemoryOn] = useState(true);
+  const [memoryOn] = useState(true);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const conversationIdRef = useRef(uid());
 
@@ -128,7 +128,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setApiKey(k);
     if (k) void loadModels(k);
     else setDrawerOpen(true);
-    setMemoryOn(store.getMemoryOn());
+    store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
     setNoticeOpen(!store.getNoticeSeen());
     void refreshProfile();
   }, [loadModels, refreshProfile]);
@@ -147,11 +147,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     };
   }, [runExtraction]);
 
-  function toggleMemory(on: boolean) {
-    store.setMemoryOn(on);
-    setMemoryOn(on);
-    if (on) void refreshProfile();
-  }
   function dismissNotice() {
     store.setNoticeSeen();
     setNoticeOpen(false);
@@ -472,7 +467,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           <div className="border-b border-black/10 bg-blue-50 dark:border-white/10 dark:bg-blue-950/30">
             <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 text-xs text-blue-800 dark:text-blue-200">
               <span className="flex-1">
-                Your chats are saved so you (and the AI) can recall them later. Manage or turn this off in{" "}
+                Your chats are saved so you (and the AI) can recall them later. Manage them in{" "}
                 <button onClick={() => setMemoryPanelOpen(true)} className="font-medium underline">
                   Memories
                 </button>
@@ -565,7 +560,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         open={memoryPanelOpen}
         onClose={() => setMemoryPanelOpen(false)}
         memoryOn={memoryOn}
-        onToggleMemory={toggleMemory}
       />
 
       <ConfirmDialog

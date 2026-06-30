@@ -43,12 +43,10 @@ export default function MemoryPanel({
   open,
   onClose,
   memoryOn,
-  onToggleMemory,
 }: {
   open: boolean;
   onClose: () => void;
   memoryOn: boolean;
-  onToggleMemory: (on: boolean) => void;
 }) {
   const [tab, setTab] = useState<Tab>("about");
 
@@ -154,21 +152,6 @@ export default function MemoryPanel({
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-          <label className="flex items-center justify-between gap-2 rounded-lg bg-black/3 px-3 py-2 text-sm dark:bg-white/5">
-            <span>
-              <span className="font-medium">Remember my chats</span>
-              <span className="mt-0.5 block text-xs text-black/55 dark:text-white/55">
-                Lets the AI learn about you and recall past chats. You can clear it any time.
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={memoryOn}
-              onChange={(e) => onToggleMemory(e.target.checked)}
-              className="h-5 w-5 shrink-0"
-            />
-          </label>
-
           {memoryOn && embeddingOff && (
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
