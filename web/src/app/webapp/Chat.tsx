@@ -333,6 +333,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
   useEffect(() => () => void liveRef.current?.stop(), []);
 
+  // If the call ends on its own (server/network drop) rather than via the End button, the session's
+  // onclose/onerror surfaces "closed"/"error" without stop() ever running. Release the mic/loopback
+  // so they don't keep capturing, and auto-dismiss a cleanly-closed bar so it doesn't linger over
+  // the chat. An errored bar stays until the user dismisses it (so they can read the message).
+  useEffect(() => {
+    if (callState !== "closed" && callState !== "error") return;
+    void liveRef.current?.stop();
+    liveRef.current = null;
+    if (callState === "closed") {
+      const t = setTimeout(() => setCallState(null), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [callState]);
+
   return (
     <div className="flex h-screen flex-col bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <header className="sticky top-0 z-10 border-b border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
@@ -419,7 +433,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             )}
           </div>
         ) : (
-          <MessageList messages={messages} userName={user.name} userPicture={user.picture} onPlayAudio={playAudio} />
+          <MessageList
+            messages={messages}
+            userName={user.name}
+            userPicture={user.picture}
+            onPlayAudio={playAudio}
+            scrollSignal={!!callState}
+          />
         )}
       </main>
 

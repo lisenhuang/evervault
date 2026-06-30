@@ -34,16 +34,20 @@ export default function MessageList({
   userName,
   userPicture,
   onPlayAudio,
+  scrollSignal,
 }: {
   messages: ChatMessage[];
   userName: string;
   userPicture: string | null;
   onPlayAudio: (m: ChatMessage) => void;
+  // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
+  // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
+  scrollSignal?: unknown;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+  }, [messages, scrollSignal]);
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">

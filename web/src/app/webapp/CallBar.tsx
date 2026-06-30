@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
+import { AlertTriangle, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import type { LiveState } from "./lib/liveSession";
 
 const STATUS: Record<LiveState, string> = {
@@ -35,9 +35,11 @@ export default function CallBar({
 }) {
   const connecting = state === "connecting";
   const errored = state === "error";
+  const ended = state === "closed";
+  const terminal = errored || ended; // call is over / dead — no live audio, mute is meaningless
   const speaking = state === "speaking";
   // "Live" = audio is actively flowing (listening or speaking) and not muted.
-  const live = (speaking || state === "listening") && !muted && !connecting && !errored;
+  const live = (speaking || state === "listening") && !muted && !connecting && !terminal;
 
   return (
     <div className="border-t border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
@@ -46,7 +48,7 @@ export default function CallBar({
             Tapping it mutes/unmutes the mic. */}
         <button
           onClick={onToggleMute}
-          disabled={connecting || errored}
+          disabled={connecting || terminal}
           title={muted ? "Unmute" : "Mute"}
           aria-label={muted ? "Unmute microphone" : "Mute microphone"}
           className="relative flex h-12 w-12 shrink-0 items-center justify-center disabled:opacity-50"
@@ -60,7 +62,7 @@ export default function CallBar({
           )}
           <span
             className={`relative flex h-12 w-12 items-center justify-center rounded-full text-white shadow-md transition-transform ${
-              muted
+              muted || terminal
                 ? "bg-neutral-400 dark:bg-neutral-600"
                 : speaking
                   ? "bg-linear-to-br from-emerald-400 to-teal-500"
@@ -69,6 +71,10 @@ export default function CallBar({
           >
             {connecting ? (
               <Loader2 size={20} className="animate-spin" />
+            ) : errored ? (
+              <AlertTriangle size={20} />
+            ) : ended ? (
+              <PhoneOff size={20} />
             ) : muted ? (
               <MicOff size={20} />
             ) : live ? (
@@ -89,8 +95,8 @@ export default function CallBar({
           </span>
         </button>
 
-        {/* Status */}
-        <div className="min-w-0 flex-1">
+        {/* Status — announced to assistive tech as the call state changes */}
+        <div className="min-w-0 flex-1" role="status" aria-live="polite">
           <p className="text-sm font-medium text-black dark:text-white">{STATUS[state]}</p>
           <p className="truncate text-xs text-black/50 dark:text-white/50">
             {error
