@@ -88,7 +88,7 @@ export default function MemoryPanel({
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && run()}
                 placeholder="Search your past chats…"
-                className="flex-1 bg-transparent text-sm outline-none"
+                className="flex-1 bg-transparent text-base outline-none md:text-sm"
               />
             </div>
             <button

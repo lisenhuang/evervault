@@ -5,11 +5,11 @@ import { useEffect } from "react";
 /**
  * Binds the chat shell to the on-screen keyboard.
  *
- * Sets the `--app-height` CSS variable on <html> to the current visual-viewport height
- * (the area not covered by the keyboard) so a `.app-shell` element shrinks to fit and the
- * composer at the bottom of its flex column stays just above the keyboard. While the chat
- * is mounted it also locks page scroll, which stops iOS Safari from scrolling the layout
- * viewport out from under the fixed-height shell when the keyboard opens.
+ * Sets `--app-height` / `--app-top` on <html> from the visual viewport (its height and
+ * offsetTop) so the fixed `.app-shell` element exactly covers the visible area and the
+ * composer at the bottom of its flex column stays just above the keyboard — even when iOS
+ * scrolls the layout viewport under the keyboard. While the chat is mounted it also locks
+ * page scroll, which stops iOS Safari from pushing the shell out from under the keyboard.
  *
  * Degrades safely: with no `visualViewport` support the shell falls back to the CSS
  * `100dvh` default, which is already correct on Chrome (interactive-widget=resizes-content).
@@ -21,7 +21,9 @@ export function useVisualViewport() {
 
     const apply = () => {
       const h = vv ? vv.height : window.innerHeight;
+      const top = vv ? vv.offsetTop : 0;
       root.style.setProperty("--app-height", `${Math.round(h)}px`);
+      root.style.setProperty("--app-top", `${Math.round(top)}px`);
     };
     apply();
 
@@ -41,6 +43,7 @@ export function useVisualViewport() {
       window.removeEventListener("orientationchange", apply);
       document.body.style.overflow = prevOverflow;
       root.style.removeProperty("--app-height");
+      root.style.removeProperty("--app-top");
     };
   }, []);
 }

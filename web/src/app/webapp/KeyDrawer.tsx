@@ -98,7 +98,7 @@ export default function KeyDrawer({
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   placeholder="AIza…"
-                  className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 pr-9 text-sm outline-none transition focus:border-blue-500 dark:border-white/20"
+                  className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 pr-9 text-base outline-none transition focus:border-blue-500 md:text-sm dark:border-white/20"
                 />
                 <button
                   type="button"

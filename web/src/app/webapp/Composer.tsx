@@ -116,7 +116,7 @@ export default function Composer({
                   send();
                 }
               }}
-              className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none disabled:opacity-50"
+              className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none md:text-sm disabled:opacity-50"
             />
           </div>
 
