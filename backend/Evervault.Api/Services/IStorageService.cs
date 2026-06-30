@@ -37,4 +37,7 @@ public interface IStorageService
 
     /// <summary>A short-lived presigned GET URL for an object, or null if storage isn't configured.</summary>
     Task<string?> GetPresignedGetUrlAsync(string key, TimeSpan ttl, CancellationToken ct = default);
+
+    /// <summary>True if the object exists in the configured bucket. False if missing OR storage unconfigured.</summary>
+    Task<bool> ObjectExistsAsync(string key, CancellationToken ct = default);
 }

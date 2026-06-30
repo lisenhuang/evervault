@@ -83,6 +83,27 @@ public class FakeAiProvider : IAiProvider
             new List<AiToolCall>()));
     }
 
+    public Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
+        string rawKey, string model, string text, string voiceName, CancellationToken ct)
+    {
+        if (rawKey.Trim() != "good")
+            throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+
+        // A 0.4s tone; the pitch varies by voice name so different voices are distinguishable offline.
+        const int rate = 24000;
+        const double seconds = 0.4;
+        var freq = 300 + Math.Abs(voiceName.GetHashCode()) % 400; // 300–700 Hz
+        var n = (int)(rate * seconds);
+        var pcm = new byte[n * 2];
+        for (var i = 0; i < n; i++)
+        {
+            var s = (short)(Math.Sin(2 * Math.PI * freq * i / rate) * 8000);
+            pcm[i * 2] = (byte)(s & 0xff);
+            pcm[i * 2 + 1] = (byte)((s >> 8) & 0xff);
+        }
+        return Task.FromResult(((byte[])pcm, "audio/L16;codec=pcm;rate=24000"));
+    }
+
     private static Task<AiCompletion> Single(AiToolCall call)
         => Task.FromResult(new AiCompletion(null, new List<AiToolCall> { call }));
 

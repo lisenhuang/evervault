@@ -105,6 +105,55 @@ export function playPcm16(base64: string, sampleRate: number): Promise<void> {
   return playPcm16Handle(base64, sampleRate).ended;
 }
 
+/**
+ * Plays an audio file from a URL via HTMLAudioElement (which follows a cross-origin redirect — e.g.
+ * our /api/voice-samples/{voice} → presigned R2 — without needing CORS, unlike fetch). Returns:
+ *  - `started`: resolves when playback actually begins; REJECTS on load/play error.
+ *  - `ended`: resolves when playback ends, is stopped, or errors.
+ *  - `stop()`: halts playback and settles both promises.
+ */
+export function playUrlHandle(url: string): {
+  stop: () => void;
+  started: Promise<void>;
+  ended: Promise<void>;
+} {
+  const el = new Audio(url);
+  let onStarted: () => void = () => {};
+  let onStartFail: (e: unknown) => void = () => {};
+  let onEnded: () => void = () => {};
+  const started = new Promise<void>((resolve, reject) => {
+    onStarted = resolve;
+    onStartFail = reject;
+  });
+  const ended = new Promise<void>((resolve) => {
+    onEnded = resolve;
+  });
+  el.onplaying = () => onStarted();
+  el.onended = () => onEnded();
+  el.onerror = () => {
+    onStartFail(new Error("Could not play the voice sample."));
+    onEnded();
+  };
+  void el.play().catch((e) => {
+    onStartFail(e);
+    onEnded();
+  });
+  return {
+    stop: () => {
+      try {
+        el.pause();
+        el.currentTime = 0;
+      } catch {
+        /* ignore */
+      }
+      onStarted(); // no-op if already settled — unblocks a still-awaiting caller
+      onEnded();
+    },
+    started,
+    ended,
+  };
+}
+
 // --- encoding helpers ---
 
 function mergeFloat32(chunks: Float32Array[]): Float32Array {

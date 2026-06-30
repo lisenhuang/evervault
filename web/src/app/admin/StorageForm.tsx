@@ -27,6 +27,8 @@ export default function StorageForm() {
   const [secretConfigured, setSecretConfigured] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [samplesMsg, setSamplesMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
+  const [samplesBusy, setSamplesBusy] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -80,7 +82,26 @@ export default function StorageForm() {
     }
   }
 
+  async function generateSamples() {
+    setSamplesBusy(true);
+    setSamplesMsg({ kind: "info", text: "Generating all 30 — this can take a few minutes. You can re-run it to finish any that don’t complete." });
+    const res = await api("/api/admin/storage/samples/generate", { method: "POST" });
+    setSamplesBusy(false);
+    if (res.ok) {
+      const r: { generated: number; skipped: number; failed: number; errors: string[] } = await res.json();
+      const summary = `Generated ${r.generated}, skipped ${r.skipped}, failed ${r.failed}.`;
+      setSamplesMsg({
+        kind: r.failed > 0 ? "error" : "success",
+        text: r.failed > 0 ? `${summary} ${r.errors.slice(0, 3).join(" · ")}` : summary,
+      });
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setSamplesMsg({ kind: "error", text: d.error ?? "Could not generate voice samples." });
+    }
+  }
+
   return (
+    <>
     <Card title="Storage — Cloudflare R2 (S3-compatible)">
       <p className="mb-4 text-sm text-black/60 dark:text-white/60">
         Configure object storage here — no server access or <code>.env</code> needed. The secret is
@@ -146,5 +167,21 @@ export default function StorageForm() {
         </div>
       </div>
     </Card>
+
+    <Card title="Voice preview samples">
+      <p className="mb-4 text-sm text-black/60 dark:text-white/60">
+        Pre-generate the 30 prebuilt voice samples and store them in R2 so the chat “Preview voice”
+        button plays instantly. They’re synthesized with the server Gemini keys (failing over to the
+        next key if one fails). Already-generated samples are skipped. Requires storage and at least
+        one Gemini key to be configured.
+      </p>
+      {samplesMsg && <Banner kind={samplesMsg.kind}>{samplesMsg.text}</Banner>}
+      <div className="mt-4">
+        <Button onClick={generateSamples} disabled={samplesBusy}>
+          {samplesBusy ? "Generating…" : "Generate voice samples"}
+        </Button>
+      </div>
+    </Card>
+    </>
   );
 }

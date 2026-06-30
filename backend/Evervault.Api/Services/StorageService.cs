@@ -142,6 +142,26 @@ public class StorageService : IStorageService
         });
     }
 
+    public async Task<bool> ObjectExistsAsync(string key, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync();
+        if (r is null) return false;
+        using var client = r.Value.Client;
+        try
+        {
+            await client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            {
+                BucketName = r.Value.Bucket,
+                Key = key,
+            }, ct);
+            return true;
+        }
+        catch (AmazonS3Exception e) when (e.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
     private static IAmazonS3 BuildClient(
         string accountId, string accessKeyId, string secret, string? endpoint, string region, string? jurisdiction)
     {

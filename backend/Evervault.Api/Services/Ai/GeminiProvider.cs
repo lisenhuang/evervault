@@ -160,6 +160,50 @@ public class GeminiProvider : IAiProvider
         return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls);
     }
 
+    public async Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
+        string rawKey, string model, string text, string voiceName, CancellationToken ct)
+    {
+        // v1beta generateContent with AUDIO modality. camelCase keys (generationConfig/speechConfig/...).
+        var payload = new Dictionary<string, object?>
+        {
+            ["contents"] = new[] { new { role = "user", parts = new[] { new { text } } } },
+            ["generationConfig"] = new
+            {
+                responseModalities = new[] { "AUDIO" },
+                speechConfig = new { voiceConfig = new { prebuiltVoiceConfig = new { voiceName } } },
+            },
+        };
+
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body); // Auth/Quota/Transient → failover advances
+
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0
+            && candidates[0].TryGetProperty("content", out var content)
+            && content.TryGetProperty("parts", out var parts))
+        {
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("inlineData", out var inline)
+                    && inline.TryGetProperty("data", out var dataEl)
+                    && dataEl.ValueKind == JsonValueKind.String)
+                {
+                    var b64 = dataEl.GetString()!;
+                    var mime = inline.TryGetProperty("mimeType", out var m) ? m.GetString() : null;
+                    return (Convert.FromBase64String(b64), mime ?? "audio/L16;codec=pcm;rate=24000");
+                }
+            }
+        }
+
+        // Malformed / no audio: throw Transient (not a silent return) so failover tries the next key.
+        throw new AiProviderException(AiErrorKind.Transient, "Gemini returned no audio for the TTS request.");
+    }
+
     // --- helpers ---
 
     /// <summary>Translate the shared reasoning-effort value into Gemini's thinkingConfig, picking the right

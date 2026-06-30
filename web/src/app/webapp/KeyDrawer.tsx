@@ -186,7 +186,7 @@ export default function KeyDrawer({
                         </option>
                       ))}
                   </select>
-                  <VoicePreviewButton apiKey={apiKey} model={audioModel} voice={voice} />
+                  <VoicePreviewButton voice={voice} />
                   <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
                     The speaking voice for spoken replies and live calls.{" "}
                     <a

@@ -88,6 +88,13 @@ public interface IAiProvider
         IReadOnlyList<AiToolSchema> tools,
         AiGenerationOptions? options,
         CancellationToken ct);
+
+    /// <summary>Synthesize speech for the given text+voice. Returns raw PCM bytes and the audio mime
+    /// (e.g. "audio/L16;codec=pcm;rate=24000"). Default: the provider has no TTS — throws Other so
+    /// <see cref="KeyFailoverRunner"/> surfaces it immediately instead of retrying every key.</summary>
+    Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
+        string rawKey, string model, string text, string voiceName, CancellationToken ct)
+        => throw new AiProviderException(AiErrorKind.Other, "This provider does not support TTS.");
 }
 
 public interface IAiProviderFactory
