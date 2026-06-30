@@ -30,11 +30,16 @@ export function recordTurn(conversationId: string, turns: TurnItem[]): void {
   }).catch(() => {});
 }
 
-export async function searchMemories(vector: number[] | null, q: string, k = 8): Promise<MemoryHit[]> {
+export async function searchMemories(
+  vector: number[] | null,
+  q: string,
+  k = 8,
+  opts?: { since?: string; until?: string },
+): Promise<MemoryHit[]> {
   try {
     const res = await api("/api/chat/memories/search", {
       method: "POST",
-      body: JSON.stringify({ vector, q, k }),
+      body: JSON.stringify({ vector, q, k, since: opts?.since, until: opts?.until }),
     });
     if (res.ok) return (await res.json()) as MemoryHit[];
   } catch {

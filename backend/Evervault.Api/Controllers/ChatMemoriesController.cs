@@ -35,7 +35,7 @@ public class ChatMemoriesController : ControllerBase
     public record EmbeddingPolicy(bool Enabled, string? Model, int Dimensions);
     public record TurnItem(string Role, string Modality, string? Text, string? AudioBase64, string? AudioMime, float[]? Embedding);
     public record RecordTurnRequest(string? ConversationId, List<TurnItem> Turns);
-    public record SearchRequest(float[]? Vector, string? Q, int K = 8);
+    public record SearchRequest(float[]? Vector, string? Q, int K = 8, DateTimeOffset? Since = null, DateTimeOffset? Until = null);
     public record MemoryHit(int Id, string Role, string Modality, string Content, bool HasAudio, DateTimeOffset CreatedAt, double? Distance);
 
     /// <summary>The embedding policy the browser must embed with (its own key). enabled = locked + model set.</summary>
@@ -109,12 +109,18 @@ public class ChatMemoriesController : ControllerBase
     {
         var uid = Uid;
         var k = Math.Clamp(req.K, 1, 50);
+        // Optional date window (e.g. "yesterday"): the browser supplies ISO bounds it computed from the
+        // user's local date/timezone. Null bounds mean no narrowing, so existing callers are unaffected.
+        var since = req.Since;
+        var until = req.Until;
 
         if (req.Vector is { Length: > 0 })
         {
             var qv = new Vector(req.Vector);
             var hits = await _db.ChatMemories
-                .Where(m => m.EndUserId == uid && m.Embedding != null)
+                .Where(m => m.EndUserId == uid && m.Embedding != null
+                    && (since == null || m.CreatedAt >= since)
+                    && (until == null || m.CreatedAt < until))
                 .OrderBy(m => m.Embedding!.CosineDistance(qv))
                 .Take(k)
                 .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Content, m.AudioObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
@@ -124,7 +130,9 @@ public class ChatMemoriesController : ControllerBase
 
         var q = (req.Q ?? "").Trim();
         var rows = await _db.ChatMemories
-            .Where(m => m.EndUserId == uid && (q == "" || EF.Functions.ILike(m.Content, $"%{q}%")))
+            .Where(m => m.EndUserId == uid && (q == "" || EF.Functions.ILike(m.Content, $"%{q}%"))
+                && (since == null || m.CreatedAt >= since)
+                && (until == null || m.CreatedAt < until))
             .OrderByDescending(m => m.CreatedAt)
             .Take(k)
             .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
