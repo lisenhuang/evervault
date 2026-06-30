@@ -13,6 +13,7 @@ export default function Composer({
   voiceState,
   disabled,
   hasKey,
+  inCall,
   onNeedKey,
 }: {
   onSendText: (text: string) => void;
@@ -22,6 +23,7 @@ export default function Composer({
   voiceState: VoiceState;
   disabled: boolean;
   hasKey: boolean;
+  inCall: boolean;
   onNeedKey: () => void;
 }) {
   const [text, setText] = useState("");
@@ -78,8 +80,8 @@ export default function Composer({
         <div className="flex items-end gap-2">
           <button
             onClick={callClick}
-            disabled={disabled || recording || processing}
-            title="Start a live voice call"
+            disabled={disabled || recording || processing || inCall}
+            title={inCall ? "Call in progress" : "Start a live voice call"}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
           >
             <Phone size={18} />

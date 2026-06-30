@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Hand, LogOut, MessageCircle, Settings2, Sparkles, SquarePen, X } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
-import CallOverlay from "./CallOverlay";
+import CallBar from "./CallBar";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MemoryPanel from "./MemoryPanel";
@@ -423,6 +423,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         )}
       </main>
 
+      {callState && (
+        <CallBar
+          state={callState}
+          muted={callMuted}
+          error={callError}
+          onToggleMute={toggleMute}
+          onEnd={endCall}
+        />
+      )}
+
       <Composer
         onSendText={sendText}
         onStartVoice={startVoice}
@@ -431,18 +441,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         voiceState={voiceState}
         disabled={streaming}
         hasKey={!!apiKey}
+        inCall={!!callState}
         onNeedKey={() => setDrawerOpen(true)}
       />
-
-      {callState && (
-        <CallOverlay
-          state={callState}
-          muted={callMuted}
-          error={callError}
-          onToggleMute={toggleMute}
-          onEnd={endCall}
-        />
-      )}
 
       <KeyDrawer
         open={drawerOpen}

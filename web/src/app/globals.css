@@ -22,6 +22,21 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Live voice-call "wave" — drives the animated audio button in the call bar. */
+@theme {
+  --animate-wave: wave 1s ease-in-out infinite;
+
+  @keyframes wave {
+    0%,
+    100% {
+      transform: scaleY(0.3);
+    }
+    50% {
+      transform: scaleY(1);
+    }
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
