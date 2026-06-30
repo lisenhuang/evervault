@@ -111,6 +111,37 @@ export async function generateJson<T>(
   return JSON.parse(res.text ?? "{}") as T;
 }
 
+/**
+ * Transcribe a spoken clip to text — one-shot, non-streamed. Returns the verbatim words, or "" when
+ * there's no intelligible speech. Uses the chat text model (audio-capable — it already answers the
+ * spoken reply from the same inline audio). Best-effort: callers treat "" as "no transcript".
+ */
+export async function transcribeAudio(
+  apiKey: string,
+  model: string,
+  audioBase64: string,
+  mimeType: string,
+): Promise<string> {
+  const ai = client(apiKey);
+  const res = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data: audioBase64 } },
+          {
+            text:
+              "Transcribe this audio verbatim. Return ONLY the spoken words, with no commentary, " +
+              "quotes, or labels. If there is no intelligible speech, return an empty string.",
+          },
+        ],
+      },
+    ],
+  });
+  return (res.text ?? "").trim();
+}
+
 /** Synthesize speech with a TTS model. Returns base64 PCM16 + its sample rate. */
 export async function synthesizeSpeech(
   apiKey: string,

@@ -56,9 +56,16 @@ export default function MessageList({
           <div key={m.id} className="flex items-start justify-end gap-3">
             <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm">
               {m.kind === "voice" ? (
-                <span className="inline-flex items-center gap-1.5 italic opacity-90">
-                  <Mic size={14} /> Voice message
-                </span>
+                m.text ? (
+                  <span className="flex items-start gap-1.5">
+                    <Mic size={14} className="mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
+                    <span className="whitespace-pre-wrap">{m.text}</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 italic opacity-90">
+                    <Mic size={14} aria-hidden="true" /> Voice message
+                  </span>
+                )
               ) : (
                 <span className="whitespace-pre-wrap">{m.text}</span>
               )}

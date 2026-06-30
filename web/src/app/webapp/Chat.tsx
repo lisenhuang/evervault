@@ -11,7 +11,7 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument, embedQuery } from "./lib/embed";
-import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech } from "./lib/gemini";
+import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
@@ -304,12 +304,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     recorderRef.current = null;
     setVoiceState("processing");
     setStreaming(true);
-    const userMsg: ChatMessage = { id: uid(), role: "user", text: "Voice message", kind: "voice" };
+    const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
     const asstId = uid();
     try {
       const { base64, mimeType } = await rec.stop();
       const base = [...messages, userMsg];
       setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice" }]);
+      // Transcribe in parallel with the reply (a second, audio-capable generateContent call). Fills the
+      // user's bubble in place when it lands; an empty/failed transcript degrades to the "Voice message"
+      // label so the turn still reads sensibly and stays in toContents() history.
+      const transcriptPromise = transcribeAudio(apiKey, textModel, base64, mimeType)
+        .then((t) => {
+          setMessages((cur) => cur.map((m) => (m.id === userMsg.id ? { ...m, text: t || "Voice message" } : m)));
+          return t;
+        })
+        .catch(() => "");
       const contents: Content[] = [
         ...toContents(messages),
         {
@@ -318,10 +327,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         },
       ];
       const reply = await runAssistant(asstId, contents, true);
-      // Record the user's spoken audio file + the assistant's reply text (user audio has no transcript).
+      // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
+      const transcript = await transcriptPromise; // already resolved in practice; never throws
       void recordTextTurns(
         [
-          { role: "user", text: "(voice message)", modality: "voice" },
+          { role: "user", text: transcript || "(voice message)", modality: "voice" },
           { role: "assistant", text: reply, modality: "voice" },
         ],
         { audioBase64: base64 },
