@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, Hand, LogOut, MessageCircle, Settings2, Sparkles, SquarePen, X } from "lucide-react";
-import ThemeToggle from "@/components/theme/ThemeToggle";
+import { Hand, Menu, MessageCircle, Sparkles, X } from "lucide-react";
+import Sidebar from "./Sidebar";
 import CallBar from "./CallBar";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
@@ -47,6 +47,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -366,122 +367,107 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }, [callState]);
 
   return (
-    <div className="app-shell flex flex-col bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
-      <header className="sticky top-0 z-10 border-b border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <MessageCircle size={18} className="shrink-0" aria-hidden="true" />
-            <span className="font-semibold">EverVault</span>
-            <span className="truncate text-xs text-black/40 dark:text-white/40">· {textModel}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => {
-                setMessages([]);
-                conversationIdRef.current = uid();
-              }}
-              title="New chat"
-              className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
-            >
-              <SquarePen size={18} />
-            </button>
-            <button
-              onClick={() => setMemoryPanelOpen(true)}
-              title="Memories"
-              className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
-            >
-              <Brain size={18} />
-            </button>
-            <button
-              onClick={() => setDrawerOpen(true)}
-              title="Settings"
-              className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
-            >
-              <Settings2 size={18} />
-            </button>
-            <ThemeToggle />
-            <button
-              onClick={() => setConfirmLogout(true)}
-              title="Sign out"
-              className="rounded-md p-2 text-black/60 hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="app-shell flex flex-row bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
+      <Sidebar
+        user={user}
+        textModel={textModel}
+        onNewChat={() => {
+          setMessages([]);
+          conversationIdRef.current = uid();
+        }}
+        onOpenMemories={() => setMemoryPanelOpen(true)}
+        onOpenSettings={() => setDrawerOpen(true)}
+        onSignOut={() => setConfirmLogout(true)}
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+      />
 
-      {noticeOpen && (
-        <div className="border-b border-black/10 bg-blue-50 dark:border-white/10 dark:bg-blue-950/30">
-          <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 text-xs text-blue-800 dark:text-blue-200">
-            <span className="flex-1">
-              Your chats are saved so you (and the AI) can recall them later. Manage or turn this off in{" "}
-              <button onClick={() => setMemoryPanelOpen(true)} className="font-medium underline">
-                Memories
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-2 border-b border-black/10 bg-white/80 px-4 py-3 backdrop-blur md:hidden dark:border-white/10 dark:bg-neutral-950/80">
+          <button
+            onClick={() => setNavOpen(true)}
+            title="Menu"
+            aria-label="Open menu"
+            className="-ml-2 rounded-md p-2 text-black/60 transition hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
+          >
+            <Menu size={18} />
+          </button>
+          <MessageCircle size={18} className="shrink-0" aria-hidden="true" />
+          <span className="font-semibold">EverVault</span>
+        </header>
+
+        {noticeOpen && (
+          <div className="border-b border-black/10 bg-blue-50 dark:border-white/10 dark:bg-blue-950/30">
+            <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 text-xs text-blue-800 dark:text-blue-200">
+              <span className="flex-1">
+                Your chats are saved so you (and the AI) can recall them later. Manage or turn this off in{" "}
+                <button onClick={() => setMemoryPanelOpen(true)} className="font-medium underline">
+                  Memories
+                </button>
+                .
+              </span>
+              <button onClick={dismissNotice} className="rounded p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40" aria-label="Dismiss">
+                <X size={14} />
               </button>
-              .
-            </span>
-            <button onClick={dismissNotice} className="rounded p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40" aria-label="Dismiss">
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      <main className="flex-1 overflow-y-auto">
-        {messages.length === 0 ? (
-          <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 py-20 text-center">
-            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 shadow-md">
-              <Sparkles className="h-8 w-8 text-white" aria-hidden="true" />
             </div>
-            <h1 className="inline-flex items-center gap-2 text-2xl font-semibold">
-              Hi {user.name?.split(" ")[0] || "there"}
-              <Hand className="h-6 w-6 text-amber-500" aria-hidden="true" />
-            </h1>
-            <p className="mt-2 max-w-md text-sm text-black/55 dark:text-white/55">
-              Ask anything by text, or tap the mic to talk. Replies can be spoken back to you.
-            </p>
-            {!apiKey && (
-              <button
-                onClick={() => setDrawerOpen(true)}
-                className="mt-6 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
-              >
-                Add your Gemini key to start
-              </button>
-            )}
           </div>
-        ) : (
-          <MessageList
-            messages={messages}
-            userName={user.name}
-            userPicture={user.picture}
-            onPlayAudio={playAudio}
-            scrollSignal={!!callState}
+        )}
+
+        <main className="flex-1 overflow-y-auto">
+          {messages.length === 0 ? (
+            <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 py-20 text-center">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 shadow-md">
+                <Sparkles className="h-8 w-8 text-white" aria-hidden="true" />
+              </div>
+              <h1 className="inline-flex items-center gap-2 text-2xl font-semibold">
+                Hi {user.name?.split(" ")[0] || "there"}
+                <Hand className="h-6 w-6 text-amber-500" aria-hidden="true" />
+              </h1>
+              <p className="mt-2 max-w-md text-sm text-black/55 dark:text-white/55">
+                Ask anything by text, or tap the mic to talk. Replies can be spoken back to you.
+              </p>
+              {!apiKey && (
+                <button
+                  onClick={() => setDrawerOpen(true)}
+                  className="mt-6 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
+                >
+                  Add your Gemini key to start
+                </button>
+              )}
+            </div>
+          ) : (
+            <MessageList
+              messages={messages}
+              userName={user.name}
+              userPicture={user.picture}
+              onPlayAudio={playAudio}
+              scrollSignal={!!callState}
+            />
+          )}
+        </main>
+
+        {callState && (
+          <CallBar
+            state={callState}
+            muted={callMuted}
+            error={callError}
+            onToggleMute={toggleMute}
+            onEnd={endCall}
           />
         )}
-      </main>
 
-      {callState && (
-        <CallBar
-          state={callState}
-          muted={callMuted}
-          error={callError}
-          onToggleMute={toggleMute}
-          onEnd={endCall}
+        <Composer
+          onSendText={sendText}
+          onStartVoice={startVoice}
+          onStopVoice={stopVoice}
+          onStartCall={startCall}
+          voiceState={voiceState}
+          disabled={streaming}
+          hasKey={!!apiKey}
+          inCall={!!callState}
+          onNeedKey={() => setDrawerOpen(true)}
         />
-      )}
-
-      <Composer
-        onSendText={sendText}
-        onStartVoice={startVoice}
-        onStopVoice={stopVoice}
-        onStartCall={startCall}
-        voiceState={voiceState}
-        disabled={streaming}
-        hasKey={!!apiKey}
-        inCall={!!callState}
-        onNeedKey={() => setDrawerOpen(true)}
-      />
+      </div>
 
       <KeyDrawer
         open={drawerOpen}
