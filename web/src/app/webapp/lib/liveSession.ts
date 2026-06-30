@@ -40,9 +40,6 @@ export class LiveSession {
     this.cb = cb;
     cb.onState("connecting");
     await this.player.resume();
-    // Play the model's voice through a WebRTC loopback so the browser's echo canceller removes
-    // it from the mic (fixes the model interrupting itself off the phone speaker; see echoLoopback.ts).
-    await this.loopback.start(this.player.stream);
     this.player.onIdle = () => {
       if (!this.stopped) cb.onState("listening");
     };
@@ -84,6 +81,20 @@ export class LiveSession {
     await this.mic.start((b64) => {
       this.session?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
     });
+
+    // Now that the mic is capturing, play the model's voice through the echo-cancelling loopback —
+    // this removes the speaker echo so the model doesn't interrupt itself (see echoLoopback.ts).
+    // iOS only lets a MediaStream element play with sound while the page is already capturing,
+    // which is why this comes after mic.start(). If it still can't start, fall back to plain
+    // speaker output so the user always hears the model (echo cancellation is lost in that case).
+    try {
+      await this.loopback.start(this.player.stream);
+    } catch (e) {
+      console.warn("[live] echo-cancelling loopback unavailable; using direct speaker output", e);
+      this.loopback.stop();
+      this.player.useDirectOutput();
+    }
+
     cb.onState("listening");
   }
 

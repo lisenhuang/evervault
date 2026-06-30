@@ -57,6 +57,7 @@ export class MicStreamer {
 export class AudioPlayer {
   private ctx: AudioContext;
   private dest: MediaStreamAudioDestinationNode;
+  private out: AudioNode;
   private nextTime = 0;
   private sources = new Set<AudioBufferSourceNode>();
   /** Fires when all scheduled output has finished playing (the model stopped speaking). */
@@ -68,11 +69,21 @@ export class AudioPlayer {
     // WebRTC loopback — that puts the model's voice on the path the browser's echo canceller
     // references, so it gets removed from the mic. See echoLoopback.ts.
     this.dest = this.ctx.createMediaStreamDestination();
+    this.out = this.dest;
   }
 
   /** The model's output audio as a MediaStream, fed to the echo-cancelling loopback for playback. */
   get stream(): MediaStream {
     return this.dest.stream;
+  }
+
+  /**
+   * Fallback for when the echo-cancelling loopback can't play (e.g. iOS blocks it): play straight
+   * to the speaker so the user still hears the model. Echo cancellation is lost in this mode, but
+   * silence is worse. Call before any audio is enqueued.
+   */
+  useDirectOutput() {
+    this.out = this.ctx.destination;
   }
 
   async resume() {
@@ -84,7 +95,7 @@ export class AudioPlayer {
     if (!buffer) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(this.dest);
+    src.connect(this.out);
     const start = Math.max(this.ctx.currentTime, this.nextTime);
     src.start(start);
     this.nextTime = start + buffer.duration;
