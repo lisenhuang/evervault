@@ -14,6 +14,7 @@ import { embedDocument, embedQuery } from "./lib/embed";
 import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
+import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { store } from "./lib/store";
 import { currentTimeContext, formatMemoryDate } from "./lib/time";
 import { recordTurn, searchMemories, type TurnItem } from "./recordApi";
@@ -69,6 +70,43 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [noticeOpen, setNoticeOpen] = useState(false);
   const conversationIdRef = useRef(uid());
 
+  // Derived profile ("what the AI knows about you"): loaded once, injected into every chat, and
+  // refreshed after each extraction. Refs (+ store getters) so the unload/idle handlers see live state.
+  const profileFactsRef = useRef<Fact[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const extractCursorRef = useRef(0); // messages already distilled into the profile this conversation
+  const extractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const refreshProfile = useCallback(async () => {
+    if (!store.getMemoryOn() || !store.getKey()) return;
+    profileFactsRef.current = await getProfile();
+  }, []);
+
+  // Distil new turns into the profile (fire-and-forget; never blocks chat). `minNew` guards against
+  // extracting tiny fragments — a closing conversation needs one exchange, an idle tick needs more.
+  const runExtraction = useCallback(async (minNew = 2) => {
+    if (!store.getMemoryOn() || !store.getKey()) return;
+    const transcript = messagesRef.current
+      .filter((m) => m.text && !m.error && !m.streaming)
+      .map((m) => ({ role: m.role, text: m.text }));
+    if (transcript.length - extractCursorRef.current < minNew) return;
+    extractCursorRef.current = transcript.length;
+    const delta = await extractAndSyncProfile({
+      model: store.getTextModel(),
+      currentFacts: profileFactsRef.current,
+      transcript,
+    });
+    if (delta) await refreshProfile();
+  }, [refreshProfile]);
+
+  const scheduleExtraction = useCallback(() => {
+    if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
+    extractTimerRef.current = setTimeout(() => void runExtraction(4), 20000);
+  }, [runExtraction]);
+
   const loadModels = useCallback(async (key: string) => {
     if (!key) return;
     setModelsLoading(true);
@@ -90,11 +128,27 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     else setDrawerOpen(true);
     setMemoryOn(store.getMemoryOn());
     setNoticeOpen(!store.getNoticeSeen());
-  }, [loadModels]);
+    void refreshProfile();
+  }, [loadModels, refreshProfile]);
+
+  // Distil the conversation when the user backgrounds or leaves the tab — a natural "conversation end".
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") void runExtraction(2);
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onHide);
+      if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
+    };
+  }, [runExtraction]);
 
   function toggleMemory(on: boolean) {
     store.setMemoryOn(on);
     setMemoryOn(on);
+    if (on) void refreshProfile();
   }
   function dismissNotice() {
     store.setNoticeSeen();
@@ -139,7 +193,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // model the memory persona + the recall_memory tool so it can search past chats on demand
     // (covers text + push-to-talk) instead of denying it has any memory.
     if (memoryOn) {
-      const sys = `${MEMORY_PERSONA}\n${currentTimeContext()}`;
+      // Ground the reply in the durable profile (who the user is) + persona + current time.
+      const sys = [renderProfileBlock(profileFactsRef.current), MEMORY_PERSONA, currentTimeContext()]
+        .filter(Boolean)
+        .join("\n\n");
       const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }];
       for await (const delta of streamTextWithTools(apiKey, textModel, contents, sys, tools, (_name, args) => runRecallTool(args))) {
         onDelta(delta);
@@ -180,6 +237,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       });
     }
     recordTurn(conversationIdRef.current, turns);
+    scheduleExtraction(); // distil durable facts a little after the conversation goes idle
   }
 
   /** Top relevant past memories as a context preface for the next reply, or null. */
@@ -308,7 +366,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveAsstIdRef.current = null;
     liveUserTextRef.current = "";
     liveAsstTextRef.current = "";
-    const session = new LiveSession(apiKey, liveModel, voice, memoryOn);
+    const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
+    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock);
     liveRef.current = session;
     setCallState("connecting");
     try {
@@ -372,8 +431,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         user={user}
         textModel={textModel}
         onNewChat={() => {
+          void runExtraction(2); // distil the conversation we're leaving before clearing it
           setMessages([]);
           conversationIdRef.current = uid();
+          extractCursorRef.current = 0;
         }}
         onOpenMemories={() => setMemoryPanelOpen(true)}
         onOpenSettings={() => setDrawerOpen(true)}

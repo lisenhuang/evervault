@@ -36,6 +36,7 @@ export class LiveSession {
     private model: string,
     private voice: string,
     private memoryEnabled = false,
+    private profileBlock?: string,
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -58,7 +59,15 @@ export class LiveSession {
         // memory, so it can search past conversations mid-call instead of denying it remembers.
         ...(this.memoryEnabled ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }] } : {}),
         // Time is captured at connect; a multi-hour call won't refresh it (acceptable for this use).
-        systemInstruction: `${this.memoryEnabled ? `${MEMORY_PERSONA}\n` : ""}${SYSTEM_INSTRUCTION}\n${currentTimeContext()}`,
+        // The profile block (what we already know about the user) grounds the call from the first word.
+        systemInstruction: [
+          this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
+          this.memoryEnabled ? MEMORY_PERSONA : "",
+          SYSTEM_INSTRUCTION,
+          currentTimeContext(),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
         // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
         // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
         realtimeInputConfig: {

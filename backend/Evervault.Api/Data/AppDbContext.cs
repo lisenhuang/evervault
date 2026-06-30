@@ -17,6 +17,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<EndUser> EndUsers => Set<EndUser>();
     public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();
     public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
+    public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -62,6 +63,17 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(m => m.ConversationId).HasMaxLength(64);
             e.HasIndex(m => m.EndUserId);
             e.HasIndex(m => new { m.EndUserId, m.ConversationId });
+        });
+
+        modelBuilder.Entity<UserMemoryFact>(e =>
+        {
+            e.Property(f => f.Category).HasMaxLength(32);
+            e.Property(f => f.Key).HasMaxLength(80);
+            e.Property(f => f.Value).HasMaxLength(2000);
+            e.Property(f => f.Source).HasMaxLength(16);
+            e.HasIndex(f => f.EndUserId);
+            // Supersede anchor: re-extracting the same (user, category, key) updates the row in place.
+            e.HasIndex(f => new { f.EndUserId, f.Category, f.Key }).IsUnique();
         });
 
         modelBuilder.Entity<AiKey>(e =>

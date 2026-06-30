@@ -2,7 +2,7 @@
 // directly; the key never touches our backend. Text generation + TTS use the official @google/genai
 // SDK; model listing uses the REST endpoint for a stable, version-independent response shape.
 
-import { GoogleGenAI, Modality, type Content, type FunctionCall, type Part, type Tool } from "@google/genai";
+import { GoogleGenAI, Modality, type Content, type FunctionCall, type Part, type Schema, type Tool } from "@google/genai";
 
 export type { Content };
 
@@ -89,6 +89,26 @@ export async function* streamTextWithTools(
       })),
     });
   }
+}
+
+/**
+ * One-shot structured generation: returns the model's reply parsed as JSON, constrained to
+ * `responseSchema` (build it with the `Type` enum). Used for memory extraction — not streamed.
+ */
+export async function generateJson<T>(
+  apiKey: string,
+  model: string,
+  contents: Content[],
+  systemInstruction: string,
+  responseSchema: Schema,
+): Promise<T> {
+  const ai = client(apiKey);
+  const res = await ai.models.generateContent({
+    model,
+    contents,
+    config: { systemInstruction, responseMimeType: "application/json", responseSchema },
+  });
+  return JSON.parse(res.text ?? "{}") as T;
 }
 
 /** Synthesize speech with a TTS model. Returns base64 PCM16 + its sample rate. */
