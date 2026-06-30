@@ -2,7 +2,7 @@
 // directly; the key never touches our backend. Text generation + TTS use the official @google/genai
 // SDK; model listing uses the REST endpoint for a stable, version-independent response shape.
 
-import { GoogleGenAI, Modality, type Content, type FunctionCall, type Tool } from "@google/genai";
+import { GoogleGenAI, Modality, type Content, type FunctionCall, type Part, type Tool } from "@google/genai";
 
 export type { Content };
 
@@ -64,16 +64,23 @@ export async function* streamTextWithTools(
 
   for (let round = 0; round < MaxRounds; round++) {
     const stream = await ai.models.generateContentStream({ model, contents, config });
-    const calls: FunctionCall[] = [];
+    // Keep the original functionCall Parts, not just the FunctionCall objects: Gemini 3.x attaches
+    // a `thoughtSignature` at the Part level (sibling of functionCall) that MUST be echoed back when
+    // the turn is replayed, or the next request 400s with "missing a thought_signature".
+    const callParts: Part[] = [];
     for await (const chunk of stream) {
       const t = chunk.text;
       if (t) yield t;
-      if (chunk.functionCalls) calls.push(...chunk.functionCalls);
+      for (const p of chunk.candidates?.[0]?.content?.parts ?? []) {
+        if (p.functionCall) callParts.push(p);
+      }
     }
-    if (calls.length === 0) return; // model produced a final text answer
+    if (callParts.length === 0) return; // model produced a final text answer
 
-    // No "tool" role in this SDK: the call is replayed as a model turn, the result as a user turn.
-    contents.push({ role: "model", parts: calls.map((c) => ({ functionCall: c })) });
+    const calls = callParts.map((p) => p.functionCall as FunctionCall);
+    // No "tool" role in this SDK: the call is replayed (verbatim, signature intact) as a model
+    // turn, the result as a user turn.
+    contents.push({ role: "model", parts: callParts });
     const results = await Promise.all(calls.map((c) => executor(c.name ?? "", c.args ?? {})));
     contents.push({
       role: "user",
