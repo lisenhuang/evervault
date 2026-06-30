@@ -74,6 +74,28 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
 | `make reset-admin` | 🔑 Delete the admin account → `/admin` shows first-run setup again |
 | `make help` | ❓ List all commands |
 
+## 🔵🟢 Zero-downtime deploy (server)
+
+Blue-green swap behind the Cloudflare tunnel: the **old** container keeps serving until the **new**
+one is verified, then traffic switches. `db` is a separate container that never stops, so data is
+untouched. (`make up` is the simpler in-place alternative — a few seconds of downtime while the
+single container recreates.)
+
+| # | Step | How |
+|---|---|---|
+| 1 | Keep the current container running | _(do nothing)_ |
+| 2 | Pull newest code | `git pull` |
+| 3 | Build the new image — live site stays up | `make build` |
+| 4 | Start it as a **second** container on another host port | `HOST_PORT=<new> docker compose -p evervault-next up -d app` |
+| 5 | Test the new container locally | `curl -fsS localhost:<new>/api/health && curl -fsS localhost:<new>/` |
+| 6 | Point the Cloudflare tunnel at the new port | edit tunnel config / dashboard |
+| 7 | Restart the tunnel so traffic moves over | `systemctl restart cloudflared` (or `cloudflared` restart) |
+| 8 | Verify the public site | open 👉 https://evervault.life |
+| 9 | Remove the old container | `docker rm -f <old-app-container>` |
+
+> ⏱️ **Real downtime = only the tunnel restart/switch — usually a few seconds.** If step 5 or 8
+> fails, the old container is still live: just leave the tunnel as-is and drop the new container.
+
 ## ⚡ First run
 
 ```bash
