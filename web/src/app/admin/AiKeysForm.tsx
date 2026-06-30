@@ -131,6 +131,11 @@ function EmbeddingConfigCard() {
           </dl>
         ) : (
           <>
+            <Banner kind="warning">
+              Semantic memory is <strong>off</strong> until you lock a model. Chats are still saved, but the
+              AI can only recall them by keyword — not by meaning. Lock a model below to turn on smart recall.
+            </Banner>
+
             <label className="block">
               <span className="text-sm font-medium">Embedding model</span>
               <div className="mt-1">

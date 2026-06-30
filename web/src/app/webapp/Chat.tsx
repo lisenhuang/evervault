@@ -10,14 +10,15 @@ import MemoryPanel from "./MemoryPanel";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
-import { embedDocument, embedQuery } from "./lib/embed";
+import { embedDocument } from "./lib/embed";
 import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
+import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { store } from "./lib/store";
-import { currentTimeContext, formatMemoryDate } from "./lib/time";
-import { recordTurn, searchMemories, type TurnItem } from "./recordApi";
+import { currentTimeContext } from "./lib/time";
+import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
 import type { Me } from "./authApi";
 import type { ChatMessage } from "./types";
@@ -96,6 +97,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     extractCursorRef.current = transcript.length;
     const delta = await extractAndSyncProfile({
       model: store.getTextModel(),
+      conversationId: conversationIdRef.current,
       currentFacts: profileFactsRef.current,
       transcript,
     });
@@ -240,18 +242,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     scheduleExtraction(); // distil durable facts a little after the conversation goes idle
   }
 
-  /** Top relevant past memories as a context preface for the next reply, or null. */
+  /** Relevant past context (episodic summaries + turns, re-ranked) as a preface for the next reply. */
   async function ragPreface(query: string): Promise<Content | null> {
     if (!memoryOn) return null;
-    const qv = await embedQuery(query);
-    if (!qv) return null; // no key/policy → no auto-recall
-    const hits = await searchMemories(qv, query, 5);
-    const relevant = hits.filter((h) => h.distance == null || h.distance < 0.6).slice(0, 5);
-    if (relevant.length === 0) return null;
-    const text =
-      "Context — things this user shared with you earlier (use only if relevant, don't mention this note):\n" +
-      relevant.map((h) => `- (${formatMemoryDate(h.createdAt)}) ${h.content}`).join("\n");
-    return { role: "user", parts: [{ text }] };
+    const recent = messages.filter((m) => m.text && !m.error).map((m) => ({ role: m.role, text: m.text }));
+    return retrieveContext({
+      recent,
+      currentText: query,
+      profileBlock: renderProfileBlock(profileFactsRef.current),
+      nowMs: Date.now(),
+    });
   }
 
   async function sendText(text: string) {
@@ -377,7 +377,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveUserTextRef.current = "";
     liveAsstTextRef.current = "";
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
-    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock);
+    const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
+    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext);
     liveRef.current = session;
     setCallState("connecting");
     try {

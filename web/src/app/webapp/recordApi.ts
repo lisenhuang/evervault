@@ -16,6 +16,7 @@ export type MemoryHit = {
   id: number;
   role: string;
   modality: string;
+  kind: string; // "turn" | "summary"
   content: string;
   hasAudio: boolean;
   createdAt: string;
@@ -34,18 +35,27 @@ export async function searchMemories(
   vector: number[] | null,
   q: string,
   k = 8,
-  opts?: { since?: string; until?: string },
+  opts?: { since?: string; until?: string; kind?: string },
 ): Promise<MemoryHit[]> {
   try {
     const res = await api("/api/chat/memories/search", {
       method: "POST",
-      body: JSON.stringify({ vector, q, k, since: opts?.since, until: opts?.until }),
+      body: JSON.stringify({ vector, q, k, since: opts?.since, until: opts?.until, kind: opts?.kind }),
     });
     if (res.ok) return (await res.json()) as MemoryHit[];
   } catch {
     /* ignore */
   }
   return [];
+}
+
+/** Upsert the single episodic summary for a conversation (replaces any prior one). Fire-and-forget. */
+export function upsertSummary(conversationId: string, text: string, embedding?: number[]): void {
+  if (!text.trim()) return;
+  void api("/api/chat/memories/summary", {
+    method: "POST",
+    body: JSON.stringify({ conversationId, text, embedding }),
+  }).catch(() => {});
 }
 
 export async function deleteMemory(id: number): Promise<void> {

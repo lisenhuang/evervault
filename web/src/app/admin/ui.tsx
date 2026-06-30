@@ -154,11 +154,12 @@ export function Badge({
   );
 }
 
-export function Banner({ kind, children }: { kind: "error" | "success" | "info"; children: ReactNode }) {
+export function Banner({ kind, children }: { kind: "error" | "success" | "info" | "warning"; children: ReactNode }) {
   const styles = {
     error: "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300",
     success: "bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300",
     info: "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
+    warning: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200",
   }[kind];
   return <div className={`whitespace-pre-wrap rounded-md px-3 py-2 text-sm ${styles}`}>{children}</div>;
 }

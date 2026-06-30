@@ -37,6 +37,7 @@ export class LiveSession {
     private voice: string,
     private memoryEnabled = false,
     private profileBlock?: string,
+    private recentContext?: string,
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -62,6 +63,7 @@ export class LiveSession {
         // The profile block (what we already know about the user) grounds the call from the first word.
         systemInstruction: [
           this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
+          this.memoryEnabled && this.recentContext ? this.recentContext : "",
           this.memoryEnabled ? MEMORY_PERSONA : "",
           SYSTEM_INSTRUCTION,
           currentTimeContext(),

@@ -60,9 +60,11 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(m => m.Embedding).HasColumnType("vector");
             e.Property(m => m.Role).HasMaxLength(16);
             e.Property(m => m.Modality).HasMaxLength(16);
+            e.Property(m => m.Kind).HasMaxLength(16).HasDefaultValue("turn");
             e.Property(m => m.ConversationId).HasMaxLength(64);
             e.HasIndex(m => m.EndUserId);
             e.HasIndex(m => new { m.EndUserId, m.ConversationId });
+            e.HasIndex(m => new { m.EndUserId, m.Kind });
         });
 
         modelBuilder.Entity<UserMemoryFact>(e =>

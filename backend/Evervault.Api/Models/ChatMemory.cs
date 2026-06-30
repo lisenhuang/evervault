@@ -16,6 +16,7 @@ public class ChatMemory
     public string ConversationId { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;   // "user" | "assistant"
     public string Modality { get; set; } = "text";      // "text" | "voice" | "live"
+    public string Kind { get; set; } = "turn";          // "turn" (a recorded message) | "summary" (one per conversation)
     public string Content { get; set; } = string.Empty;
     public string? AudioObjectKey { get; set; }
     public Vector? Embedding { get; set; }

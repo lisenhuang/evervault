@@ -35,8 +35,9 @@ public class ChatMemoriesController : ControllerBase
     public record EmbeddingPolicy(bool Enabled, string? Model, int Dimensions);
     public record TurnItem(string Role, string Modality, string? Text, string? AudioBase64, string? AudioMime, float[]? Embedding);
     public record RecordTurnRequest(string? ConversationId, List<TurnItem> Turns);
-    public record SearchRequest(float[]? Vector, string? Q, int K = 8, DateTimeOffset? Since = null, DateTimeOffset? Until = null);
-    public record MemoryHit(int Id, string Role, string Modality, string Content, bool HasAudio, DateTimeOffset CreatedAt, double? Distance);
+    public record SearchRequest(float[]? Vector, string? Q, int K = 8, DateTimeOffset? Since = null, DateTimeOffset? Until = null, string? Kind = null);
+    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, DateTimeOffset CreatedAt, double? Distance);
+    public record SummaryRequest(string ConversationId, string Text, float[]? Embedding);
 
     /// <summary>The embedding policy the browser must embed with (its own key). enabled = locked + model set.</summary>
     [HttpGet("config")]
@@ -113,6 +114,8 @@ public class ChatMemoriesController : ControllerBase
         // user's local date/timezone. Null bounds mean no narrowing, so existing callers are unaffected.
         var since = req.Since;
         var until = req.Until;
+        // Optional kind filter ("summary" / "turn"); null searches everything (unchanged behavior).
+        var kind = string.IsNullOrWhiteSpace(req.Kind) ? null : req.Kind;
 
         if (req.Vector is { Length: > 0 })
         {
@@ -120,10 +123,11 @@ public class ChatMemoriesController : ControllerBase
             var hits = await _db.ChatMemories
                 .Where(m => m.EndUserId == uid && m.Embedding != null
                     && (since == null || m.CreatedAt >= since)
-                    && (until == null || m.CreatedAt < until))
+                    && (until == null || m.CreatedAt < until)
+                    && (kind == null || m.Kind == kind))
                 .OrderBy(m => m.Embedding!.CosineDistance(qv))
                 .Take(k)
-                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Content, m.AudioObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
                 .ToListAsync();
             return Ok(hits);
         }
@@ -132,10 +136,11 @@ public class ChatMemoriesController : ControllerBase
         var rows = await _db.ChatMemories
             .Where(m => m.EndUserId == uid && (q == "" || EF.Functions.ILike(m.Content, $"%{q}%"))
                 && (since == null || m.CreatedAt >= since)
-                && (until == null || m.CreatedAt < until))
+                && (until == null || m.CreatedAt < until)
+                && (kind == null || m.Kind == kind))
             .OrderByDescending(m => m.CreatedAt)
             .Take(k)
-            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
+            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
             .ToListAsync();
         return Ok(rows);
     }
@@ -150,8 +155,42 @@ public class ChatMemoriesController : ControllerBase
         return await query
             .OrderByDescending(m => m.CreatedAt)
             .Take(t)
-            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
+            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
             .ToListAsync();
+    }
+
+    /// <summary>Upsert the single episodic summary for a conversation (replaces any prior one), so recall
+    /// can retrieve one coherent summary per conversation instead of many raw turns.</summary>
+    [HttpPost("summary")]
+    public async Task<ActionResult> Summary([FromBody] SummaryRequest req)
+    {
+        var content = (req.Text ?? "").Trim();
+        var convId = (req.ConversationId ?? "").Trim();
+        if (content.Length == 0 || convId.Length == 0) return BadRequest(new { error = "conversationId and text are required." });
+        var uid = Uid;
+
+        await _db.ChatMemories
+            .Where(m => m.EndUserId == uid && m.ConversationId == convId && m.Kind == "summary")
+            .ExecuteDeleteAsync();
+
+        var cfg = await _db.EmbeddingConfigs.AsNoTracking().FirstOrDefaultAsync();
+        var dim = cfg?.Dimensions ?? 0;
+        var vector = req.Embedding is { Length: > 0 } && (dim == 0 || req.Embedding.Length == dim)
+            ? new Vector(req.Embedding)
+            : null;
+
+        _db.ChatMemories.Add(new ChatMemory
+        {
+            EndUserId = uid,
+            ConversationId = convId,
+            Role = "assistant",
+            Modality = "text",
+            Kind = "summary",
+            Content = content.Length > 16000 ? content[..16000] : content,
+            Embedding = vector,
+        });
+        await _db.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpGet("{id:int}/audio")]

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   Briefcase,
   Heart,
   History,
@@ -19,7 +20,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { embedQuery } from "./lib/embed";
+import { embedQuery, getEmbeddingPolicy } from "./lib/embed";
 import { clearProfile, deleteFact, type Fact, getProfile } from "./lib/profile";
 import { clearAllMemories, deleteMemory, type MemoryHit, searchMemories } from "./recordApi";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -63,12 +64,18 @@ export default function MemoryPanel({
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
 
+  // Semantic recall is only available once an admin has locked an embedding model; surface when it's off.
+  const [embeddingOff, setEmbeddingOff] = useState(false);
+
   // Load the profile when the panel opens on the About tab; clear the cache on close so it's fresh next time.
   useEffect(() => {
     if (open && tab === "about" && facts === null) void getProfile().then(setFacts);
   }, [open, tab, facts]);
   useEffect(() => {
     if (!open) setFacts(null);
+  }, [open]);
+  useEffect(() => {
+    if (open) void getEmbeddingPolicy().then((p) => setEmbeddingOff(!p.enabled));
   }, [open]);
 
   async function removeFact(id: number) {
@@ -161,6 +168,13 @@ export default function MemoryPanel({
               className="h-5 w-5 shrink-0"
             />
           </label>
+
+          {memoryOn && embeddingOff && (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>Smart recall is limited right now — the AI can still find your chats by keyword, but not by meaning.</span>
+            </div>
+          )}
 
           {tab === "about" ? (
             <>

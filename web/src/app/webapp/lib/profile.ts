@@ -5,6 +5,8 @@
 
 import { Type, type Schema } from "@google/genai";
 import { api } from "../authApi";
+import { upsertSummary } from "../recordApi";
+import { embedDocument } from "./embed";
 import { store } from "./store";
 import { generateJson } from "./gemini";
 
@@ -128,6 +130,7 @@ const EXTRACTION_SCHEMA: Schema = {
         required: ["category", "key"],
       },
     },
+    summary: { type: Type.STRING },
   },
   required: ["upserts"],
 };
@@ -141,8 +144,10 @@ const EXTRACTION_SYSTEM =
   "about the AI itself. Give each fact a short stable `key` (e.g. \"name\", \"employer\", " +
   "\"current_project\") and prefer updating an existing fact (same category+key) over creating a " +
   "near-duplicate. salience is 1-5 (5 = core identity). Only add `removes` when the user explicitly " +
-  "corrected or retracted something. Keep each value to one concise sentence. Return JSON only; if " +
-  "there is nothing durable to record, return an empty upserts array.";
+  "corrected or retracted something. Keep each value to one concise sentence. Also write a `summary`: " +
+  "2-4 sentences capturing what this conversation was about from the user's perspective, plus any open " +
+  "follow-ups, so it can be recalled later. Return JSON only; if there is nothing durable to record, " +
+  "return an empty upserts array (still provide the summary).";
 
 /**
  * Distil the transcript into profile updates and persist them. Caller should not await this in the
@@ -151,6 +156,7 @@ const EXTRACTION_SYSTEM =
  */
 export async function extractAndSyncProfile(opts: {
   model: string;
+  conversationId: string;
   currentFacts: Fact[];
   transcript: { role: "user" | "assistant"; text: string }[];
 }): Promise<ProfileDelta | null> {
@@ -171,8 +177,21 @@ export async function extractAndSyncProfile(opts: {
   ];
 
   try {
-    const delta = await generateJson<ProfileDelta>(key, opts.model, contents, EXTRACTION_SYSTEM, EXTRACTION_SCHEMA);
-    if (!delta?.upserts?.length && !delta?.removes?.length) return null;
+    const result = await generateJson<ProfileDelta & { summary?: string }>(
+      key,
+      opts.model,
+      contents,
+      EXTRACTION_SYSTEM,
+      EXTRACTION_SCHEMA,
+    );
+    // Episodic summary: embed it (if possible) and upsert one per conversation for richer recall.
+    const summary = typeof result?.summary === "string" ? result.summary.trim() : "";
+    if (summary) {
+      const embedding = (await embedDocument(summary)) ?? undefined;
+      upsertSummary(opts.conversationId, summary, embedding);
+    }
+    const delta: ProfileDelta = { upserts: result?.upserts, removes: result?.removes };
+    if (!delta.upserts?.length && !delta.removes?.length) return null; // summary (if any) already upserted
     syncProfile(delta);
     return delta;
   } catch {
