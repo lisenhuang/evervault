@@ -71,7 +71,7 @@ public class GeminiProvider : IAiProvider
 
     public async Task<AiCompletion> CompleteAsync(
         string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
-        IReadOnlyList<AiToolSchema> tools, CancellationToken ct)
+        IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options, CancellationToken ct)
     {
         var contents = new List<object>();
         var systemParts = new List<object>();
@@ -125,6 +125,9 @@ public class GeminiProvider : IAiProvider
             payload["tool_config"] = new { function_calling_config = new { mode = "AUTO" } };
         }
 
+        var thinking = ThinkingConfig(model, options?.ReasoningEffort);
+        if (thinking is not null) payload["generationConfig"] = new { thinkingConfig = thinking };
+
         var client = _http.CreateClient();
         var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -158,6 +161,48 @@ public class GeminiProvider : IAiProvider
     }
 
     // --- helpers ---
+
+    /// <summary>Translate the shared reasoning-effort value into Gemini's thinkingConfig, picking the right
+    /// knob per model family: 3.x → thinkingLevel (LOW/MEDIUM/HIGH); 2.5 → thinkingBudget (token count).
+    /// Returns null (→ no generationConfig) for "auto"/empty or models without thinking support (1.5/2.0).</summary>
+    private static object? ThinkingConfig(string model, string? effort)
+    {
+        if (string.IsNullOrWhiteSpace(effort) ||
+            string.Equals(effort, "auto", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var m = model.ToLowerInvariant();
+
+        if (m.Contains("gemini-3"))
+        {
+            // Gemini 3.x can't fully disable thinking, so "off" clamps to the lowest level.
+            var level = effort.ToLowerInvariant() switch
+            {
+                "off" or "low" => "LOW",
+                "medium" => "MEDIUM",
+                "high" => "HIGH",
+                _ => null,
+            };
+            return level is null ? null : new { thinkingLevel = level };
+        }
+
+        if (m.Contains("2.5"))
+        {
+            // 2.5 Pro can't take budget 0 (it has a non-zero minimum); "off" on a Pro model uses that floor.
+            var isPro = m.Contains("pro");
+            var budget = effort.ToLowerInvariant() switch
+            {
+                "off" => isPro ? 128 : 0,
+                "low" => 2048,
+                "medium" => 8192,
+                "high" => 24576,
+                _ => -1,   // unknown → dynamic
+            };
+            return new { thinkingBudget = budget };
+        }
+
+        return null;   // 1.5 / 2.0 and anything else: no thinking support → send nothing.
+    }
 
     private static object ToWireTool(AiToolSchema t)
     {

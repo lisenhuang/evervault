@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check, Gauge, X } from "lucide-react";
 import { api } from "./adminApi";
 import type {
   AiKeyDto,
   AiKeysDto,
+  ChatConfigDto,
   CheckKeysResult,
   EmbeddingConfigDto,
   KeyCheckResult,
@@ -51,8 +52,96 @@ export default function AiKeysForm() {
         onReload={reload}
       />
 
+      <ReasoningEffortCard />
+
       <EmbeddingConfigCard />
     </div>
+  );
+}
+
+const EFFORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "auto", label: "Auto — let each model decide (default)" },
+  { value: "off", label: "Off — minimal thinking, fastest" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High — deepest reasoning, slowest" },
+];
+
+function ReasoningEffortCard() {
+  const [cfg, setCfg] = useState<ChatConfigDto | null>(null);
+  const [effort, setEffort] = useState("auto");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await api("/api/admin/ai/config");
+      if (!res.ok) return;
+      const d: ChatConfigDto = await res.json();
+      setCfg(d);
+      setEffort(d.reasoningEffort ?? "auto");
+    })();
+  }, []);
+
+  async function change(next: string) {
+    const prev = effort;
+    setEffort(next);
+    setBusy(true);
+    setMsg(null);
+    // Send the full config so provider/model are preserved (even against an older backend).
+    const res = await api("/api/admin/ai/config", {
+      method: "PUT",
+      body: JSON.stringify({
+        selectedProvider: cfg?.selectedProvider ?? null,
+        geminiModel: cfg?.geminiModel ?? null,
+        openRouterModel: cfg?.openRouterModel ?? null,
+        reasoningEffort: next,
+      }),
+    });
+    setBusy(false);
+    if (res.ok) {
+      setCfg(await res.json());
+      setMsg({ kind: "success", text: "Saved." });
+    } else {
+      setEffort(prev);
+      setMsg({ kind: "error", text: "Could not save the reasoning effort." });
+    }
+  }
+
+  return (
+    <Card
+      title="Reasoning effort"
+      subtitle="How hard the chat model thinks before answering."
+      right={
+        <Badge tone="gray">
+          <Gauge size={12} aria-hidden="true" /> {effort}
+        </Badge>
+      }
+    >
+      <div className="space-y-4">
+        <Banner kind="info">
+          Applies to the admin chat for <strong>both Gemini and OpenRouter</strong>. On Gemini it maps to the
+          thinking level (3.x) or thinking budget (2.5); on OpenRouter to the reasoning effort. Higher digs
+          deeper but is slower and uses more tokens. Models without a thinking mode (e.g. Gemini 1.5/2.0)
+          ignore it.
+        </Banner>
+
+        <label className="block">
+          <span className="text-sm font-medium">Effort level</span>
+          <div className="mt-1">
+            <Select value={effort} onChange={change} disabled={busy}>
+              {EFFORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </label>
+
+        {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+      </div>
+    </Card>
   );
 }
 

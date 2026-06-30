@@ -47,15 +47,20 @@ public class FakeAiProvider : IAiProvider
 
     public Task<AiCompletion> CompleteAsync(
         string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
-        IReadOnlyList<AiToolSchema> tools, CancellationToken ct)
+        IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options, CancellationToken ct)
     {
         if (rawKey.Trim() != "good")
             throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
 
+        // Surface the threaded reasoning effort so AI_FAKE=1 E2E can confirm it reaches the provider.
+        var effortNote = string.IsNullOrWhiteSpace(options?.ReasoningEffort)
+            ? ""
+            : $" [reasoning effort: {options!.ReasoningEffort}]";
+
         // If the previous turn was a tool result, answer with a summary instead of looping.
         var last = messages.LastOrDefault();
         if (last?.Role == "tool")
-            return Task.FromResult(new AiCompletion($"Done. Tool '{last.Name}' returned: {Trim(last.Content)}", new List<AiToolCall>()));
+            return Task.FromResult(new AiCompletion($"Done{effortNote}. Tool '{last.Name}' returned: {Trim(last.Content)}", new List<AiToolCall>()));
 
         var text = (messages.LastOrDefault(m => m.Role == "user")?.Content ?? "").ToLowerInvariant();
 
@@ -74,7 +79,7 @@ public class FakeAiProvider : IAiProvider
             return Single(Call("sql_query", new { sql = "SELECT count(*) AS memories FROM \"Memories\"" })!);
 
         return Task.FromResult(new AiCompletion(
-            "This is the fake AI provider (AI_FAKE=1). Try: 'list memories', 'search <text>', 'create memory', 'delete memory', or 'run sql'.",
+            $"This is the fake AI provider (AI_FAKE=1){effortNote}. Try: 'list memories', 'search <text>', 'create memory', 'delete memory', or 'run sql'.",
             new List<AiToolCall>()));
     }
 

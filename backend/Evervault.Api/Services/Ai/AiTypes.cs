@@ -29,6 +29,11 @@ public record AiModelInfo(
 /// JSON-Schema string describing the arguments.</summary>
 public record AiToolSchema(string Name, string Description, string ParametersJson);
 
+/// <summary>Per-call generation tuning, provider-agnostic. Today only carries reasoning effort;
+/// add temperature/max-tokens/etc. here later. <see cref="ReasoningEffort"/> is one of
+/// "auto" | "off" | "low" | "medium" | "high" (null/"auto" → providers send nothing special).</summary>
+public record AiGenerationOptions(string? ReasoningEffort = null);
+
 /// <summary>Credit/quota usage for a key, where the provider exposes it (OpenRouter does; Gemini does not).
 /// The Daily*/ResetUnixMs fields come from rate-limit response headers (best-effort) and describe the
 /// free-model daily request allowance.</summary>
@@ -81,6 +86,7 @@ public interface IAiProvider
         string model,
         IReadOnlyList<AiChatMessage> messages,
         IReadOnlyList<AiToolSchema> tools,
+        AiGenerationOptions? options,
         CancellationToken ct);
 }
 

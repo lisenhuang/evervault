@@ -50,6 +50,7 @@ export type ChatConfigDto = {
   selectedProvider: string | null;
   geminiModel: string | null;
   openRouterModel: string | null;
+  reasoningEffort: string | null; // "auto" | "off" | "low" | "medium" | "high" | null
 };
 
 export type EmbeddingConfigDto = {

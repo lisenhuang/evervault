@@ -111,7 +111,7 @@ public class OpenRouterProvider : IAiProvider
 
     public async Task<AiCompletion> CompleteAsync(
         string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
-        IReadOnlyList<AiToolSchema> tools, CancellationToken ct)
+        IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options, CancellationToken ct)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -123,6 +123,9 @@ public class OpenRouterProvider : IAiProvider
             payload["tools"] = tools.Select(ToWireTool).ToList();
             payload["tool_choice"] = "auto";
         }
+
+        var reasoning = Reasoning(options?.ReasoningEffort);
+        if (reasoning is not null) payload["reasoning"] = reasoning;
 
         var client = _http.CreateClient();
         var req = Req(HttpMethod.Post, "/chat/completions", rawKey);
@@ -164,6 +167,20 @@ public class OpenRouterProvider : IAiProvider
     }
 
     // --- wire mapping ---
+
+    /// <summary>Map the shared reasoning-effort value onto OpenRouter's unified <c>reasoning</c> param.
+    /// "off" disables reasoning; low/medium/high set the effort; "auto"/empty omits it (model default).
+    /// Models without reasoning support simply ignore the field.</summary>
+    private static object? Reasoning(string? effort)
+    {
+        if (string.IsNullOrWhiteSpace(effort) ||
+            string.Equals(effort, "auto", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var e = effort.ToLowerInvariant();
+        if (e == "off") return new { enabled = false };
+        if (e is "low" or "medium" or "high") return new { effort = e };
+        return null;
+    }
 
     private static object ToWireMessage(AiChatMessage m)
     {

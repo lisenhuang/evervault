@@ -54,13 +54,13 @@ public class AgentService
         _signer = signer;
     }
 
-    public Task<ChatTurnResponse> RunAsync(string provider, string model, List<AiChatMessage> messages, CancellationToken ct)
+    public Task<ChatTurnResponse> RunAsync(string provider, string model, List<AiChatMessage> messages, AiGenerationOptions options, CancellationToken ct)
     {
         EnsureSystemPrompt(messages);
-        return RunLoopAsync(provider, model, messages, ct);
+        return RunLoopAsync(provider, model, messages, options, ct);
     }
 
-    public async Task<ChatTurnResponse> ConfirmAsync(ConfirmActionRequest req, CancellationToken ct)
+    public async Task<ChatTurnResponse> ConfirmAsync(ConfirmActionRequest req, AiGenerationOptions options, CancellationToken ct)
     {
         var messages = req.Messages;
         EnsureSystemPrompt(messages);
@@ -84,10 +84,10 @@ public class AgentService
         catch (Exception ex) { result = $"Error: {ex.Message}"; }
 
         messages.Add(new AiChatMessage("tool", result, null, action.ToolCallId, action.ToolName));
-        return await RunLoopAsync(req.Provider, req.Model, messages, ct);
+        return await RunLoopAsync(req.Provider, req.Model, messages, options, ct);
     }
 
-    private async Task<ChatTurnResponse> RunLoopAsync(string provider, string model, List<AiChatMessage> messages, CancellationToken ct)
+    private async Task<ChatTurnResponse> RunLoopAsync(string provider, string model, List<AiChatMessage> messages, AiGenerationOptions options, CancellationToken ct)
     {
         for (var iter = 0; iter < MaxIterations; iter++)
         {
@@ -95,7 +95,7 @@ public class AgentService
             try
             {
                 completion = await _failover.RunAsync(provider,
-                    (p, key) => p.CompleteAsync(key, model, messages, _tools.Schemas(), ct));
+                    (p, key) => p.CompleteAsync(key, model, messages, _tools.Schemas(), options, ct));
             }
             catch (AllKeysFailedException ex)
             {

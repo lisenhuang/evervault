@@ -24,8 +24,8 @@ public class AiChatController : ControllerBase
     }
 
     public record ModelsResult(string Provider, IReadOnlyList<AiModelInfo> Models, string? Warning);
-    public record ChatConfigDto(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel);
-    public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel);
+    public record ChatConfigDto(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? ReasoningEffort);
+    public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? ReasoningEffort);
     public record EmbeddingConfigDto(string Provider, string? Model, int Dimensions, bool Locked, DateTimeOffset? LockedAt);
     public record EmbeddingConfigInput(string? Model, int Dimensions);
 
@@ -75,7 +75,7 @@ public class AiChatController : ControllerBase
     public async Task<ActionResult<ChatConfigDto>> GetConfig()
     {
         var c = await _db.ChatConfigs.AsNoTracking().FirstOrDefaultAsync();
-        return Ok(new ChatConfigDto(c?.SelectedProvider, c?.GeminiModel, c?.OpenRouterModel));
+        return Ok(new ChatConfigDto(c?.SelectedProvider, c?.GeminiModel, c?.OpenRouterModel, c?.ReasoningEffort));
     }
 
     [HttpPut("config")]
@@ -84,13 +84,16 @@ public class AiChatController : ControllerBase
         var c = await _db.ChatConfigs.FirstOrDefaultAsync();
         var existing = c is not null;
         c ??= new ChatConfig();
-        c.SelectedProvider = input.SelectedProvider;
-        c.GeminiModel = input.GeminiModel;
-        c.OpenRouterModel = input.OpenRouterModel;
+        // Merge: only overwrite fields the caller actually sent (non-null), so the settings page
+        // (reasoning effort) and the chat model-switcher (provider/model) don't clobber each other.
+        if (input.SelectedProvider is not null) c.SelectedProvider = input.SelectedProvider;
+        if (input.GeminiModel is not null) c.GeminiModel = input.GeminiModel;
+        if (input.OpenRouterModel is not null) c.OpenRouterModel = input.OpenRouterModel;
+        if (input.ReasoningEffort is not null) c.ReasoningEffort = input.ReasoningEffort;
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.ChatConfigs.Add(c);
         await _db.SaveChangesAsync();
-        return Ok(new ChatConfigDto(c.SelectedProvider, c.GeminiModel, c.OpenRouterModel));
+        return Ok(new ChatConfigDto(c.SelectedProvider, c.GeminiModel, c.OpenRouterModel, c.ReasoningEffort));
     }
 
     /// <summary>The chat-memory embedding policy (model + dimension). Chosen once, then immutable.</summary>
@@ -130,10 +133,18 @@ public class AiChatController : ControllerBase
     /// <summary>One agent turn. Read tools auto-run; a write tool returns a confirmation proposal.</summary>
     [HttpPost("chat")]
     public async Task<ActionResult<ChatTurnResponse>> Chat([FromBody] ChatTurnRequest req)
-        => Ok(await _agent.RunAsync(req.Provider, req.Model, req.Messages ?? new(), HttpContext.RequestAborted));
+        => Ok(await _agent.RunAsync(req.Provider, req.Model, req.Messages ?? new(), await LoadGenOptionsAsync(), HttpContext.RequestAborted));
 
     /// <summary>Execute an approved write action (re-validated server-side), then continue the turn.</summary>
     [HttpPost("chat/confirm")]
     public async Task<ActionResult<ChatTurnResponse>> Confirm([FromBody] ConfirmActionRequest req)
-        => Ok(await _agent.ConfirmAsync(req, HttpContext.RequestAborted));
+        => Ok(await _agent.ConfirmAsync(req, await LoadGenOptionsAsync(), HttpContext.RequestAborted));
+
+    /// <summary>Read the persisted, provider-agnostic generation tuning (reasoning effort) for this turn.
+    /// Server-side so the setting can't be spoofed by the client.</summary>
+    private async Task<AiGenerationOptions> LoadGenOptionsAsync()
+    {
+        var c = await _db.ChatConfigs.AsNoTracking().FirstOrDefaultAsync();
+        return new AiGenerationOptions(c?.ReasoningEffort);
+    }
 }
