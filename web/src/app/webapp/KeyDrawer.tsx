@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BadgeCheck, Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
 import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
 import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
+import ModelSelect from "./ModelSelect";
 
 export default function KeyDrawer({
   open,
@@ -147,77 +148,31 @@ export default function KeyDrawer({
               <p className="mt-2 text-xs text-red-600 dark:text-red-400">{modelsError}</p>
             ) : (
               <div className="mt-3 space-y-4">
-                <label className="block">
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-black/70 dark:text-white/70">
-                    Text model
-                    <span
-                      title={`Recommended: ${DEFAULT_TEXT_MODEL}`}
-                      className="inline-flex items-center text-blue-600 dark:text-blue-400"
-                    >
-                      <BadgeCheck size={13} aria-hidden="true" />
-                      <span className="sr-only">Recommended model: {DEFAULT_TEXT_MODEL}</span>
-                    </span>
-                  </span>
-                  <select value={textModel} onChange={(e) => onChangeTextModel(e.target.value)} className={selectCls}>
-                    {!texts.some((m) => m.id === textModel) && <option value={textModel}>{textModel}</option>}
-                    {texts.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.displayName}
-                        {m.id === DEFAULT_TEXT_MODEL ? " — Recommended" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <ModelSelect
+                  label="Text model"
+                  value={textModel}
+                  options={texts}
+                  recommendedId={DEFAULT_TEXT_MODEL}
+                  onChange={onChangeTextModel}
+                />
 
-                <label className="block">
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-black/70 dark:text-white/70">
-                    Voice (speech) model
-                    <span
-                      title={`Recommended: ${DEFAULT_AUDIO_MODEL}`}
-                      className="inline-flex items-center text-blue-600 dark:text-blue-400"
-                    >
-                      <BadgeCheck size={13} aria-hidden="true" />
-                      <span className="sr-only">Recommended model: {DEFAULT_AUDIO_MODEL}</span>
-                    </span>
-                  </span>
-                  <select value={audioModel} onChange={(e) => onChangeAudioModel(e.target.value)} className={selectCls}>
-                    {!audios.some((m) => m.id === audioModel) && <option value={audioModel}>{audioModel}</option>}
-                    {audios.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.displayName}
-                        {m.id === DEFAULT_AUDIO_MODEL ? " — Recommended" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
-                    Used to speak replies to voice messages.
-                  </span>
-                </label>
+                <ModelSelect
+                  label="Voice (speech) model"
+                  value={audioModel}
+                  options={audios}
+                  recommendedId={DEFAULT_AUDIO_MODEL}
+                  onChange={onChangeAudioModel}
+                  hint="Used to speak replies to voice messages."
+                />
 
-                <label className="block">
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-black/70 dark:text-white/70">
-                    Live voice-call model
-                    <span
-                      title={`Recommended: ${DEFAULT_LIVE_MODEL}`}
-                      className="inline-flex items-center text-blue-600 dark:text-blue-400"
-                    >
-                      <BadgeCheck size={13} aria-hidden="true" />
-                      <span className="sr-only">Recommended model: {DEFAULT_LIVE_MODEL}</span>
-                    </span>
-                  </span>
-                  <select value={liveModel} onChange={(e) => onChangeLiveModel(e.target.value)} className={selectCls}>
-                    {!lives.some((m) => m.id === liveModel) && <option value={liveModel}>{liveModel}</option>}
-                    {lives.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.displayName}
-                        {m.id === DEFAULT_LIVE_MODEL ? " — Recommended" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
-                    Real-time hands-free calls (the call button). Needs a Live-API model.
-                  </span>
-                </label>
+                <ModelSelect
+                  label="Live voice-call model"
+                  value={liveModel}
+                  options={lives}
+                  recommendedId={DEFAULT_LIVE_MODEL}
+                  onChange={onChangeLiveModel}
+                  hint="Real-time hands-free calls (the call button). Needs a Live-API model."
+                />
 
                 <label className="block">
                   <span className="text-xs font-medium text-black/70 dark:text-white/70">Voice</span>
