@@ -11,8 +11,9 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument, embedQuery } from "./lib/embed";
-import { type Content, listModels, type ModelInfo, streamText, synthesizeSpeech } from "./lib/gemini";
+import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
+import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { store } from "./lib/store";
 import { currentTimeContext, formatMemoryDate } from "./lib/time";
 import { recordTurn, searchMemories, type TurnItem } from "./recordApi";
@@ -129,10 +130,23 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
   async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";
-    // Tell the model the current local time on every send (covers text + push-to-talk).
-    for await (const delta of streamText(apiKey, textModel, contents, currentTimeContext())) {
+    const onDelta = (delta: string) => {
       acc += delta;
       setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
+    };
+    // System instruction always carries the current local time. When memory is on, also give the
+    // model the memory persona + the recall_memory tool so it can search past chats on demand
+    // (covers text + push-to-talk) instead of denying it has any memory.
+    if (memoryOn) {
+      const sys = `${MEMORY_PERSONA}\n${currentTimeContext()}`;
+      const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }];
+      for await (const delta of streamTextWithTools(apiKey, textModel, contents, sys, tools, (_name, args) => runRecallTool(args))) {
+        onDelta(delta);
+      }
+    } else {
+      for await (const delta of streamText(apiKey, textModel, contents, currentTimeContext())) {
+        onDelta(delta);
+      }
     }
     const finalText = acc || "_(no response)_";
     setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, streaming: false, text: finalText } : m)));
@@ -293,7 +307,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveAsstIdRef.current = null;
     liveUserTextRef.current = "";
     liveAsstTextRef.current = "";
-    const session = new LiveSession(apiKey, liveModel, voice);
+    const session = new LiveSession(apiKey, liveModel, voice, memoryOn);
     liveRef.current = session;
     setCallState("connecting");
     try {

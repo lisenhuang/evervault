@@ -2,9 +2,12 @@
 // directly; the key never touches our backend. Text generation + TTS use the official @google/genai
 // SDK; model listing uses the REST endpoint for a stable, version-independent response shape.
 
-import { GoogleGenAI, Modality, type Content } from "@google/genai";
+import { GoogleGenAI, Modality, type Content, type FunctionCall, type Tool } from "@google/genai";
 
 export type { Content };
+
+/** Executes a tool the model called: receives (name, args), returns a string result for the model. */
+export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>;
 
 export const PREBUILT_VOICES = [
   "Zephyr",
@@ -39,6 +42,45 @@ export async function* streamText(
   for await (const chunk of stream) {
     const t = chunk.text;
     if (t) yield t;
+  }
+}
+
+/**
+ * Like {@link streamText} but with function calling. Streams text deltas; when the model calls a
+ * tool, runs it via `executor`, feeds the result back, and continues — repeating until the model
+ * answers in plain text (capped to avoid loops). `contents` is mutated to append the tool exchange.
+ */
+export async function* streamTextWithTools(
+  apiKey: string,
+  model: string,
+  contents: Content[],
+  systemInstruction: string,
+  tools: Tool[],
+  executor: ToolExecutor,
+): AsyncGenerator<string> {
+  const ai = client(apiKey);
+  const config = { systemInstruction, tools };
+  const MaxRounds = 5;
+
+  for (let round = 0; round < MaxRounds; round++) {
+    const stream = await ai.models.generateContentStream({ model, contents, config });
+    const calls: FunctionCall[] = [];
+    for await (const chunk of stream) {
+      const t = chunk.text;
+      if (t) yield t;
+      if (chunk.functionCalls) calls.push(...chunk.functionCalls);
+    }
+    if (calls.length === 0) return; // model produced a final text answer
+
+    // No "tool" role in this SDK: the call is replayed as a model turn, the result as a user turn.
+    contents.push({ role: "model", parts: calls.map((c) => ({ functionCall: c })) });
+    const results = await Promise.all(calls.map((c) => executor(c.name ?? "", c.args ?? {})));
+    contents.push({
+      role: "user",
+      parts: calls.map((c, i) => ({
+        functionResponse: { id: c.id, name: c.name, response: { output: results[i] } },
+      })),
+    });
   }
 }
 

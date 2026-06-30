@@ -5,6 +5,7 @@
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServerMessage } from "@google/genai";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
+import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { currentTimeContext } from "./time";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
@@ -34,6 +35,7 @@ export class LiveSession {
     private apiKey: string,
     private model: string,
     private voice: string,
+    private memoryEnabled = false,
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -52,8 +54,11 @@ export class LiveSession {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
+        // When memory is on, give the model the recall_memory tool + a persona that knows it has
+        // memory, so it can search past conversations mid-call instead of denying it remembers.
+        ...(this.memoryEnabled ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }] } : {}),
         // Time is captured at connect; a multi-hour call won't refresh it (acceptable for this use).
-        systemInstruction: `${SYSTEM_INSTRUCTION}\n${currentTimeContext()}`,
+        systemInstruction: `${this.memoryEnabled ? `${MEMORY_PERSONA}\n` : ""}${SYSTEM_INSTRUCTION}\n${currentTimeContext()}`,
         // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
         // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
         realtimeInputConfig: {
@@ -67,7 +72,7 @@ export class LiveSession {
       },
       callbacks: {
         onopen: () => {},
-        onmessage: (m: LiveServerMessage) => this.onMessage(m),
+        onmessage: (m: LiveServerMessage) => void this.onMessage(m),
         onerror: (e: ErrorEvent) => {
           cb.onError(e.message || "Voice connection error.");
           cb.onState("error");
@@ -105,7 +110,18 @@ export class LiveSession {
     cb.onState("listening");
   }
 
-  private onMessage(m: LiveServerMessage) {
+  private async onMessage(m: LiveServerMessage) {
+    // The model asked to search memory: run the tool(s) and send the results back. Live always
+    // populates the call `id`, which sendToolResponse must echo so the model can match the reply.
+    if (m.toolCall?.functionCalls?.length) {
+      const calls = m.toolCall.functionCalls;
+      const results = await Promise.all(calls.map((c) => runRecallTool(c.args ?? {})));
+      this.session?.sendToolResponse({
+        functionResponses: calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } })),
+      });
+      return;
+    }
+
     const sc = m.serverContent;
     if (sc?.interrupted) {
       this.player.clear(); // barge-in: drop whatever the model was saying
