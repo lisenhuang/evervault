@@ -42,3 +42,12 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* The chat shell tracks the *visible* viewport so the composer always sits above the
+   on-screen keyboard. --app-height is set by useVisualViewport (iOS/Safari + older
+   Chrome); 100dvh is the pre-JS fallback, and is already correct on Chrome where
+   interactive-widget=resizes-content shrinks the layout viewport when the keyboard opens. */
+.app-shell {
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
+}

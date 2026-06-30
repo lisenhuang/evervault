@@ -43,7 +43,7 @@ export default function WebappPage() {
   if (view === "chat" && me) return <Chat user={me} onLogout={logout} />;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-dvh flex-col">
       {view === "loading" && (
         <div className="flex flex-1 items-center justify-center text-sm text-black/50 dark:text-white/50">Loading…</div>
       )}

@@ -69,7 +69,7 @@ export default function Composer({
   const processing = voiceState === "processing";
 
   return (
-    <div className="border-t border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
+    <div className="border-t border-black/10 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
       <div className="mx-auto w-full max-w-3xl px-4 py-3">
         {recording && (
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-red-600 dark:text-red-400">

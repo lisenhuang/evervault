@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -21,6 +21,17 @@ export const metadata: Metadata = {
   title: "EverVault — Your personal memory AI",
   description:
     "A private place that quietly remembers your conversations, ideas, and moments, and helps you find them again whenever you need. Remember everything. Carry nothing.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // viewportFit: cover enables env(safe-area-inset-*) so the chat composer can clear
+  // the home indicator. interactiveWidget: resizes-content makes the on-screen keyboard
+  // shrink the layout viewport on Chrome, so dvh-based heights collapse and the composer
+  // stays pinned above the keyboard.
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

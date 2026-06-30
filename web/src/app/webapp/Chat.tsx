@@ -16,6 +16,7 @@ import { LiveSession, type LiveState } from "./lib/liveSession";
 import { store } from "./lib/store";
 import { currentTimeContext, formatMemoryDate } from "./lib/time";
 import { recordTurn, searchMemories, type TurnItem } from "./recordApi";
+import { useVisualViewport } from "./useVisualViewport";
 import type { Me } from "./authApi";
 import type { ChatMessage } from "./types";
 
@@ -32,6 +33,9 @@ function toContents(msgs: ChatMessage[]): Content[] {
 }
 
 export default function Chat({ user, onLogout }: { user: Me; onLogout: () => void }) {
+  // Keep the shell sized to the visible viewport so the composer rides above the keyboard.
+  useVisualViewport();
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [textModel, setTextModel] = useState(store.getTextModel());
@@ -348,7 +352,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }, [callState]);
 
   return (
-    <div className="flex h-screen flex-col bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
+    <div className="app-shell flex flex-col bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <header className="sticky top-0 z-10 border-b border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
