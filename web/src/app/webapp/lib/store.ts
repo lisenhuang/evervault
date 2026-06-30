@@ -9,9 +9,9 @@ const VOICE = "ev:voice";
 const MEMORY_ON = "ev:memoryOn";
 const NOTICE_SEEN = "ev:memoryNoticeSeen";
 
-export const DEFAULT_TEXT_MODEL = "gemini-2.5-flash";
-export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
-export const DEFAULT_LIVE_MODEL = "gemini-2.0-flash-live-001";
+export const DEFAULT_TEXT_MODEL = "gemini-flash-lite-latest";
+export const DEFAULT_AUDIO_MODEL = "gemini-3.1-flash-preview-tts";
+export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 export const DEFAULT_VOICE = "Kore";
 
 function get(key: string): string {

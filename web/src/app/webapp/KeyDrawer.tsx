@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
+import { BadgeCheck, Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
 import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
+import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
 
 export default function KeyDrawer({
   open,
@@ -147,24 +148,44 @@ export default function KeyDrawer({
             ) : (
               <div className="mt-3 space-y-4">
                 <label className="block">
-                  <span className="text-xs font-medium text-black/70 dark:text-white/70">Text model</span>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-black/70 dark:text-white/70">
+                    Text model
+                    <span
+                      title={`Recommended: ${DEFAULT_TEXT_MODEL}`}
+                      className="inline-flex items-center text-blue-600 dark:text-blue-400"
+                    >
+                      <BadgeCheck size={13} aria-hidden="true" />
+                      <span className="sr-only">Recommended model: {DEFAULT_TEXT_MODEL}</span>
+                    </span>
+                  </span>
                   <select value={textModel} onChange={(e) => onChangeTextModel(e.target.value)} className={selectCls}>
-                    {texts.length === 0 && <option value={textModel}>{textModel}</option>}
+                    {!texts.some((m) => m.id === textModel) && <option value={textModel}>{textModel}</option>}
                     {texts.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.displayName}
+                        {m.id === DEFAULT_TEXT_MODEL ? " — Recommended" : ""}
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <label className="block">
-                  <span className="text-xs font-medium text-black/70 dark:text-white/70">Voice (speech) model</span>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-black/70 dark:text-white/70">
+                    Voice (speech) model
+                    <span
+                      title={`Recommended: ${DEFAULT_AUDIO_MODEL}`}
+                      className="inline-flex items-center text-blue-600 dark:text-blue-400"
+                    >
+                      <BadgeCheck size={13} aria-hidden="true" />
+                      <span className="sr-only">Recommended model: {DEFAULT_AUDIO_MODEL}</span>
+                    </span>
+                  </span>
                   <select value={audioModel} onChange={(e) => onChangeAudioModel(e.target.value)} className={selectCls}>
-                    {audios.length === 0 && <option value={audioModel}>{audioModel}</option>}
+                    {!audios.some((m) => m.id === audioModel) && <option value={audioModel}>{audioModel}</option>}
                     {audios.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.displayName}
+                        {m.id === DEFAULT_AUDIO_MODEL ? " — Recommended" : ""}
                       </option>
                     ))}
                   </select>
@@ -174,12 +195,22 @@ export default function KeyDrawer({
                 </label>
 
                 <label className="block">
-                  <span className="text-xs font-medium text-black/70 dark:text-white/70">Live voice-call model</span>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-black/70 dark:text-white/70">
+                    Live voice-call model
+                    <span
+                      title={`Recommended: ${DEFAULT_LIVE_MODEL}`}
+                      className="inline-flex items-center text-blue-600 dark:text-blue-400"
+                    >
+                      <BadgeCheck size={13} aria-hidden="true" />
+                      <span className="sr-only">Recommended model: {DEFAULT_LIVE_MODEL}</span>
+                    </span>
+                  </span>
                   <select value={liveModel} onChange={(e) => onChangeLiveModel(e.target.value)} className={selectCls}>
-                    {lives.length === 0 && <option value={liveModel}>{liveModel}</option>}
+                    {!lives.some((m) => m.id === liveModel) && <option value={liveModel}>{liveModel}</option>}
                     {lives.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.displayName}
+                        {m.id === DEFAULT_LIVE_MODEL ? " — Recommended" : ""}
                       </option>
                     ))}
                   </select>
