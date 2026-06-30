@@ -5,6 +5,7 @@ import { Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
 import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
 import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
 import ModelSelect from "./ModelSelect";
+import VoicePreviewButton from "./VoicePreviewButton";
 
 export default function KeyDrawer({
   open,
@@ -177,12 +178,27 @@ export default function KeyDrawer({
                 <label className="block">
                   <span className="text-xs font-medium text-black/70 dark:text-white/70">Voice</span>
                   <select value={voice} onChange={(e) => onChangeVoice(e.target.value)} className={selectCls}>
-                    {PREBUILT_VOICES.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
+                    {[...PREBUILT_VOICES]
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((v) => (
+                        <option key={v.name} value={v.name}>
+                          {v.name} — {v.mood} · {v.gender}
+                        </option>
+                      ))}
                   </select>
+                  <VoicePreviewButton apiKey={apiKey} model={audioModel} voice={voice} />
+                  <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
+                    The speaking voice for spoken replies and live calls.{" "}
+                    <a
+                      href="https://ai.google.dev/gemini-api/docs/speech-generation#voices"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-2 hover:text-black/70 dark:hover:text-white/70"
+                    >
+                      Preview all voices
+                    </a>
+                    .
+                  </span>
                 </label>
               </div>
             )}

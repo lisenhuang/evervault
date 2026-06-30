@@ -54,7 +54,15 @@ export async function startRecording(): Promise<Recorder> {
   };
 }
 
-export async function playPcm16(base64: string, sampleRate: number): Promise<void> {
+/**
+ * Play base64 PCM16 (mono) and return a handle to stop it early. `ended` resolves
+ * when playback finishes naturally OR is stopped. Call only from a user gesture —
+ * the fresh AudioContext is born "running" and is never resumed.
+ */
+export function playPcm16Handle(
+  base64: string,
+  sampleRate: number,
+): { stop: () => void; ended: Promise<void> } {
   const bytes = base64ToUint8(base64);
   const samples = Math.floor(bytes.byteLength / 2);
   const view = new DataView(bytes.buffer);
@@ -66,13 +74,35 @@ export async function playPcm16(base64: string, sampleRate: number): Promise<voi
   const src = ctx.createBufferSource();
   src.buffer = buffer;
   src.connect(ctx.destination);
-  await new Promise<void>((resolve) => {
+
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    void ctx.close();
+  };
+  const ended = new Promise<void>((resolve) => {
     src.onended = () => {
-      void ctx.close();
+      close();
       resolve();
     };
     src.start();
   });
+  return {
+    stop: () => {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+      close();
+    },
+    ended,
+  };
+}
+
+export function playPcm16(base64: string, sampleRate: number): Promise<void> {
+  return playPcm16Handle(base64, sampleRate).ended;
 }
 
 // --- encoding helpers ---
