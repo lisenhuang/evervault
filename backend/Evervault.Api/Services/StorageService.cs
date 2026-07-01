@@ -162,6 +162,30 @@ public class StorageService : IStorageService
         }
     }
 
+    public async Task<IReadOnlyList<string>> ListKeysAsync(string prefix, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync();
+        if (r is null) return new List<string>();
+        using var client = r.Value.Client;
+
+        var keys = new List<string>();
+        string? continuationToken = null;
+        do
+        {
+            var response = await client.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = r.Value.Bucket,
+                Prefix = prefix,
+                ContinuationToken = continuationToken,
+            }, ct);
+            if (response.S3Objects is not null)
+                keys.AddRange(response.S3Objects.Select(o => o.Key));
+            continuationToken = response.IsTruncated == true ? response.NextContinuationToken : null;
+        } while (continuationToken is not null);
+
+        return keys;
+    }
+
     private static IAmazonS3 BuildClient(
         string accountId, string accessKeyId, string secret, string? endpoint, string region, string? jurisdiction)
     {

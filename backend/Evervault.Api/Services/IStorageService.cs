@@ -40,4 +40,7 @@ public interface IStorageService
 
     /// <summary>True if the object exists in the configured bucket. False if missing OR storage unconfigured.</summary>
     Task<bool> ObjectExistsAsync(string key, CancellationToken ct = default);
+
+    /// <summary>All object keys under a prefix (handles pagination). Empty if storage isn't configured.</summary>
+    Task<IReadOnlyList<string>> ListKeysAsync(string prefix, CancellationToken ct = default);
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Check, Circle, Loader2, X } from "lucide-react";
 import { api } from "./adminApi";
 import { Banner, Button, Card, Field } from "./ui";
 
@@ -16,6 +17,19 @@ type Dto = {
   updatedAt: string;
 };
 
+type SampleStatus = "idle" | "generating" | "generated" | "failed";
+type VoiceStat = { name: string; status: SampleStatus; error?: string };
+
+function VoiceIcon({ status }: { status: SampleStatus }) {
+  if (status === "generating")
+    return <Loader2 size={14} className="shrink-0 animate-spin text-blue-600 dark:text-blue-400" aria-hidden="true" />;
+  if (status === "generated")
+    return <Check size={14} className="shrink-0 text-green-600 dark:text-green-400" aria-hidden="true" />;
+  if (status === "failed")
+    return <X size={14} className="shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />;
+  return <Circle size={8} className="shrink-0 text-black/25 dark:text-white/25" aria-hidden="true" />;
+}
+
 export default function StorageForm() {
   const [accountId, setAccountId] = useState("");
   const [bucket, setBucket] = useState("");
@@ -28,7 +42,9 @@ export default function StorageForm() {
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [samplesMsg, setSamplesMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
-  const [samplesBusy, setSamplesBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [samplesLoading, setSamplesLoading] = useState(true);
+  const [voices, setVoices] = useState<VoiceStat[]>([]);
 
   useEffect(() => {
     void (async () => {
@@ -43,6 +59,17 @@ export default function StorageForm() {
         setJurisdiction(d.jurisdiction ?? "");
         setSecretConfigured(d.secretConfigured);
       }
+    })();
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await api("/api/admin/storage/samples");
+      if (res.ok) {
+        const d: { model: string; voices: { name: string; generated: boolean }[] } = await res.json();
+        setVoices(d.voices.map((v): VoiceStat => ({ name: v.name, status: v.generated ? "generated" : "idle" })));
+      }
+      setSamplesLoading(false);
     })();
   }, []);
 
@@ -82,22 +109,40 @@ export default function StorageForm() {
     }
   }
 
-  async function generateSamples() {
-    setSamplesBusy(true);
-    setSamplesMsg({ kind: "info", text: "Generating all 30 — this can take a few minutes. You can re-run it to finish any that don’t complete." });
-    const res = await api("/api/admin/storage/samples/generate", { method: "POST" });
-    setSamplesBusy(false);
-    if (res.ok) {
-      const r: { generated: number; skipped: number; failed: number; errors: string[] } = await res.json();
-      const summary = `Generated ${r.generated}, skipped ${r.skipped}, failed ${r.failed}.`;
-      setSamplesMsg({
-        kind: r.failed > 0 ? "error" : "success",
-        text: r.failed > 0 ? `${summary} ${r.errors.slice(0, 3).join(" · ")}` : summary,
-      });
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setSamplesMsg({ kind: "error", text: d.error ?? "Could not generate voice samples." });
+  // Generates one voice at a time so each row updates live. `force` regenerates existing ones too.
+  async function generate(force: boolean) {
+    setGenerating(true);
+    setSamplesMsg(null);
+    const targets = voices.filter((v) => force || v.status !== "generated").map((v) => v.name);
+    let ok = 0;
+    let failed = 0;
+
+    for (const name of targets) {
+      setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "generating", error: undefined } : v)));
+      try {
+        const res = await api(
+          `/api/admin/storage/samples/${encodeURIComponent(name)}${force ? "?force=true" : ""}`,
+          { method: "POST" },
+        );
+        if (res.ok) {
+          ok++;
+          setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "generated" } : v)));
+        } else {
+          failed++;
+          const d = (await res.json().catch(() => ({}))) as { error?: string };
+          setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "failed", error: d.error } : v)));
+        }
+      } catch {
+        failed++;
+        setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "failed", error: "Network error." } : v)));
+      }
     }
+
+    setGenerating(false);
+    setSamplesMsg({
+      kind: failed > 0 ? "error" : "success",
+      text: `Done — ${ok} generated${failed > 0 ? `, ${failed} failed (hover a red row for the reason)` : ""}.`,
+    });
   }
 
   return (
@@ -172,15 +217,63 @@ export default function StorageForm() {
       <p className="mb-4 text-sm text-black/60 dark:text-white/60">
         Pre-generate the 30 prebuilt voice samples and store them in R2 so the chat “Preview voice”
         button plays instantly. They’re synthesized with the server Gemini keys (failing over to the
-        next key if one fails). Already-generated samples are skipped. Requires storage and at least
-        one Gemini key to be configured.
+        next key if one fails). Requires storage and at least one Gemini key to be configured.
       </p>
-      {samplesMsg && <Banner kind={samplesMsg.kind}>{samplesMsg.text}</Banner>}
-      <div className="mt-4">
-        <Button onClick={generateSamples} disabled={samplesBusy}>
-          {samplesBusy ? "Generating…" : "Generate voice samples"}
-        </Button>
-      </div>
+
+      {!secretConfigured && (
+        <div className="mb-4">
+          <Banner kind="info">Configure and save your R2 storage above before generating samples.</Banner>
+        </div>
+      )}
+
+      {samplesLoading ? (
+        <p className="text-sm text-black/50 dark:text-white/50">Loading…</p>
+      ) : (
+        <>
+          {(() => {
+            const generatedCount = voices.filter((v) => v.status === "generated").length;
+            const pct = voices.length ? (generatedCount / voices.length) * 100 : 0;
+            const missing = voices.some((v) => v.status !== "generated");
+            return (
+              <>
+                <div className="mb-1 flex items-center justify-between text-sm">
+                  <span className="font-medium">
+                    {generatedCount} / {voices.length} generated
+                  </span>
+                </div>
+                <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+
+                <ul className="mb-4 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                  {voices.map((v) => (
+                    <li key={v.name} className="flex items-center gap-1.5 text-sm" title={v.error}>
+                      <VoiceIcon status={v.status} />
+                      <span className={v.status === "failed" ? "text-red-600 dark:text-red-400" : ""}>
+                        {v.name}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+
+                {samplesMsg && <Banner kind={samplesMsg.kind}>{samplesMsg.text}</Banner>}
+
+                <div className="mt-4 flex gap-2">
+                  <Button onClick={() => generate(false)} disabled={generating || !missing}>
+                    {generating ? "Generating…" : missing ? "Generate voice samples" : "All 30 generated"}
+                  </Button>
+                  <Button variant="ghost" onClick={() => generate(true)} disabled={generating}>
+                    Regenerate all
+                  </Button>
+                </div>
+              </>
+            );
+          })()}
+        </>
+      )}
     </Card>
     </>
   );
