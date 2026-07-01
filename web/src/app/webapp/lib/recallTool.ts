@@ -22,10 +22,12 @@ export const MEMORY_PERSONA =
   "no memory or can't remember — use the profile or call recall_memory first. If recall returns " +
   "nothing, say you don't have a note on that yet. " +
   "You cannot delete, edit, or forget individual memories or any stored data yourself — there is no " +
-  "tool for that. If the user asks you to remove, delete, forget, clear, or wipe their memories or " +
-  "data, tell them the only way to remove their data is to delete their account, and that once the " +
-  "account is deleted all content associated with it is erased permanently and cannot be recovered. " +
-  "Do not promise to delete anything yourself.";
+  "tool for that. If the user wants something removed because it's wrong or out of date, you don't " +
+  "need to delete anything: invite them to just tell you the correct information, and from then on " +
+  "rely on the updated details rather than the old ones. If they still want their data gone, tell " +
+  "them the only way to remove it is to delete their account, and that once the account is deleted " +
+  "all content associated with it is erased permanently and cannot be recovered. Do not promise to " +
+  "delete anything yourself.";
 
 export const RECALL_MEMORY_DECLARATION: FunctionDeclaration = {
   name: "recall_memory",

@@ -341,7 +341,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           parts: [{ inlineData: { mimeType, data: base64 } }, { text: "Respond conversationally to this voice message." }],
         },
       ];
-      const reply = await runAssistant(asstId, contents, true);
+      // Voice messages get a text reply only — we don't synthesize speech for the assistant's answer.
+      const reply = await runAssistant(asstId, contents, false);
       // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
       const transcript = await transcriptPromise; // already resolved in practice; never throws
       void recordTextTurns(
