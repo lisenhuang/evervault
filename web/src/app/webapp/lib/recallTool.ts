@@ -20,7 +20,12 @@ export const MEMORY_PERSONA =
   "specific day or period (\"yesterday\", \"last week\", \"on Monday\"), compute the ISO date range " +
   "from the current local date/time you were given and pass it as since/until. Never claim you have " +
   "no memory or can't remember — use the profile or call recall_memory first. If recall returns " +
-  "nothing, say you don't have a note on that yet.";
+  "nothing, say you don't have a note on that yet. " +
+  "You cannot delete, edit, or forget individual memories or any stored data yourself — there is no " +
+  "tool for that. If the user asks you to remove, delete, forget, clear, or wipe their memories or " +
+  "data, tell them the only way to remove their data is to delete their account, and that once the " +
+  "account is deleted all content associated with it is erased permanently and cannot be recovered. " +
+  "Do not promise to delete anything yourself.";
 
 export const RECALL_MEMORY_DECLARATION: FunctionDeclaration = {
   name: "recall_memory",

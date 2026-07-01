@@ -502,7 +502,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           conversationIdRef.current = uid();
           extractCursorRef.current = 0;
         }}
-        onOpenMemories={() => setMemoryPanelOpen(true)}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
         onDeleteAccount={() => {
