@@ -5,10 +5,12 @@ import { api } from "./authApi";
 
 export type TurnItem = {
   role: "user" | "assistant";
-  modality: "text" | "voice" | "live";
+  modality: "text" | "voice" | "live" | "image";
   text?: string;
   audioBase64?: string;
   audioMime?: string;
+  imageBase64?: string;
+  imageMime?: string;
   embedding?: number[];
 };
 
@@ -19,6 +21,7 @@ export type MemoryHit = {
   kind: string; // "turn" | "summary"
   content: string;
   hasAudio: boolean;
+  hasImage: boolean;
   createdAt: string;
   distance: number | null;
 };

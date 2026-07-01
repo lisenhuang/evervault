@@ -171,6 +171,38 @@ export async function transcribeAudio(
   return (res.text ?? "").trim();
 }
 
+/**
+ * Recognize an attached image — one-shot, non-streamed. Returns a compact factual description of
+ * what's in the picture (objects, people, text, setting), used to embed the image into the memory
+ * vector store so it can be recalled later. Best-effort: callers treat "" as "no description".
+ */
+export async function describeImage(
+  apiKey: string,
+  model: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<string> {
+  const ai = client(apiKey);
+  const res = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data: imageBase64 } },
+          {
+            text:
+              "Describe this image in 2-4 factual sentences for a searchable archive: the main " +
+              "subjects, any visible text, and the setting. Return ONLY the description, with no " +
+              "preamble or commentary.",
+          },
+        ],
+      },
+    ],
+  });
+  return (res.text ?? "").trim();
+}
+
 /** Synthesize speech with a TTS model. Returns base64 PCM16 + its sample rate. */
 export async function synthesizeSpeech(
   apiKey: string,

@@ -10,7 +10,8 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
-import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
+import { type Content, describeImage, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
+import type { PreparedImage } from "./lib/image";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
@@ -29,10 +30,14 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went
 
 function toContents(msgs: ChatMessage[]): Content[] {
   return msgs
-    .filter((m) => m.text && !m.error)
+    .filter((m) => (m.text || m.image) && !m.error)
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.text }],
+      // Replay attached images inline so follow-up questions about a picture keep working.
+      parts: [
+        ...(m.image ? [{ inlineData: { mimeType: m.image.mimeType, data: m.image.base64 } }] : []),
+        ...(m.text ? [{ text: m.text }] : []),
+      ],
     }));
 }
 
@@ -244,11 +249,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
   // --- Memory: record finished turns + pull relevant memories into context (RAG) ---
 
-  async function recordTextTurns(items: { role: "user" | "assistant"; text: string; modality: "text" | "voice" | "live" }[], extra?: { audioBase64?: string }) {
+  async function recordTextTurns(
+    items: { role: "user" | "assistant"; text: string; modality: "text" | "voice" | "live" | "image" }[],
+    extra?: { audioBase64?: string; imageBase64?: string; imageMime?: string },
+  ) {
     if (!memoryOn) return;
     const turns: TurnItem[] = [];
     for (const it of items) {
-      if (!it.text.trim() && !(it.role === "user" && extra?.audioBase64)) continue;
+      if (!it.text.trim() && !(it.role === "user" && (extra?.audioBase64 || extra?.imageBase64))) continue;
       const embedding = it.text.trim() ? (await embedDocument(it.text)) ?? undefined : undefined;
       turns.push({
         role: it.role,
@@ -256,6 +264,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         text: it.text,
         embedding,
         ...(it.role === "user" && extra?.audioBase64 ? { audioBase64: extra.audioBase64, audioMime: "audio/wav" } : {}),
+        ...(it.role === "user" && extra?.imageBase64
+          ? { imageBase64: extra.imageBase64, imageMime: extra.imageMime || "image/jpeg" }
+          : {}),
       });
     }
     recordTurn(conversationIdRef.current, turns);
@@ -274,12 +285,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     });
   }
 
-  async function sendText(text: string) {
+  async function sendText(text: string, image?: PreparedImage) {
     if (!apiKey) {
       setDrawerOpen(true);
       return;
     }
-    const userMsg: ChatMessage = { id: uid(), role: "user", text, kind: "text" };
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      text,
+      kind: image ? "image" : "text",
+      ...(image ? { image: { base64: image.base64, mimeType: image.mimeType } } : {}),
+    };
     const asstId = uid();
     const base = [...messages, userMsg];
     setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true }]);
@@ -288,10 +305,27 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const preface = await ragPreface(text);
       const contents = preface ? [preface, ...toContents(base)] : toContents(base);
       const reply = await runAssistant(asstId, contents, false);
-      void recordTextTurns([
-        { role: "user", text, modality: "text" },
-        { role: "assistant", text: reply, modality: "text" },
-      ]);
+      if (image) {
+        // Recognize the attached image (a second, vision generateContent call), then record the turn:
+        // the description is embedded and stored in the vector DB alongside the image itself (→ R2),
+        // so past pictures can be recalled by what's in them. Best-effort — never blocks the chat.
+        void (async () => {
+          const desc = await describeImage(apiKey, textModel, image.base64, image.mimeType).catch(() => "");
+          const userContent = [text.trim(), desc ? `[Image] ${desc}` : ""].filter(Boolean).join("\n") || "(image)";
+          void recordTextTurns(
+            [
+              { role: "user", text: userContent, modality: "image" },
+              { role: "assistant", text: reply, modality: "text" },
+            ],
+            { imageBase64: image.base64, imageMime: image.mimeType },
+          );
+        })();
+      } else {
+        void recordTextTurns([
+          { role: "user", text, modality: "text" },
+          { role: "assistant", text: reply, modality: "text" },
+        ]);
+      }
     } catch (e) {
       setMessages((cur) =>
         cur.map((m) => (m.id === asstId ? { ...m, streaming: false, error: true, text: errMsg(e) } : m)),

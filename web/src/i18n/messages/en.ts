@@ -110,6 +110,9 @@ const en = {
     startCall: "Start a live voice call",
     stopRecording: "Stop recording",
     recordVoice: "Record a voice message",
+    attachImage: "Attach an image",
+    removeImage: "Remove image",
+    attachedImage: "Attached image",
     send: "Send",
     disclaimer: "Your Gemini key stays in your browser. AI can make mistakes.",
   },
@@ -130,6 +133,7 @@ const en = {
   message: {
     callEnded: "Call ended",
     voiceMessage: "Voice message",
+    imageAlt: "Attached image",
     playReply: "Play reply",
   },
   settings: {
