@@ -76,7 +76,6 @@ const en = {
   },
   sidebar: {
     newChat: "New chat",
-    memories: "Memories",
     settings: "Settings",
     theme: "Theme",
     language: "Language",
@@ -91,10 +90,6 @@ const en = {
     greetingFallbackName: "there",
     emptyBody: "Ask anything by text, or tap the mic to talk. Replies can be spoken back to you.",
     addKey: "Add your Gemini key to start",
-    noticePrefix: "Your chats are saved so you (and the AI) can recall them later. Manage them in ",
-    noticeMemoriesLink: "Memories",
-    noticeSuffix: ".",
-    dismiss: "Dismiss",
     micBlocked: "Microphone access was blocked. Allow it in your browser to use voice.",
     signOutTitle: "Sign out?",
     signOutMessage: "You'll need to sign in again to continue chatting.",

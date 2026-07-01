@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Hand, Menu, MessageCircle, Sparkles, X } from "lucide-react";
+import { Hand, Menu, MessageCircle, Sparkles } from "lucide-react";
 import Sidebar from "./Sidebar";
 import CallBar from "./CallBar";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
-import MemoryPanel from "./MemoryPanel";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16, startRecording, type Recorder } from "./lib/audio";
@@ -80,10 +79,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const liveUserTextRef = useRef("");
   const liveAsstTextRef = useRef("");
 
-  // Memory (recall)
-  const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
+  // Memory (recall) — background RAG only; the user-facing Memories panel is not exposed.
   const [memoryOn] = useState(true);
-  const [noticeOpen, setNoticeOpen] = useState(false);
   const conversationIdRef = useRef(uid());
 
   // Derived profile ("what the AI knows about you"): loaded once, injected into every chat, and
@@ -144,7 +141,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (k) void loadModels(k);
     else setDrawerOpen(true);
     store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
-    setNoticeOpen(!store.getNoticeSeen());
     void refreshProfile();
   }, [loadModels, refreshProfile]);
 
@@ -161,11 +157,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
     };
   }, [runExtraction]);
-
-  function dismissNotice() {
-    store.setNoticeSeen();
-    setNoticeOpen(false);
-  }
 
   function saveKey(k: string) {
     store.setKey(k);
@@ -526,23 +517,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           <span className="font-semibold">EverVault</span>
         </header>
 
-        {noticeOpen && (
-          <div className="border-b border-black/10 bg-blue-50 dark:border-white/10 dark:bg-blue-950/30">
-            <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 text-xs text-blue-800 dark:text-blue-200">
-              <span className="flex-1">
-                {t.chat.noticePrefix}
-                <button onClick={() => setMemoryPanelOpen(true)} className="font-medium underline">
-                  {t.chat.noticeMemoriesLink}
-                </button>
-                {t.chat.noticeSuffix}
-              </span>
-              <button onClick={dismissNotice} className="rounded p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40" aria-label={t.chat.dismiss}>
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-        )}
-
         <main className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
             <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 py-20 text-center">
@@ -618,12 +592,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onChangeAudioModel={pickAudioModel}
         onChangeLiveModel={pickLiveModel}
         onChangeVoice={pickVoice}
-      />
-
-      <MemoryPanel
-        open={memoryPanelOpen}
-        onClose={() => setMemoryPanelOpen(false)}
-        memoryOn={memoryOn}
       />
 
       <ConfirmDialog
