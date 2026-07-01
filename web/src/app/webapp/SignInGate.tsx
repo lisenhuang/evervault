@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { MessageCircle } from "lucide-react";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
+import { useT } from "@/i18n/LanguageProvider";
 import { api } from "./authApi";
 
 export default function SignInGate({ clientId, onSignedIn }: { clientId: string; onSignedIn: () => void }) {
+  const t = useT();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -19,7 +21,7 @@ export default function SignInGate({ clientId, onSignedIn }: { clientId: string;
       return;
     }
     const d = await res.json().catch(() => ({}));
-    setError(d.error ?? "Sign-in failed. Please try again.");
+    setError(d.error ?? t.signin.failed);
   }
 
   return (
@@ -28,14 +30,14 @@ export default function SignInGate({ clientId, onSignedIn }: { clientId: string;
         <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-br from-blue-500 to-violet-500 shadow-md">
           <MessageCircle className="h-7 w-7 text-white" aria-hidden="true" />
         </div>
-        <h1 className="text-xl font-semibold">Chat with EverVault</h1>
+        <h1 className="text-xl font-semibold">{t.signin.gateTitle}</h1>
         <p className="mt-2 text-sm text-black/55 dark:text-white/55">
-          Talk to AI by text or voice. Sign in to get started.
+          {t.signin.gateBody}
         </p>
         <div className="mt-6 flex justify-center">
           <GoogleSignInButton clientId={clientId} onCredential={onCredential} text="continue_with" />
         </div>
-        {busy && <p className="mt-3 text-xs text-black/50 dark:text-white/50">Signing you in…</p>}
+        {busy && <p className="mt-3 text-xs text-black/50 dark:text-white/50">{t.signin.signingIn}</p>}
         {error && <p className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p>}
       </div>
     </div>

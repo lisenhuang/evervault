@@ -2,6 +2,8 @@
 
 import { Brain, LogOut, MessageCircle, Settings2, SquarePen } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
+import LanguageToggle from "@/i18n/LanguageToggle";
+import { useT } from "@/i18n/LanguageProvider";
 import type { Me } from "./authApi";
 
 const ROW =
@@ -32,6 +34,7 @@ export default function Sidebar({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useT();
   const act = (fn: () => void) => () => {
     fn();
     onClose();
@@ -52,22 +55,27 @@ export default function Sidebar({
       <nav className="mt-2 flex flex-col gap-0.5">
         <button onClick={act(onNewChat)} className={ROW}>
           <SquarePen size={18} className="shrink-0" aria-hidden="true" />
-          New chat
+          {t.sidebar.newChat}
         </button>
         <button onClick={act(onOpenMemories)} className={ROW}>
           <Brain size={18} className="shrink-0" aria-hidden="true" />
-          Memories
+          {t.sidebar.memories}
         </button>
         <button onClick={act(onOpenSettings)} className={ROW}>
           <Settings2 size={18} className="shrink-0" aria-hidden="true" />
-          Settings
+          {t.sidebar.settings}
         </button>
       </nav>
 
       <div className="flex-1" />
 
       <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
-        <span className="text-sm font-medium text-black/70 dark:text-white/70">Theme</span>
+        <span className="text-sm font-medium text-black/70 dark:text-white/70">{t.sidebar.language}</span>
+        <LanguageToggle variant="row" />
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
+        <span className="text-sm font-medium text-black/70 dark:text-white/70">{t.sidebar.theme}</span>
         <ThemeToggle />
       </div>
 
@@ -91,8 +99,8 @@ export default function Sidebar({
         </div>
         <button
           onClick={act(onSignOut)}
-          title="Sign out"
-          aria-label="Sign out"
+          title={t.sidebar.signOut}
+          aria-label={t.sidebar.signOut}
           className="rounded-md p-2 text-black/60 transition hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
         >
           <LogOut size={18} />

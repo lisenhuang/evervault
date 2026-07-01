@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { LanguageProvider } from "@/i18n/LanguageProvider";
+import { getServerLang } from "@/i18n/server";
+import { htmlLang } from "@/i18n/config";
 
 // Runs during HTML parse, before first paint, to set the theme class and avoid a
 // flash of the wrong theme. Stored "light"/"dark" wins; otherwise follow the OS.
@@ -34,14 +37,17 @@ export const viewport: Viewport = {
   interactiveWidget: "resizes-content",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Resolve the display language server-side (cookie → Accept-Language) so server-rendered pages
+  // come out in the right language with no flash. Seeds the client provider via `initialLang`.
+  const lang = await getServerLang();
   return (
     <html
-      lang="en"
+      lang={htmlLang(lang)}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
@@ -49,7 +55,9 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-full flex flex-col">
-        <ThemeProvider>{children}</ThemeProvider>
+        <LanguageProvider initialLang={lang}>
+          <ThemeProvider>{children}</ThemeProvider>
+        </LanguageProvider>
       </body>
     </html>
   );

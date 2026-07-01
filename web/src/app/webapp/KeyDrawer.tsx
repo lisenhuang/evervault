@@ -6,6 +6,7 @@ import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } 
 import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
 import ModelSelect from "./ModelSelect";
 import VoicePreviewButton from "./VoicePreviewButton";
+import { useT } from "@/i18n/LanguageProvider";
 
 export default function KeyDrawer({
   open,
@@ -44,6 +45,7 @@ export default function KeyDrawer({
   onChangeLiveModel: (v: string) => void;
   onChangeVoice: (v: string) => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState(apiKey);
   const [show, setShow] = useState(false);
 
@@ -69,8 +71,8 @@ export default function KeyDrawer({
         }`}
       >
         <header className="flex items-center justify-between border-b border-black/10 px-5 py-4 dark:border-white/10">
-          <h2 className="font-semibold">Settings</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Close">
+          <h2 className="font-semibold">{t.settings.title}</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/10" aria-label={t.settings.close}>
             <X size={18} />
           </button>
         </header>
@@ -79,11 +81,12 @@ export default function KeyDrawer({
           {/* API key */}
           <section>
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <KeyRound size={15} /> Your Gemini API key
+              <KeyRound size={15} /> {t.settings.apiKeyTitle}
             </h3>
             <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
-              Stored <strong>only in this browser</strong> and sent only to Google — never to EverVault’s
-              servers. Get a free key at{" "}
+              {t.settings.apiKeyNotePrefix}
+              <strong>{t.settings.apiKeyNoteBold}</strong>
+              {t.settings.apiKeyNoteMid}
               <a
                 href="https://aistudio.google.com/apikey"
                 target="_blank"
@@ -92,7 +95,7 @@ export default function KeyDrawer({
               >
                 aistudio.google.com/apikey
               </a>
-              .
+              {t.settings.apiKeyNoteSuffix}
             </div>
             <div className="mt-3 flex items-stretch gap-2">
               <div className="relative flex-1">
@@ -107,7 +110,7 @@ export default function KeyDrawer({
                   type="button"
                   onClick={() => setShow((s) => !s)}
                   className="absolute top-1/2 right-2 -translate-y-1/2 text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70"
-                  aria-label={show ? "Hide key" : "Show key"}
+                  aria-label={show ? t.settings.hideKey : t.settings.showKey}
                 >
                   {show ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -117,7 +120,7 @@ export default function KeyDrawer({
                 disabled={!draft.trim() || draft.trim() === apiKey}
                 className="rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
               >
-                Save
+                {t.settings.save}
               </button>
             </div>
             {apiKey && (
@@ -125,7 +128,7 @@ export default function KeyDrawer({
                 onClick={onClearKey}
                 className="mt-2 inline-flex items-center gap-1.5 text-xs text-red-600 hover:underline dark:text-red-400"
               >
-                <Trash2 size={13} /> Remove key from this browser
+                <Trash2 size={13} /> {t.settings.removeKey}
               </button>
             )}
           </section>
@@ -133,24 +136,24 @@ export default function KeyDrawer({
           {/* Models */}
           <section>
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Models</h3>
+              <h3 className="text-sm font-semibold">{t.settings.models}</h3>
               <button
                 onClick={onReloadModels}
                 disabled={!apiKey || modelsLoading}
                 className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-black/60 hover:bg-black/5 disabled:opacity-50 dark:text-white/60 dark:hover:bg-white/10"
               >
-                <RefreshCw size={13} className={modelsLoading ? "animate-spin" : ""} /> Refresh
+                <RefreshCw size={13} className={modelsLoading ? "animate-spin" : ""} /> {t.settings.refresh}
               </button>
             </div>
 
             {!apiKey ? (
-              <p className="mt-2 text-xs text-black/50 dark:text-white/50">Add your API key to load models.</p>
+              <p className="mt-2 text-xs text-black/50 dark:text-white/50">{t.settings.addKeyToLoad}</p>
             ) : modelsError ? (
               <p className="mt-2 text-xs text-red-600 dark:text-red-400">{modelsError}</p>
             ) : (
               <div className="mt-3 space-y-4">
                 <ModelSelect
-                  label="Text model"
+                  label={t.settings.textModel}
                   value={textModel}
                   options={texts}
                   recommendedId={DEFAULT_TEXT_MODEL}
@@ -158,25 +161,25 @@ export default function KeyDrawer({
                 />
 
                 <ModelSelect
-                  label="Voice (speech) model"
+                  label={t.settings.voiceModel}
                   value={audioModel}
                   options={audios}
                   recommendedId={DEFAULT_AUDIO_MODEL}
                   onChange={onChangeAudioModel}
-                  hint="Used to speak replies to voice messages."
+                  hint={t.settings.voiceModelHint}
                 />
 
                 <ModelSelect
-                  label="Live voice-call model"
+                  label={t.settings.liveModel}
                   value={liveModel}
                   options={lives}
                   recommendedId={DEFAULT_LIVE_MODEL}
                   onChange={onChangeLiveModel}
-                  hint="Real-time hands-free calls (the call button). Needs a Live-API model."
+                  hint={t.settings.liveModelHint}
                 />
 
                 <label className="block">
-                  <span className="text-xs font-medium text-black/70 dark:text-white/70">Voice</span>
+                  <span className="text-xs font-medium text-black/70 dark:text-white/70">{t.settings.voice}</span>
                   <select value={voice} onChange={(e) => onChangeVoice(e.target.value)} className={selectCls}>
                     {[...PREBUILT_VOICES]
                       .sort((a, b) => a.name.localeCompare(b.name))
@@ -188,16 +191,16 @@ export default function KeyDrawer({
                   </select>
                   <VoicePreviewButton voice={voice} />
                   <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
-                    The speaking voice for spoken replies and live calls.{" "}
+                    {t.settings.voiceHintPrefix}
                     <a
                       href="https://ai.google.dev/gemini-api/docs/speech-generation#voices"
                       target="_blank"
                       rel="noreferrer"
                       className="underline underline-offset-2 hover:text-black/70 dark:hover:text-white/70"
                     >
-                      Preview all voices
+                      {t.settings.voiceHintLink}
                     </a>
-                    .
+                    {t.settings.voiceHintSuffix}
                   </span>
                 </label>
               </div>

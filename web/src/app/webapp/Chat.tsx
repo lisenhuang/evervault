@@ -22,6 +22,8 @@ import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
 import type { Me } from "./authApi";
 import type { ChatMessage } from "./types";
+import { useLang } from "@/i18n/LanguageProvider";
+import { aiReplyDirective } from "@/i18n/config";
 
 const uid = () => crypto.randomUUID();
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong.");
@@ -38,6 +40,7 @@ function toContents(msgs: ChatMessage[]): Content[] {
 export default function Chat({ user, onLogout }: { user: Me; onLogout: () => void }) {
   // Keep the shell sized to the visible viewport so the composer rides above the keyboard.
   useVisualViewport();
+  const { t, lang } = useLang();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -195,12 +198,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       acc += delta;
       setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
     };
-    // System instruction always carries the current local time. When memory is on, also give the
-    // model the memory persona + the recall_memory tool so it can search past chats on demand
-    // (covers text + push-to-talk) instead of denying it has any memory.
+    // System instruction always carries the current local time + the reply-language directive (so the
+    // assistant answers in the selected UI language). When memory is on, also give the model the
+    // memory persona + the recall_memory tool so it can search past chats on demand (covers text +
+    // push-to-talk) instead of denying it has any memory.
+    const langDirective = aiReplyDirective(lang);
     if (memoryOn) {
       // Ground the reply in the durable profile (who the user is) + persona + current time.
-      const sys = [renderProfileBlock(profileFactsRef.current), MEMORY_PERSONA, currentTimeContext()]
+      const sys = [renderProfileBlock(profileFactsRef.current), langDirective, MEMORY_PERSONA, currentTimeContext()]
         .filter(Boolean)
         .join("\n\n");
       const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }];
@@ -208,7 +213,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onDelta(delta);
       }
     } else {
-      for await (const delta of streamText(apiKey, textModel, contents, currentTimeContext())) {
+      const sys = [langDirective, currentTimeContext()].filter(Boolean).join("\n\n");
+      for await (const delta of streamText(apiKey, textModel, contents, sys)) {
         onDelta(delta);
       }
     }
@@ -297,7 +303,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       setVoiceState("idle");
       setMessages((cur) => [
         ...cur,
-        { id: uid(), role: "assistant", text: "Microphone access was blocked. Allow it in your browser to use voice.", error: true },
+        { id: uid(), role: "assistant", text: t.chat.micBlocked, error: true },
       ]);
     }
   }
@@ -397,7 +403,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveAsstTextRef.current = "";
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
-    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext);
+    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext, lang);
     liveRef.current = session;
     setCallState("connecting");
     try {
@@ -489,8 +495,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         <header className="flex items-center gap-2 border-b border-black/10 bg-white/80 px-4 py-3 backdrop-blur md:hidden dark:border-white/10 dark:bg-neutral-950/80">
           <button
             onClick={() => setNavOpen(true)}
-            title="Menu"
-            aria-label="Open menu"
+            title={t.sidebar.menu}
+            aria-label={t.sidebar.openMenu}
             className="-ml-2 rounded-md p-2 text-black/60 transition hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
           >
             <Menu size={18} />
@@ -503,13 +509,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           <div className="border-b border-black/10 bg-blue-50 dark:border-white/10 dark:bg-blue-950/30">
             <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 text-xs text-blue-800 dark:text-blue-200">
               <span className="flex-1">
-                Your chats are saved so you (and the AI) can recall them later. Manage them in{" "}
+                {t.chat.noticePrefix}
                 <button onClick={() => setMemoryPanelOpen(true)} className="font-medium underline">
-                  Memories
+                  {t.chat.noticeMemoriesLink}
                 </button>
-                .
+                {t.chat.noticeSuffix}
               </span>
-              <button onClick={dismissNotice} className="rounded p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40" aria-label="Dismiss">
+              <button onClick={dismissNotice} className="rounded p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40" aria-label={t.chat.dismiss}>
                 <X size={14} />
               </button>
             </div>
@@ -523,18 +529,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
                 <Sparkles className="h-8 w-8 text-white" aria-hidden="true" />
               </div>
               <h1 className="inline-flex items-center gap-2 text-2xl font-semibold">
-                Hi {user.name?.split(" ")[0] || "there"}
+                {t.chat.greeting(user.name?.split(" ")[0] || t.chat.greetingFallbackName)}
                 <Hand className="h-6 w-6 text-amber-500" aria-hidden="true" />
               </h1>
               <p className="mt-2 max-w-md text-sm text-black/55 dark:text-white/55">
-                Ask anything by text, or tap the mic to talk. Replies can be spoken back to you.
+                {t.chat.emptyBody}
               </p>
               {!apiKey && (
                 <button
                   onClick={() => setDrawerOpen(true)}
                   className="mt-6 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
                 >
-                  Add your Gemini key to start
+                  {t.chat.addKey}
                 </button>
               )}
             </div>
@@ -601,9 +607,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
       <ConfirmDialog
         open={confirmLogout}
-        title="Sign out?"
-        message="You’ll need to sign in again to continue chatting."
-        confirmLabel="Sign out"
+        title={t.chat.signOutTitle}
+        message={t.chat.signOutMessage}
+        confirmLabel={t.chat.signOutConfirm}
+        cancelLabel={t.common.cancel}
         confirmVariant="danger"
         onClose={() => setConfirmLogout(false)}
         onConfirm={() => {

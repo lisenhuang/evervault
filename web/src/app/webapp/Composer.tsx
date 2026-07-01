@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Loader2, Mic, Phone, Send, Square } from "lucide-react";
+import { useT } from "@/i18n/LanguageProvider";
 
 export type VoiceState = "idle" | "recording" | "processing";
 
@@ -26,6 +27,7 @@ export default function Composer({
   inCall: boolean;
   onNeedKey: () => void;
 }) {
+  const t = useT();
   const [text, setText] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -74,14 +76,14 @@ export default function Composer({
         {recording && (
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-red-600 dark:text-red-400">
             <span className="h-2 w-2 animate-pulse rounded-full bg-red-600 dark:bg-red-400" />
-            Recording… tap the stop button when you’re done.
+            {t.composer.recording}
           </div>
         )}
         <div className="flex items-end gap-2">
           <button
             onClick={callClick}
             disabled={disabled || recording || processing || inCall}
-            title={inCall ? "Call in progress" : "Start a live voice call"}
+            title={inCall ? t.composer.callInProgress : t.composer.startCall}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
           >
             <Phone size={18} />
@@ -89,7 +91,7 @@ export default function Composer({
           <button
             onClick={micClick}
             disabled={disabled || processing}
-            title={recording ? "Stop recording" : "Record a voice message"}
+            title={recording ? t.composer.stopRecording : t.composer.recordVoice}
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
               recording
                 ? "bg-red-600 text-white hover:bg-red-700"
@@ -105,7 +107,7 @@ export default function Composer({
               value={text}
               rows={1}
               disabled={disabled || recording}
-              placeholder={recording ? "Listening…" : "Message EverVault…"}
+              placeholder={recording ? t.composer.listening : t.composer.placeholder}
               onChange={(e) => {
                 setText(e.target.value);
                 grow();
@@ -123,14 +125,14 @@ export default function Composer({
           <button
             onClick={send}
             disabled={disabled || recording || !text.trim()}
-            title="Send"
+            title={t.composer.send}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
           >
             <Send size={18} />
           </button>
         </div>
         <p className="mt-1.5 text-center text-[11px] text-black/40 dark:text-white/40">
-          Your Gemini key stays in your browser. AI can make mistakes.
+          {t.composer.disclaimer}
         </p>
       </div>
     </div>

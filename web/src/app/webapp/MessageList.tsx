@@ -6,6 +6,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "./types";
 import { formatDuration } from "./lib/time";
+import { useT } from "@/i18n/LanguageProvider";
 
 const md: Components = {
   p: (props) => <p className="mb-2 last:mb-0" {...props} />,
@@ -45,6 +46,7 @@ export default function MessageList({
   // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
   scrollSignal?: unknown;
 }) {
+  const t = useT();
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -58,7 +60,7 @@ export default function MessageList({
           <div key={m.id} className="flex justify-center">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
               <PhoneOff size={13} aria-hidden="true" />
-              Call ended
+              {t.message.callEnded}
               <span aria-hidden="true">·</span>
               <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
             </span>
@@ -74,7 +76,7 @@ export default function MessageList({
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 italic opacity-90">
-                    <Mic size={14} aria-hidden="true" /> Voice message
+                    <Mic size={14} aria-hidden="true" /> {t.message.voiceMessage}
                   </span>
                 )
               ) : (
@@ -103,7 +105,7 @@ export default function MessageList({
                   onClick={() => onPlayAudio(m)}
                   className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
                 >
-                  <Volume2 size={13} /> Play reply
+                  <Volume2 size={13} /> {t.message.playReply}
                 </button>
               )}
             </div>

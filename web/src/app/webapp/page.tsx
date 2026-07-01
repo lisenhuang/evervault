@@ -5,10 +5,12 @@ import { Lock } from "lucide-react";
 import Chat from "./Chat";
 import SignInGate from "./SignInGate";
 import { api, type AuthConfig, type Me } from "./authApi";
+import { useT } from "@/i18n/LanguageProvider";
 
 type View = "loading" | "disabled" | "signin" | "chat";
 
 export default function WebappPage() {
+  const t = useT();
   const [view, setView] = useState<View>("loading");
   const [me, setMe] = useState<Me | null>(null);
   const [clientId, setClientId] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export default function WebappPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       {view === "loading" && (
-        <div className="flex flex-1 items-center justify-center text-sm text-black/50 dark:text-white/50">Loading…</div>
+        <div className="flex flex-1 items-center justify-center text-sm text-black/50 dark:text-white/50">{t.signin.loading}</div>
       )}
       {view === "disabled" && (
         <div className="flex flex-1 items-center justify-center px-4 py-16">
@@ -53,9 +55,9 @@ export default function WebappPage() {
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-black/5 dark:bg-white/10">
               <Lock className="h-6 w-6 text-black/60 dark:text-white/60" aria-hidden="true" />
             </div>
-            <h1 className="text-lg font-semibold">Sign-in isn’t set up yet</h1>
+            <h1 className="text-lg font-semibold">{t.signin.disabledTitle}</h1>
             <p className="mt-2 text-sm text-black/55 dark:text-white/55">
-              The administrator hasn’t enabled Google sign-in. Please check back soon.
+              {t.signin.disabledBody}
             </p>
           </div>
         </div>

@@ -4,14 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import type { LiveState } from "./lib/liveSession";
 import { formatDuration } from "./lib/time";
-
-const STATUS: Record<LiveState, string> = {
-  connecting: "Connecting…",
-  listening: "Listening…",
-  speaking: "Speaking…",
-  error: "Connection problem",
-  closed: "Call ended",
-};
+import { useT } from "@/i18n/LanguageProvider";
 
 // Symmetric, staggered delays so the bars read as a centered voice wave.
 const WAVE_DELAYS = ["-0.4s", "-0.2s", "0s", "-0.2s", "-0.4s"];
@@ -38,6 +31,14 @@ export default function CallBar({
   onToggleMute: () => void;
   onEnd: () => void;
 }) {
+  const t = useT();
+  const STATUS: Record<LiveState, string> = {
+    connecting: t.call.connecting,
+    listening: t.call.listening,
+    speaking: t.call.speaking,
+    error: t.call.error,
+    closed: t.call.closed,
+  };
   const connecting = state === "connecting";
   const errored = state === "error";
   const ended = state === "closed";
@@ -69,8 +70,8 @@ export default function CallBar({
         <button
           onClick={onToggleMute}
           disabled={connecting || terminal}
-          title={muted ? "Unmute" : "Mute"}
-          aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+          title={muted ? t.call.unmute : t.call.mute}
+          aria-label={muted ? t.call.unmuteMic : t.call.muteMic}
           className="relative flex h-12 w-12 shrink-0 items-center justify-center disabled:opacity-50"
         >
           {live && (
@@ -127,19 +128,15 @@ export default function CallBar({
             )}
           </p>
           <p className="truncate text-xs text-black/50 dark:text-white/50">
-            {error
-              ? error
-              : muted
-                ? "Your mic is muted — tap the orb to unmute"
-                : "Just talk — I’ll answer out loud. Speak any time to interrupt."}
+            {error ? error : muted ? t.call.mutedHint : t.call.liveHint}
           </p>
         </div>
 
         {/* End call */}
         <button
           onClick={onEnd}
-          title="End call"
-          aria-label="End call"
+          title={t.call.endCall}
+          aria-label={t.call.endCall}
           className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-600 text-white shadow-sm transition hover:bg-red-700"
         >
           <PhoneOff size={20} />

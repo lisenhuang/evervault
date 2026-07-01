@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import ThemeToggle from "@/components/theme/ThemeToggle";
+import LanguageToggle from "@/i18n/LanguageToggle";
+import { useT } from "@/i18n/LanguageProvider";
 import {
   Sparkles,
   ArrowRight,
@@ -16,6 +20,15 @@ import {
 } from "lucide-react";
 
 export default function Home() {
+  const t = useT();
+
+  const features = [
+    { Icon: MessageCircle, title: t.home.feature1Title, body: t.home.feature1Body },
+    { Icon: Search, title: t.home.feature2Title, body: t.home.feature2Body },
+    { Icon: FileText, title: t.home.feature3Title, body: t.home.feature3Body },
+    { Icon: GitBranch, title: t.home.feature4Title, body: t.home.feature4Body },
+  ];
+
   return (
     <main className="flex flex-1 flex-col items-center text-foreground">
       {/* ===== Top bar ===== */}
@@ -27,7 +40,7 @@ export default function Home() {
           <Link
             href="/"
             className="group flex items-center gap-2.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            aria-label="EverVault home"
+            aria-label={t.nav.homeAria}
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
               <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
@@ -35,12 +48,13 @@ export default function Home() {
             <span className="text-[15px] font-semibold tracking-tight">EverVault</span>
           </Link>
           <div className="flex items-center gap-1.5">
+            <LanguageToggle />
             <ThemeToggle />
             <Link
               href="/webapp"
               className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
-              Open the web app
+              {t.nav.openApp}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
           </div>
@@ -58,21 +72,19 @@ export default function Home() {
         <div className="mx-auto flex w-full max-w-3xl flex-col items-center pt-24 pb-20 text-center sm:pt-32 sm:pb-28">
           <span className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3.5 py-1.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-200">
             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            Your personal memory AI
+            {t.home.badge}
           </span>
 
           <h1 className="mt-7 text-balance text-5xl font-semibold tracking-tight sm:text-6xl">
-            Remember everything.
+            {t.home.heroTitle1}
             <br />
             <span className="bg-linear-to-br from-blue-500 to-violet-500 bg-clip-text text-transparent">
-              Carry nothing.
+              {t.home.heroTitle2}
             </span>
           </h1>
 
           <p className="mt-6 max-w-xl text-pretty text-base leading-relaxed text-black/60 dark:text-white/60 sm:text-lg">
-            EverVault is a private place that quietly remembers your conversations,
-            ideas, and moments — and helps you find them again whenever you need.
-            Talk to it like a friend who never forgets.
+            {t.home.heroBody}
           </p>
 
           <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row sm:gap-4">
@@ -80,20 +92,20 @@ export default function Home() {
               href="/webapp"
               className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-6 py-3 text-sm font-medium text-white shadow-md transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
-              Open the web app
+              {t.nav.openApp}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
             <span
               className="inline-flex cursor-default select-none items-center gap-2 rounded-full border border-black/10 bg-white/70 px-5 py-3 text-sm text-black/60 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-white/60"
-              aria-label="iPhone and Android apps coming soon"
+              aria-label={t.home.comingSoonAria}
             >
               <Smartphone className="h-4 w-4" aria-hidden="true" />
-              iPhone &amp; Android — coming soon
+              {t.home.comingSoon}
             </span>
           </div>
 
           <p className="mt-5 text-xs text-black/50 dark:text-white/50">
-            Private by design · Yours alone · Nothing forgotten
+            {t.home.tagline}
           </p>
 
           {/* ===== Floating product hint card (decorative) ===== */}
@@ -111,18 +123,18 @@ export default function Home() {
                 <div className="flex-1 space-y-3 text-sm">
                   <div>
                     <div className="font-mono text-[11px] uppercase tracking-wide text-black/50 dark:text-white/50">
-                      Tue · 9:41
+                      {t.home.cardDate1}
                     </div>
                     <div className="text-black/75 dark:text-white/75">
-                      Idea for the spring trip — somewhere by the coast.
+                      {t.home.cardNote1}
                     </div>
                   </div>
                   <div>
                     <div className="font-mono text-[11px] uppercase tracking-wide text-black/50 dark:text-white/50">
-                      Fri · 18:20
+                      {t.home.cardDate2}
                     </div>
                     <div className="text-black/75 dark:text-white/75">
-                      Booked the cottage. Felt good to finally decide.
+                      {t.home.cardNote2}
                     </div>
                   </div>
                 </div>
@@ -134,7 +146,7 @@ export default function Home() {
               <div className="mt-5 space-y-3">
                 <div className="flex justify-end">
                   <div className="max-w-[80%] rounded-2xl rounded-br-md bg-blue-600 px-4 py-2.5 text-sm text-white">
-                    What was that coast trip I was planning?
+                    {t.home.cardAsk}
                   </div>
                 </div>
                 <div className="flex items-end gap-2">
@@ -142,8 +154,7 @@ export default function Home() {
                     <Sparkles className="h-3.5 w-3.5 text-white" aria-hidden="true" />
                   </span>
                   <div className="max-w-[80%] rounded-2xl rounded-bl-md border border-black/10 bg-white/90 px-4 py-2.5 text-sm text-black/80 dark:border-white/10 dark:bg-white/10 dark:text-white/85">
-                    The coastal cottage — you booked it last Friday. Want me to pull
-                    up your notes?
+                    {t.home.cardReply}
                   </div>
                 </div>
               </div>
@@ -151,7 +162,7 @@ export default function Home() {
               {/* slim composer */}
               <div className="mt-5 flex items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] px-4 py-2.5 dark:border-white/10 dark:bg-white/5">
                 <span className="flex-1 text-sm text-black/45 dark:text-white/45">
-                  Say anything…
+                  {t.home.cardComposer}
                 </span>
                 <Paperclip className="h-4 w-4 text-black/45 dark:text-white/45" aria-hidden="true" />
                 <Mic className="h-4 w-4 text-black/45 dark:text-white/45" aria-hidden="true" />
@@ -171,13 +182,10 @@ export default function Home() {
             id="feel-heading"
             className="text-3xl font-semibold tracking-tight sm:text-4xl"
           >
-            A calmer way to hold your own life
+            {t.home.feelTitle}
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-black/60 dark:text-white/60 sm:text-lg">
-            Most days move faster than we can keep up with. A thought here, a plan
-            there, a moment you meant to come back to. EverVault catches all of it.
-            You simply talk — and it listens, keeps, and gently connects the threads,
-            so the things that matter to you are always within reach.
+            {t.home.feelBody}
           </p>
         </div>
       </section>
@@ -193,36 +201,15 @@ export default function Home() {
               id="features-heading"
               className="text-3xl font-semibold tracking-tight sm:text-4xl"
             >
-              Quietly capable, never in the way
+              {t.home.featuresTitle}
             </h2>
             <p className="mt-5 text-base leading-relaxed text-black/60 dark:text-white/60">
-              Everything you need to keep your life close — and nothing you don&apos;t.
+              {t.home.featuresBody}
             </p>
           </div>
 
           <div className="mt-14 grid grid-cols-1 gap-5 sm:grid-cols-2">
-            {[
-              {
-                Icon: MessageCircle,
-                title: "Talk naturally",
-                body: "Have a real conversation by text or voice, and EverVault remembers it all.",
-              },
-              {
-                Icon: Search,
-                title: "Find any moment",
-                body: "Ask about something you mentioned weeks ago and it surfaces in seconds.",
-              },
-              {
-                Icon: FileText,
-                title: "Everything in one place",
-                body: "Bring in your notes and files; they live alongside your conversations.",
-              },
-              {
-                Icon: GitBranch,
-                title: "Reflect over time",
-                body: "See how your thoughts, plans, and ideas grow and connect as the days go by.",
-              },
-            ].map(({ Icon, title, body }) => (
+            {features.map(({ Icon, title, body }) => (
               <div
                 key={title}
                 className="rounded-2xl border border-black/10 bg-white/70 p-6 shadow-sm backdrop-blur transition-shadow hover:shadow-md dark:border-white/10 dark:bg-white/5"
@@ -250,21 +237,18 @@ export default function Home() {
             id="just-you-heading"
             className="text-3xl font-semibold tracking-tight sm:text-4xl"
           >
-            Just for you. Only for you.
+            {t.home.justYouTitle}
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-black/60 dark:text-white/60 sm:text-lg">
-            EverVault isn&apos;t a social network and it isn&apos;t here to entertain
-            you. There&apos;s no feed, no audience, no noise. It&apos;s a quiet,
-            personal space built for one purpose: helping you understand your own
-            life a little better, one conversation at a time.
+            {t.home.justYouBody}
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
-            {["No feed", "No audience", "No noise"].map((t) => (
+            {[t.home.chipNoFeed, t.home.chipNoAudience, t.home.chipNoNoise].map((label) => (
               <span
-                key={t}
+                key={label}
                 className="rounded-full border border-black/10 bg-white/70 px-3.5 py-1.5 text-xs font-medium text-black/60 backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-white/60"
               >
-                {t}
+                {label}
               </span>
             ))}
           </div>
@@ -285,19 +269,16 @@ export default function Home() {
               id="privacy-heading"
               className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl"
             >
-              A safe place for everything you share
+              {t.home.privacyTitle}
             </h2>
             <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-black/60 dark:text-white/60 sm:text-lg">
-              Your thoughts, conversations, and memories are yours alone — kept
-              private and protected, and never treated as something to sell.
-              EverVault is built to be the one place where nothing you say is ever
-              lost, and nothing you trust it with is ever shared.
+              {t.home.privacyBody}
             </p>
             <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
               {[
-                { Icon: Lock, label: "Yours alone" },
-                { Icon: Shield, label: "Always private" },
-                { Icon: InfinityIcon, label: "Never forgotten" },
+                { Icon: Lock, label: t.home.privacyYoursAlone },
+                { Icon: Shield, label: t.home.privacyAlwaysPrivate },
+                { Icon: InfinityIcon, label: t.home.privacyNeverForgotten },
               ].map(({ Icon, label }) => (
                 <span
                   key={label}
@@ -326,27 +307,25 @@ export default function Home() {
             id="cta-heading"
             className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl"
           >
-            Your memory, ready when you are
+            {t.home.ctaTitle}
           </h2>
           <p className="mx-auto mt-6 max-w-xl text-pretty text-base leading-relaxed text-black/60 dark:text-white/60 sm:text-lg">
-            Start a conversation today, right from your browser — no setup, no
-            clutter. The iPhone and Android apps are coming soon, so your memory
-            will travel with you wherever you go.
+            {t.home.ctaBody}
           </p>
           <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row sm:justify-center sm:gap-4">
             <Link
               href="/webapp"
               className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-7 py-3.5 text-sm font-medium text-white shadow-md transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
-              Open the web app
+              {t.nav.openApp}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
             <span
               className="inline-flex cursor-default select-none items-center gap-2 rounded-full border border-black/10 bg-white/70 px-5 py-3.5 text-sm text-black/60 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-white/60"
-              aria-label="iPhone and Android apps coming soon"
+              aria-label={t.home.comingSoonAria}
             >
               <Smartphone className="h-4 w-4" aria-hidden="true" />
-              iPhone &amp; Android — coming soon
+              {t.home.comingSoon}
             </span>
           </div>
         </div>
@@ -362,8 +341,7 @@ export default function Home() {
             <span className="text-sm font-semibold tracking-tight">EverVault</span>
           </div>
           <p className="max-w-md text-sm text-black/60 dark:text-white/60">
-            A safe place where your thoughts, conversations, and memories are never
-            lost.
+            {t.home.footerTagline}
           </p>
         </div>
       </footer>

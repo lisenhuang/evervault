@@ -7,6 +7,7 @@ import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { currentTimeContext } from "./time";
+import { aiReplyDirective, type Lang } from "@/i18n/config";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
 
@@ -38,6 +39,7 @@ export class LiveSession {
     private memoryEnabled = false,
     private profileBlock?: string,
     private recentContext?: string,
+    private language: Lang = "en",
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -66,6 +68,8 @@ export class LiveSession {
           this.memoryEnabled && this.recentContext ? this.recentContext : "",
           this.memoryEnabled ? MEMORY_PERSONA : "",
           SYSTEM_INSTRUCTION,
+          // Steer the spoken reply into the selected UI language (empty for English).
+          aiReplyDirective(this.language),
           currentTimeContext(),
         ]
           .filter(Boolean)

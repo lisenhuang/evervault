@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Square, Volume2 } from "lucide-react";
 import { playUrlHandle } from "./lib/audio";
+import { useT } from "@/i18n/LanguageProvider";
 
 type Status = "idle" | "loading" | "playing" | "error";
 
@@ -13,6 +14,7 @@ type Status = "idle" | "loading" | "playing" | "error";
  * handle so it can cancel on re-click, on a voice change, or on unmount.
  */
 export default function VoicePreviewButton({ voice }: { voice: string }) {
+  const t = useT();
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
 
@@ -72,7 +74,7 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
       if (!mounted.current || id !== runId.current) return;
       handleRef.current = null;
       setStatus("error");
-      setError(e instanceof Error ? e.message : "Could not play the voice sample.");
+      setError(e instanceof Error ? e.message : t.voicePreview.error);
     }
   }
 
@@ -86,15 +88,15 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
       >
         {status === "loading" ? (
           <>
-            <Loader2 size={13} className="animate-spin" /> Loading…
+            <Loader2 size={13} className="animate-spin" /> {t.voicePreview.loading}
           </>
         ) : status === "playing" ? (
           <>
-            <Square size={13} /> Stop
+            <Square size={13} /> {t.voicePreview.stop}
           </>
         ) : (
           <>
-            <Volume2 size={13} /> Preview voice
+            <Volume2 size={13} /> {t.voicePreview.preview}
           </>
         )}
       </button>

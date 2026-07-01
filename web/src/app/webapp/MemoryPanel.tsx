@@ -24,20 +24,23 @@ import { embedQuery, getEmbeddingPolicy } from "./lib/embed";
 import { clearProfile, deleteFact, type Fact, getProfile } from "./lib/profile";
 import { clearAllMemories, deleteMemory, type MemoryHit, searchMemories } from "./recordApi";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { useT } from "@/i18n/LanguageProvider";
 
 type Tab = "about" | "history";
 
-const CATEGORY_META: Record<string, { label: string; Icon: LucideIcon }> = {
-  identity: { label: "Identity", Icon: User },
-  preferences: { label: "Preferences", Icon: SlidersHorizontal },
-  relationships: { label: "Relationships", Icon: Users },
-  work: { label: "Work", Icon: Briefcase },
-  goals: { label: "Goals", Icon: Target },
-  interests: { label: "Interests", Icon: Heart },
-  open_loop: { label: "Open loops", Icon: ListTodo },
-  other: { label: "Other", Icon: Tag },
+// Icons are stable; the human-readable category labels come from the translation dictionary
+// (t.memory.categories[key]) so the underlying category KEYS stay unchanged for the backend.
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  identity: User,
+  preferences: SlidersHorizontal,
+  relationships: Users,
+  work: Briefcase,
+  goals: Target,
+  interests: Heart,
+  open_loop: ListTodo,
+  other: Tag,
 };
-const CATEGORY_ORDER = Object.keys(CATEGORY_META);
+const CATEGORY_ORDER = Object.keys(CATEGORY_ICONS);
 
 export default function MemoryPanel({
   open,
@@ -48,6 +51,7 @@ export default function MemoryPanel({
   onClose: () => void;
   memoryOn: boolean;
 }) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("about");
 
   // About you (derived profile)
@@ -105,14 +109,16 @@ export default function MemoryPanel({
     void new Audio(`/api/chat/memories/${id}/audio`).play().catch(() => {});
   }
 
+  const catLabel = (cat: string) => t.memory.categories[cat] ?? cat;
   const grouped = facts
     ? CATEGORY_ORDER.map((cat) => ({
         cat,
-        meta: CATEGORY_META[cat],
+        Icon: CATEGORY_ICONS[cat],
+        label: catLabel(cat),
         items: facts.filter((f) => f.category === cat),
       })).filter((g) => g.items.length > 0)
     : [];
-  const ungrouped = facts ? facts.filter((f) => !CATEGORY_META[f.category]) : [];
+  const ungrouped = facts ? facts.filter((f) => !CATEGORY_ICONS[f.category]) : [];
 
   const tabBtn = (id: Tab, label: string, Icon: LucideIcon) => (
     <button
@@ -140,49 +146,49 @@ export default function MemoryPanel({
         }`}
       >
         <header className="flex items-center justify-between border-b border-black/10 px-5 py-4 dark:border-white/10">
-          <h2 className="font-semibold">Your memory</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Close">
+          <h2 className="font-semibold">{t.memory.title}</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/10" aria-label={t.memory.close}>
             <X size={18} />
           </button>
         </header>
 
         <div className="flex border-b border-black/10 dark:border-white/10">
-          {tabBtn("about", "About you", Sparkles)}
-          {tabBtn("history", "History", History)}
+          {tabBtn("about", t.memory.tabAbout, Sparkles)}
+          {tabBtn("history", t.memory.tabHistory, History)}
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {memoryOn && embeddingOff && (
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              <span>Smart recall is limited right now — the AI can still find your chats by keyword, but not by meaning.</span>
+              <span>{t.memory.recallLimited}</span>
             </div>
           )}
 
           {tab === "about" ? (
             <>
               <p className="text-xs text-black/55 dark:text-white/55">
-                What the AI has learned about you, used to make every chat feel more personal.
+                {t.memory.aboutDesc}
               </p>
 
               {facts === null && (
                 <div className="flex items-center gap-2 text-sm text-black/50 dark:text-white/50">
-                  <Loader2 size={16} className="animate-spin" /> Loading…
+                  <Loader2 size={16} className="animate-spin" /> {t.memory.loading}
                 </div>
               )}
 
               {facts && facts.length === 0 && (
                 <p className="rounded-lg border border-dashed border-black/15 px-4 py-6 text-center text-sm text-black/50 dark:border-white/15 dark:text-white/50">
-                  I&rsquo;m still getting to know you — keep chatting and this fills in.
+                  {t.memory.aboutEmpty}
                 </p>
               )}
 
-              {[...grouped, ...(ungrouped.length ? [{ cat: "other", meta: CATEGORY_META.other, items: ungrouped }] : [])].map(
+              {[...grouped, ...(ungrouped.length ? [{ cat: "other", Icon: CATEGORY_ICONS.other, label: catLabel("other"), items: ungrouped }] : [])].map(
                 (g) => (
                   <div key={g.cat} className="space-y-2">
                     <div className="flex items-center gap-2 text-xs font-semibold tracking-wide text-black/45 uppercase dark:text-white/45">
-                      <g.meta.Icon size={14} />
-                      {g.meta.label}
+                      <g.Icon size={14} />
+                      {g.label}
                     </div>
                     <ul className="space-y-1.5">
                       {g.items.map((f) => (
@@ -194,7 +200,7 @@ export default function MemoryPanel({
                           <button
                             onClick={() => setConfirmDeleteFactId(f.id)}
                             className="rounded p-1 text-black/30 transition hover:bg-red-50 hover:text-red-600 dark:text-white/30 dark:hover:bg-red-950/40 dark:hover:text-red-400"
-                            aria-label="Forget this"
+                            aria-label={t.memory.forgetThis}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -207,7 +213,7 @@ export default function MemoryPanel({
 
               {facts && facts.length > 0 && (
                 <button onClick={() => setConfirmClearProfile(true)} className="text-xs text-red-600 hover:underline dark:text-red-400">
-                  Clear everything the AI knows
+                  {t.memory.clearProfile}
                 </button>
               )}
             </>
@@ -220,7 +226,7 @@ export default function MemoryPanel({
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && run()}
-                    placeholder="Search your past chats…"
+                    placeholder={t.memory.searchPlaceholder}
                     className="flex-1 bg-transparent text-base outline-none md:text-sm"
                   />
                 </div>
@@ -229,12 +235,12 @@ export default function MemoryPanel({
                   disabled={busy}
                   className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {busy ? <Loader2 size={16} className="animate-spin" /> : "Search"}
+                  {busy ? <Loader2 size={16} className="animate-spin" /> : t.memory.search}
                 </button>
               </div>
 
               {hits && hits.length === 0 && (
-                <p className="text-sm text-black/50 dark:text-white/50">No matching memories yet.</p>
+                <p className="text-sm text-black/50 dark:text-white/50">{t.memory.noMatches}</p>
               )}
 
               <ul className="space-y-2">
@@ -242,16 +248,16 @@ export default function MemoryPanel({
                   <li key={h.id} className="rounded-lg border border-black/10 px-3 py-2.5 text-sm dark:border-white/10">
                     <div className="mb-1 flex items-center gap-2 text-xs text-black/45 dark:text-white/45">
                       <span className="rounded-full bg-black/10 px-2 py-0.5 dark:bg-white/10">
-                        {h.role === "assistant" ? "AI" : "You"}
+                        {h.role === "assistant" ? t.memory.roleAI : t.memory.roleYou}
                       </span>
                       <span>{new Date(h.createdAt).toLocaleString()}</span>
                       <span className="ml-auto flex items-center gap-1">
                         {h.hasAudio && (
-                          <button onClick={() => play(h.id)} className="rounded p-1 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Play audio">
+                          <button onClick={() => play(h.id)} className="rounded p-1 hover:bg-black/5 dark:hover:bg-white/10" aria-label={t.memory.playAudio}>
                             <Volume2 size={14} />
                           </button>
                         )}
-                        <button onClick={() => setConfirmDeleteId(h.id)} className="rounded p-1 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40" aria-label="Delete">
+                        <button onClick={() => setConfirmDeleteId(h.id)} className="rounded p-1 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40" aria-label={t.memory.delete}>
                           <Trash2 size={14} />
                         </button>
                       </span>
@@ -263,7 +269,7 @@ export default function MemoryPanel({
 
               {hits && hits.length > 0 && (
                 <button onClick={() => setConfirmClearAll(true)} className="text-xs text-red-600 hover:underline dark:text-red-400">
-                  Clear all memories
+                  {t.memory.clearAll}
                 </button>
               )}
             </>
@@ -273,9 +279,10 @@ export default function MemoryPanel({
 
       <ConfirmDialog
         open={confirmDeleteFactId !== null}
-        title="Forget this?"
-        message="The AI will no longer use this detail about you."
-        confirmLabel="Forget"
+        title={t.memory.forgetFactTitle}
+        message={t.memory.forgetFactMessage}
+        confirmLabel={t.memory.forgetFactConfirm}
+        cancelLabel={t.common.cancel}
         confirmVariant="danger"
         onClose={() => setConfirmDeleteFactId(null)}
         onConfirm={async () => {
@@ -287,9 +294,10 @@ export default function MemoryPanel({
 
       <ConfirmDialog
         open={confirmClearProfile}
-        title="Clear what the AI knows?"
-        message="This removes everything the AI has learned about you. Your chat history stays."
-        confirmLabel="Clear"
+        title={t.memory.clearProfileTitle}
+        message={t.memory.clearProfileMessage}
+        confirmLabel={t.memory.clearProfileConfirm}
+        cancelLabel={t.common.cancel}
         confirmVariant="danger"
         onClose={() => setConfirmClearProfile(false)}
         onConfirm={async () => {
@@ -300,9 +308,10 @@ export default function MemoryPanel({
 
       <ConfirmDialog
         open={confirmDeleteId !== null}
-        title="Delete this memory?"
-        message="This permanently removes it from your saved chats."
-        confirmLabel="Delete"
+        title={t.memory.deleteMemoryTitle}
+        message={t.memory.deleteMemoryMessage}
+        confirmLabel={t.memory.deleteMemoryConfirm}
+        cancelLabel={t.common.cancel}
         confirmVariant="danger"
         onClose={() => setConfirmDeleteId(null)}
         onConfirm={async () => {
@@ -314,9 +323,10 @@ export default function MemoryPanel({
 
       <ConfirmDialog
         open={confirmClearAll}
-        title="Clear all memories?"
-        message="This permanently deletes all of your saved chats. This can’t be undone."
-        confirmLabel="Clear all"
+        title={t.memory.clearAllTitle}
+        message={t.memory.clearAllMessage}
+        confirmLabel={t.memory.clearAllConfirm}
+        cancelLabel={t.common.cancel}
         confirmVariant="danger"
         onClose={() => setConfirmClearAll(false)}
         onConfirm={async () => {
