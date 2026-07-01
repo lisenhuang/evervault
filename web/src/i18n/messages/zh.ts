@@ -111,6 +111,9 @@ const zh: Messages = {
     startCall: "发起实时语音通话",
     stopRecording: "停止录音",
     recordVoice: "录制语音消息",
+    attachImage: "添加图片",
+    removeImage: "移除图片",
+    attachedImage: "已添加的图片",
     send: "发送",
     disclaimer: "你的 Gemini 密钥仅保存在浏览器中。AI 可能会出错。",
   },
@@ -131,6 +134,7 @@ const zh: Messages = {
   message: {
     callEnded: "通话已结束",
     voiceMessage: "语音消息",
+    imageAlt: "附带的图片",
     playReply: "播放回复",
   },
   settings: {

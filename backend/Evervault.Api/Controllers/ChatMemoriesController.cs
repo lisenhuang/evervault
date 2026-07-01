@@ -33,10 +33,10 @@ public class ChatMemoriesController : ControllerBase
     private int Uid => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
     public record EmbeddingPolicy(bool Enabled, string? Model, int Dimensions);
-    public record TurnItem(string Role, string Modality, string? Text, string? AudioBase64, string? AudioMime, float[]? Embedding);
+    public record TurnItem(string Role, string Modality, string? Text, string? AudioBase64, string? AudioMime, float[]? Embedding, string? ImageBase64 = null, string? ImageMime = null);
     public record RecordTurnRequest(string? ConversationId, List<TurnItem> Turns);
     public record SearchRequest(float[]? Vector, string? Q, int K = 8, DateTimeOffset? Since = null, DateTimeOffset? Until = null, string? Kind = null);
-    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, DateTimeOffset CreatedAt, double? Distance);
+    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, bool HasImage, DateTimeOffset CreatedAt, double? Distance);
     public record SummaryRequest(string ConversationId, string Text, float[]? Embedding);
 
     /// <summary>The embedding policy the browser must embed with (its own key). enabled = locked + model set.</summary>
@@ -63,7 +63,7 @@ public class ChatMemoriesController : ControllerBase
         foreach (var t in req.Turns)
         {
             var content = (t.Text ?? "").Trim();
-            if (content.Length == 0 && string.IsNullOrEmpty(t.AudioBase64)) continue;
+            if (content.Length == 0 && string.IsNullOrEmpty(t.AudioBase64) && string.IsNullOrEmpty(t.ImageBase64)) continue;
 
             // Only accept the vector if its length matches the locked dimension (same vector space).
             var vector = t.Embedding is { Length: > 0 } && (dim == 0 || t.Embedding.Length == dim)
@@ -75,7 +75,7 @@ public class ChatMemoriesController : ControllerBase
                 EndUserId = uid,
                 ConversationId = convId,
                 Role = t.Role == "assistant" ? "assistant" : "user",
-                Modality = t.Modality is "voice" or "live" ? t.Modality : "text",
+                Modality = t.Modality is "voice" or "live" or "image" ? t.Modality : "text",
                 Content = content.Length > 16000 ? content[..16000] : content,
                 Embedding = vector,
             };
@@ -97,6 +97,24 @@ public class ChatMemoriesController : ControllerBase
                 catch
                 {
                     // Best-effort: keep the text row even if the audio upload fails (e.g. storage not set up).
+                }
+            }
+
+            if (!string.IsNullOrEmpty(t.ImageBase64))
+            {
+                try
+                {
+                    var bytes = Convert.FromBase64String(t.ImageBase64);
+                    var mime = string.IsNullOrWhiteSpace(t.ImageMime) ? "image/jpeg" : t.ImageMime!;
+                    var key = $"chat-images/{uid}/{convId}/{row.Id}{ImageExt(mime)}";
+                    using var ms = new MemoryStream(bytes);
+                    await _storage.PutObjectAsync(key, ms, mime, HttpContext.RequestAborted);
+                    row.ImageObjectKey = key;
+                    await _db.SaveChangesAsync();
+                }
+                catch
+                {
+                    // Best-effort: keep the text row even if the image upload fails (e.g. storage not set up).
                 }
             }
         }
@@ -127,7 +145,7 @@ public class ChatMemoriesController : ControllerBase
                     && (kind == null || m.Kind == kind))
                 .OrderBy(m => m.Embedding!.CosineDistance(qv))
                 .Take(k)
-                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
                 .ToListAsync();
             return Ok(hits);
         }
@@ -140,7 +158,7 @@ public class ChatMemoriesController : ControllerBase
                 && (kind == null || m.Kind == kind))
             .OrderByDescending(m => m.CreatedAt)
             .Take(k)
-            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
+            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
             .ToListAsync();
         return Ok(rows);
     }
@@ -155,7 +173,7 @@ public class ChatMemoriesController : ControllerBase
         return await query
             .OrderByDescending(m => m.CreatedAt)
             .Take(t)
-            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.CreatedAt, (double?)null))
+            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
             .ToListAsync();
     }
 
@@ -202,6 +220,27 @@ public class ChatMemoriesController : ControllerBase
         var url = await _storage.GetPresignedGetUrlAsync(m.AudioObjectKey, TimeSpan.FromMinutes(5), HttpContext.RequestAborted);
         return url is null ? NotFound() : Redirect(url);
     }
+
+    [HttpGet("{id:int}/image")]
+    public async Task<IActionResult> Image(int id)
+    {
+        var uid = Uid;
+        var m = await _db.ChatMemories.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.EndUserId == uid);
+        if (m is null || string.IsNullOrEmpty(m.ImageObjectKey)) return NotFound();
+        var url = await _storage.GetPresignedGetUrlAsync(m.ImageObjectKey, TimeSpan.FromMinutes(5), HttpContext.RequestAborted);
+        return url is null ? NotFound() : Redirect(url);
+    }
+
+    /// <summary>File extension (with dot) for the stored image's MIME type; unknown types keep ".jpg".</summary>
+    private static string ImageExt(string mime) => mime.ToLowerInvariant() switch
+    {
+        "image/png" => ".png",
+        "image/webp" => ".webp",
+        "image/gif" => ".gif",
+        "image/heic" => ".heic",
+        "image/heif" => ".heif",
+        _ => ".jpg",
+    };
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)

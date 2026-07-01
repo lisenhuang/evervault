@@ -68,6 +68,14 @@ export default function MessageList({
         ) : m.role === "user" ? (
           <div key={m.id} className="flex items-start justify-end gap-3">
             <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm">
+              {m.image && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`data:${m.image.mimeType};base64,${m.image.base64}`}
+                  alt={t.message.imageAlt}
+                  className={`max-h-64 w-full rounded-xl object-contain ${m.text ? "mb-2" : ""}`}
+                />
+              )}
               {m.kind === "voice" ? (
                 m.text ? (
                   <span className="flex items-start gap-1.5">
