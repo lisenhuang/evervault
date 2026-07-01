@@ -98,10 +98,11 @@ export default function MessageList({
                   </ReactMarkdown>
                 </div>
               ) : m.streaming ? (
-                // Voice replies feel like texting a person: a "typing…" indicator (revealed after a
-                // short pause) instead of a spinner. Everything else keeps the immediate spinner.
+                // Voice replies feel like texting a person: a spinner lands immediately so the wait
+                // never reads as an empty bubble, then it gives way to a "typing…" indicator after a
+                // short pause. Everything else keeps the plain immediate spinner.
                 m.kind === "voice" ? (
-                  <TypingIndicator />
+                  <VoiceReplyPending />
                 ) : (
                   <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
                 )
@@ -123,21 +124,23 @@ export default function MessageList({
   );
 }
 
-// A chat-style "typing…" indicator for a pending voice reply. Held back for a beat (2s) so a quick
-// reply lands without ever flashing it — mimicking someone who pauses before they start typing.
-function TypingIndicator() {
-  const [show, setShow] = useState(false);
+// Feedback for a pending voice reply. A loading spinner shows immediately so the wait never reads as
+// an empty bubble, then — after a short pause (2s) — it gives way to a chat-style "typing…" indicator,
+// mimicking someone who pauses before they start typing. Quick replies land during the spinner phase.
+function VoiceReplyPending() {
+  const [typing, setTyping] = useState(false);
   useEffect(() => {
-    const id = setTimeout(() => setShow(true), 2000);
+    const id = setTimeout(() => setTyping(true), 2000);
     return () => clearTimeout(id);
   }, []);
-  if (!show) return null;
-  return (
+  return typing ? (
     <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
     </span>
+  ) : (
+    <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" role="status" aria-label="Assistant is thinking" />
   );
 }
 
