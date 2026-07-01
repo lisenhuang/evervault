@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Check, Circle, Loader2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Circle, Loader2, Square, Volume2, X } from "lucide-react";
 import { api } from "./adminApi";
 import { Banner, Button, Card, Field, Select } from "./ui";
+import { playUrlHandle } from "../webapp/lib/audio";
 
 type Dto = {
   accountId: string;
@@ -49,6 +50,8 @@ export default function StorageForm() {
   const [samplesLoading, setSamplesLoading] = useState(true);
   const [voices, setVoices] = useState<VoiceStat[]>([]);
   const [model, setModel] = useState(TTS_MODELS[0]);
+  const [playing, setPlaying] = useState<string | null>(null);
+  const playRef = useRef<{ stop: () => void } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -173,6 +176,34 @@ export default function StorageForm() {
     if (err) setSamplesMsg({ kind: "error", text: `${name} failed: ${err}` });
   }
 
+  // Audition a generated sample (one at a time). Click again to stop.
+  function togglePlay(name: string) {
+    if (playing === name) {
+      playRef.current?.stop();
+      return;
+    }
+    playRef.current?.stop();
+    const h = playUrlHandle(
+      `/api/admin/storage/samples/${encodeURIComponent(name)}/audio?model=${encodeURIComponent(model)}`,
+    );
+    playRef.current = h;
+    setPlaying(name);
+    h.started.catch(() => {
+      if (playRef.current === h) playRef.current = null;
+      setPlaying((p) => (p === name ? null : p));
+      setSamplesMsg({ kind: "error", text: `Could not play ${name}.` });
+    });
+    void h.ended.then(() => {
+      if (playRef.current === h) playRef.current = null;
+      setPlaying((p) => (p === name ? null : p));
+    });
+  }
+
+  // Stop playback when the model changes (list reloads) or the form unmounts.
+  useEffect(() => {
+    return () => playRef.current?.stop();
+  }, [model]);
+
   return (
     <>
     <Card title="Storage — Cloudflare R2 (S3-compatible)">
@@ -294,19 +325,30 @@ export default function StorageForm() {
 
                 <ul className="mb-4 grid grid-cols-2 gap-x-3 gap-y-0.5 sm:grid-cols-3">
                   {voices.map((v) => (
-                    <li key={v.name}>
+                    <li key={v.name} className="flex items-center gap-0.5">
                       <button
                         type="button"
                         onClick={() => generateOne(v.name)}
                         disabled={generating || v.status === "generating"}
                         title={v.error ?? (v.status === "generated" ? "Click to regenerate" : "Click to generate")}
-                        className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm transition hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10"
+                        className="flex flex-1 items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm transition hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10"
                       >
                         <VoiceIcon status={v.status} />
                         <span className={v.status === "failed" ? "text-red-600 dark:text-red-400" : ""}>
                           {v.name}
                         </span>
                       </button>
+                      {v.status === "generated" && (
+                        <button
+                          type="button"
+                          onClick={() => togglePlay(v.name)}
+                          title={playing === v.name ? "Stop" : "Play sample"}
+                          aria-label={playing === v.name ? "Stop" : `Play ${v.name} sample`}
+                          className="shrink-0 rounded p-1 text-black/45 transition hover:bg-black/5 hover:text-black/80 dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white/80"
+                        >
+                          {playing === v.name ? <Square size={13} /> : <Volume2 size={13} />}
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>

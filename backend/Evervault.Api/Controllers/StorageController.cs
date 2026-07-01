@@ -149,6 +149,30 @@ public class StorageController : ControllerBase
             return StatusCode(502, new { error = "Storage error while preparing the voice sample: " + ex.Message });
         }
     }
+
+    /// <summary>GET /api/admin/storage/samples/{voice}/audio?model=... → 302 to a presigned R2 URL for
+    /// auditioning an already-generated sample. 404 if it hasn't been generated. Admin-auth; does NOT
+    /// synthesize (unlike the webapp VoiceSamplesController route).</summary>
+    [HttpGet("samples/{voice}/audio")]
+    public async Task<IActionResult> SampleAudio(string voice, [FromQuery] string? model, CancellationToken ct)
+    {
+        if (!VoiceSampleOptions.Voices.Contains(voice))
+            return NotFound(new { error = "Unknown voice." });
+
+        var m = VoiceSampleOptions.ResolveModel(model);
+        if (!VoiceSampleOptions.IsAllowedModel(m))
+            return BadRequest(new { error = "Unsupported voice model." });
+
+        try
+        {
+            var url = await _storage.GetPresignedGetUrlAsync(VoiceSampleOptions.Key(m, voice), TimeSpan.FromMinutes(5), ct);
+            return url is null ? NotFound(new { error = "Not generated yet." }) : Redirect(url);
+        }
+        catch (AmazonS3Exception ex)
+        {
+            return StatusCode(502, new { error = "Storage error: " + ex.Message });
+        }
+    }
 }
 
 public record GenerateSamplesResult(int Generated, int Skipped, int Failed, List<string> Errors);
