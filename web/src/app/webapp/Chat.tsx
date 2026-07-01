@@ -8,7 +8,7 @@ import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { playPcm16, startRecording, type Recorder } from "./lib/audio";
+import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
 import { LiveSession, type LiveState } from "./lib/liveSession";
@@ -59,6 +59,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const recorderRef = useRef<Recorder | null>(null);
+  // Only one spoken reply plays at a time — starting another (auto-play or a manual "Play reply"
+  // click) stops whatever is currently playing first.
+  const playingAudioRef = useRef<{ stop: () => void } | null>(null);
+  const playAudioClip = useCallback((base64: string, sampleRate: number) => {
+    playingAudioRef.current?.stop();
+    const handle = playPcm16Handle(base64, sampleRate);
+    playingAudioRef.current = handle;
+    void handle.ended.then(() => {
+      if (playingAudioRef.current === handle) playingAudioRef.current = null;
+    });
+  }, []);
 
   // Realtime voice call (Live API)
   const [callState, setCallState] = useState<LiveState | null>(null);
@@ -218,7 +229,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       try {
         const audio = await synthesizeSpeech(apiKey, audioModel, acc, voice);
         setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, audio } : m)));
-        void playPcm16(audio.base64, audio.sampleRate);
+        playAudioClip(audio.base64, audio.sampleRate);
       } catch {
         /* TTS is best-effort; the text reply still stands */
       }
@@ -352,7 +363,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   function playAudio(m: ChatMessage) {
-    if (m.audio) void playPcm16(m.audio.base64, m.audio.sampleRate);
+    if (m.audio) playAudioClip(m.audio.base64, m.audio.sampleRate);
   }
 
   // --- Realtime voice call (Live API) ---

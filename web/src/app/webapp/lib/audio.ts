@@ -101,10 +101,6 @@ export function playPcm16Handle(
   };
 }
 
-export function playPcm16(base64: string, sampleRate: number): Promise<void> {
-  return playPcm16Handle(base64, sampleRate).ended;
-}
-
 /**
  * Plays an audio file from a URL via HTMLAudioElement (which follows a cross-origin redirect — e.g.
  * our /api/voice-samples/{voice} → presigned R2 — without needing CORS, unlike fetch). Returns:
