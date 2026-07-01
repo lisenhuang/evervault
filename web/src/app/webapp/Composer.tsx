@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, Phone, Send, Square } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 
@@ -30,7 +30,19 @@ export default function Composer({
   const t = useT();
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
+  // On touch devices (phones/tablets) Enter should insert a newline like a
+  // messaging app; the send button is used to send. On desktop, Enter sends.
+  const [isTouch, setIsTouch] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
+    const update = () => setIsTouch(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   function grow() {
     const ta = taRef.current;
@@ -116,7 +128,8 @@ export default function Composer({
                 grow();
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                // On touch devices, let Enter insert a newline (default behavior).
+                if (e.key === "Enter" && !e.shiftKey && !isTouch) {
                   e.preventDefault();
                   send();
                 }
