@@ -54,6 +54,26 @@ const zh: Messages = {
     ctaBody:
       "今天就在浏览器里开始一段对话——无需设置，没有杂乱。iPhone 与 Android 应用即将推出，让你的记忆随你走到任何地方。",
     footerTagline: "一个安全的地方，让你的想法、对话与记忆永不丢失。",
+    roadmapBadge: "规划蓝图",
+    roadmapTitle: "EverVault 的未来方向",
+    roadmapBody:
+      "如此贴近你的记忆，能带来的远不止回忆。以下是我们正在设计的方向——每一个构想都建立在 EverVault 核心那份私密、基于检索的记忆之上，因此每一次全新体验依然懂你、也懂你的思考方式。",
+    roadmapSoon: "规划中",
+    roadmap1Title: "可分享的「AI 版的你」",
+    roadmap1Body:
+      "分享一个私密链接，让家人或朋友与一个「以你的口吻说话」的 AI 交谈——为他们回顾你近来的动态，并以你的第一人称语气作答。",
+    roadmap2Title: "以你自己的声音说话",
+    roadmap2Body:
+      "可选的声音克隆让你的语音临场感融入每一句回复，使对话温暖、亲切，一听便知是你。",
+    roadmap3Title: "语音来电提醒",
+    roadmap3Body:
+      "在即将推出的 iPhone 与 Android 应用中，让它提醒你任何事——并在恰到好处的时刻接到一通真正的语音来电，而不只是又一条无声的通知。",
+    roadmap4Title: "按你的节奏交谈",
+    roadmap4Body:
+      "因为你的 AI 了解你当下的处境和你的思考方式，即使双方的日程始终对不上，别人也能与「你」进行一场真正的对话——无需再约时间。",
+    roadmap5Title: "长久留存的记忆",
+    roadmap5Body:
+      "你分享的一切，都会汇聚成对你想法与思路的持久映照——它能长久留存，并在遥远的未来被重新开启。",
   },
   sidebar: {
     newChat: "新对话",

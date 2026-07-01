@@ -17,6 +17,11 @@ import {
   Shield,
   Lock,
   Infinity as InfinityIcon,
+  Users,
+  AudioLines,
+  PhoneCall,
+  CalendarClock,
+  Hourglass,
 } from "lucide-react";
 
 export default function Home() {
@@ -27,6 +32,14 @@ export default function Home() {
     { Icon: Search, title: t.home.feature2Title, body: t.home.feature2Body },
     { Icon: FileText, title: t.home.feature3Title, body: t.home.feature3Body },
     { Icon: GitBranch, title: t.home.feature4Title, body: t.home.feature4Body },
+  ];
+
+  const roadmap = [
+    { Icon: Users, title: t.home.roadmap1Title, body: t.home.roadmap1Body },
+    { Icon: AudioLines, title: t.home.roadmap2Title, body: t.home.roadmap2Body },
+    { Icon: PhoneCall, title: t.home.roadmap3Title, body: t.home.roadmap3Body },
+    { Icon: CalendarClock, title: t.home.roadmap4Title, body: t.home.roadmap4Body },
+    { Icon: Hourglass, title: t.home.roadmap5Title, body: t.home.roadmap5Body },
   ];
 
   return (
@@ -217,6 +230,56 @@ export default function Home() {
                 <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
                   <Icon className="h-5 w-5 text-white" aria-hidden="true" />
                 </span>
+                <h3 className="mt-4 text-lg font-semibold tracking-tight">{title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-black/60 dark:text-white/60">
+                  {body}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ===== Roadmap / future plans ===== */}
+      <section
+        aria-labelledby="roadmap-heading"
+        className="relative w-full overflow-hidden border-t border-black/10 px-5 dark:border-white/10"
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-1/2 top-0 -z-10 h-[28rem] w-[40rem] max-w-[120vw] translate-x-1/3 rounded-full bg-linear-to-br from-violet-500/15 to-blue-500/15 blur-[120px]"
+        />
+        <div className="mx-auto w-full max-w-5xl py-24 sm:py-28">
+          <div className="mx-auto max-w-2xl text-center">
+            <span className="inline-flex items-center gap-2 rounded-full bg-violet-100 px-3.5 py-1.5 text-xs font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              {t.home.roadmapBadge}
+            </span>
+            <h2
+              id="roadmap-heading"
+              className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl"
+            >
+              {t.home.roadmapTitle}
+            </h2>
+            <p className="mt-5 text-base leading-relaxed text-black/60 dark:text-white/60">
+              {t.home.roadmapBody}
+            </p>
+          </div>
+
+          <div className="mt-14 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {roadmap.map(({ Icon, title, body }) => (
+              <div
+                key={title}
+                className="relative flex flex-col rounded-2xl border border-black/10 bg-white/70 p-6 shadow-sm backdrop-blur transition-shadow hover:shadow-md dark:border-white/10 dark:bg-white/5"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
+                    <Icon className="h-5 w-5 text-white" aria-hidden="true" />
+                  </span>
+                  <span className="rounded-full border border-black/10 bg-black/[0.03] px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-black/50 dark:border-white/10 dark:bg-white/5 dark:text-white/50">
+                    {t.home.roadmapSoon}
+                  </span>
+                </div>
                 <h3 className="mt-4 text-lg font-semibold tracking-tight">{title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-black/60 dark:text-white/60">
                   {body}
