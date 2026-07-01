@@ -86,36 +86,7 @@ export default function MessageList({
             <Avatar name={userName} picture={userPicture} />
           </div>
         ) : (
-          <div key={m.id} className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
-              <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
-            </div>
-            <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
-              {m.text ? (
-                <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
-                    {m.text}
-                  </ReactMarkdown>
-                </div>
-              ) : m.streaming ? (
-                // Voice replies feel like texting a person: a "typing…" indicator (revealed after a
-                // short pause) instead of a spinner. Everything else keeps the immediate spinner.
-                m.kind === "voice" ? (
-                  <TypingIndicator />
-                ) : (
-                  <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
-                )
-              ) : null}
-              {m.audio && (
-                <button
-                  onClick={() => onPlayAudio(m)}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
-                >
-                  <Volume2 size={13} /> {t.message.playReply}
-                </button>
-              )}
-            </div>
-          </div>
+          <AssistantMessage key={m.id} m={m} onPlayAudio={onPlayAudio} />
         ),
       )}
       <div ref={endRef} />
@@ -123,15 +94,60 @@ export default function MessageList({
   );
 }
 
-// A chat-style "typing…" indicator for a pending voice reply. Held back for a beat (2s) so a quick
-// reply lands without ever flashing it — mimicking someone who pauses before they start typing.
-function TypingIndicator() {
-  const [show, setShow] = useState(false);
+function AssistantMessage({ m, onPlayAudio }: { m: ChatMessage; onPlayAudio: (m: ChatMessage) => void }) {
+  const t = useT();
+  // A voice reply that hasn't started arriving yet: like texting a person, hold everything back for a
+  // beat and then show a "typing…" indicator — never an empty bubble. A reply that lands within the
+  // pause pops straight in with no indicator at all.
+  const pendingVoice = !!m.streaming && !m.text && m.kind === "voice";
+  const [revealed, setRevealed] = useState(!pendingVoice);
   useEffect(() => {
-    const id = setTimeout(() => setShow(true), 2000);
+    if (!pendingVoice) {
+      setRevealed(true);
+      return;
+    }
+    const id = setTimeout(() => setRevealed(true), 2000);
     return () => clearTimeout(id);
-  }, []);
-  if (!show) return null;
+  }, [pendingVoice]);
+
+  // Show nothing at all — no avatar, no bubble — until the typing indicator is revealed.
+  if (pendingVoice && !revealed) return null;
+
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
+        <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
+      </div>
+      <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
+        {m.text ? (
+          <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
+              {m.text}
+            </ReactMarkdown>
+          </div>
+        ) : m.streaming ? (
+          // Voice replies get a human "typing…" indicator; everything else keeps the immediate spinner.
+          m.kind === "voice" ? (
+            <TypingDots />
+          ) : (
+            <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
+          )
+        ) : null}
+        {m.audio && (
+          <button
+            onClick={() => onPlayAudio(m)}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
+          >
+            <Volume2 size={13} /> {t.message.playReply}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Animated three-dot "typing…" indicator (presentational — the reveal timing lives in AssistantMessage).
+function TypingDots() {
   return (
     <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
