@@ -85,11 +85,33 @@ public class StorageService : IStorageService
         {
             using var s3 = BuildClient(accountId, accessKeyId, secret, endpoint, region, jurisdiction);
             await s3.ListObjectsV2Async(new ListObjectsV2Request { BucketName = bucket, MaxKeys = 1 });
-            return new StorageTestResult(true, "Connected to the R2 bucket successfully.");
         }
         catch (Exception ex)
         {
-            return new StorageTestResult(false, $"Connection failed: {ex.Message}");
+            return new StorageTestResult(false, $"Connection failed (read/list): {ex.Message}");
+        }
+
+        // Voice-sample generation needs PutObject — a read-only token passes the list check but can't
+        // write. Probe write access explicitly so misconfigured permissions are caught here, not later.
+        try
+        {
+            using var s3 = BuildClient(accountId, accessKeyId, secret, endpoint, region, jurisdiction);
+            using var probe = new MemoryStream(new byte[] { 0 });
+            await s3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = "voice-samples/.write-test",
+                InputStream = probe,
+                ContentType = "application/octet-stream",
+                AutoCloseStream = false,
+                DisablePayloadSigning = true,
+            });
+            return new StorageTestResult(true, "Connected to R2 — read and write both OK.");
+        }
+        catch (Exception ex)
+        {
+            return new StorageTestResult(false,
+                $"Read OK, but WRITE failed — voice samples can't be stored. Give the R2 token “Object Read & Write”. ({ex.Message})");
         }
     }
 
@@ -125,6 +147,7 @@ public class StorageService : IStorageService
             InputStream = content,
             ContentType = contentType,
             AutoCloseStream = false,
+            DisablePayloadSigning = true, // R2 doesn't support streaming SigV4 payload signing
         }, ct);
     }
 
@@ -156,8 +179,11 @@ public class StorageService : IStorageService
             }, ct);
             return true;
         }
-        catch (AmazonS3Exception e) when (e.StatusCode == System.Net.HttpStatusCode.NotFound)
+        catch (AmazonS3Exception)
         {
+            // Missing — OR the token can't HEAD a missing key (R2 "Object Read & Write" tokens without
+            // bucket-list return 403 here). Either way, treat as "not present" so generation proceeds
+            // (the real PutObject will surface any genuine write/permission error).
             return false;
         }
     }
@@ -198,6 +224,11 @@ public class StorageService : IStorageService
             ServiceURL = url,
             ForcePathStyle = true,
             AuthenticationRegion = string.IsNullOrWhiteSpace(region) ? "auto" : region,
+            // AWS SDK v4 defaults to adding a CRC32 checksum trailer, which makes PutObject use the
+            // STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER signing variant — Cloudflare R2 doesn't
+            // implement it and rejects the write. Only send a checksum when a request requires one.
+            RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
+            ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
         };
         return new AmazonS3Client(new BasicAWSCredentials(accessKeyId, secret), config);
     }

@@ -160,12 +160,21 @@ public class GeminiProvider : IAiProvider
         return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls);
     }
 
-    public Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
+    public async Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
         string rawKey, string model, string text, string voiceName, CancellationToken ct)
-        // Gemini 3.x TTS is served by the Interactions API; 2.x uses generateContent (different shapes).
-        => model.Contains("gemini-3", StringComparison.OrdinalIgnoreCase)
-            ? SynthViaInteractionsAsync(rawKey, model, text, voiceName, ct)
-            : SynthViaGenerateContentAsync(rawKey, model, text, voiceName, ct);
+    {
+        // generateContent is the proven path (the web client uses it and works). Only some models
+        // (e.g. Gemini 3.x TTS) reject it — those return a non-retryable "Other" error, in which case
+        // fall back to the Interactions API. Auth/Quota/Transient still bubble to the key-failover.
+        try
+        {
+            return await SynthViaGenerateContentAsync(rawKey, model, text, voiceName, ct);
+        }
+        catch (AiProviderException ex) when (ex.Kind == AiErrorKind.Other)
+        {
+            return await SynthViaInteractionsAsync(rawKey, model, text, voiceName, ct);
+        }
+    }
 
     // Gemini 2.x TTS: v1beta generateContent with AUDIO modality (camelCase config).
     private async Task<(byte[] Pcm, string Mime)> SynthViaGenerateContentAsync(
