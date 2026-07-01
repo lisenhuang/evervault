@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -98,7 +98,13 @@ export default function MessageList({
                   </ReactMarkdown>
                 </div>
               ) : m.streaming ? (
-                <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
+                // Voice replies feel like texting a person: a "typing…" indicator (revealed after a
+                // short pause) instead of a spinner. Everything else keeps the immediate spinner.
+                m.kind === "voice" ? (
+                  <TypingIndicator />
+                ) : (
+                  <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
+                )
               ) : null}
               {m.audio && (
                 <button
@@ -114,6 +120,24 @@ export default function MessageList({
       )}
       <div ref={endRef} />
     </div>
+  );
+}
+
+// A chat-style "typing…" indicator for a pending voice reply. Held back for a beat (2s) so a quick
+// reply lands without ever flashing it — mimicking someone who pauses before they start typing.
+function TypingIndicator() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setShow(true), 2000);
+    return () => clearTimeout(id);
+  }, []);
+  if (!show) return null;
+  return (
+    <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
+      <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
+      <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
+      <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
+    </span>
   );
 }
 

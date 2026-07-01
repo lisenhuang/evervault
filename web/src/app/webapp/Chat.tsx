@@ -226,13 +226,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const finalText = acc || "_(no response)_";
     setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, streaming: false, text: finalText } : m)));
     if (speak && acc) {
-      try {
-        const audio = await synthesizeSpeech(apiKey, audioModel, acc, voice);
-        setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, audio } : m)));
-        playAudioClip(audio.base64, audio.sampleRate);
-      } catch {
-        /* TTS is best-effort; the text reply still stands */
-      }
+      // Fire-and-forget: synthesize in the background so the caller can settle its busy/streaming
+      // state immediately. That keeps the composer (incl. the voice button) usable while the reply's
+      // audio is still being generated. We don't auto-play — the "Play reply" button appears once the
+      // audio lands and the user starts it on demand.
+      void (async () => {
+        try {
+          const audio = await synthesizeSpeech(apiKey, audioModel, acc, voice);
+          setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, audio } : m)));
+        } catch {
+          /* TTS is best-effort; the text reply still stands */
+        }
+      })();
     }
     return acc;
   }
@@ -341,8 +346,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           parts: [{ inlineData: { mimeType, data: base64 } }, { text: "Respond conversationally to this voice message." }],
         },
       ];
-      // Voice messages get a text reply only — we don't synthesize speech for the assistant's answer.
-      const reply = await runAssistant(asstId, contents, false);
+      // Speak the reply too. TTS runs in the background (see runAssistant), so it doesn't hold the
+      // composer's busy state — the voice button stays usable while the audio is being generated.
+      const reply = await runAssistant(asstId, contents, true);
       // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
       const transcript = await transcriptPromise; // already resolved in practice; never throws
       void recordTextTurns(
