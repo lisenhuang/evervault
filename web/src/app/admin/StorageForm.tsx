@@ -144,16 +144,25 @@ export default function StorageForm() {
     }
   }
 
-  // Bulk: generate one voice at a time so each row updates live. `force` regenerates existing ones too.
-  async function generate(force: boolean) {
+  // Bulk: generate one voice at a time so each row updates live. Already-succeeded samples are
+  // never touched — "missing" targets idle+failed voices, "failed" targets only the failed ones.
+  async function generate(mode: "missing" | "failed") {
     setGenerating(true);
     setSamplesMsg(null);
-    const targets = voices.filter((v) => force || v.status !== "generated").map((v) => v.name);
+    const targets = voices
+      .filter((v) => (mode === "failed" ? v.status === "failed" : v.status !== "generated"))
+      .map((v) => v.name);
+    if (targets.length === 0) {
+      setGenerating(false);
+      setSamplesMsg({ kind: "info", text: mode === "failed" ? "No failed samples to retry." : "Nothing to generate." });
+      return;
+    }
     let ok = 0;
     let failed = 0;
     let firstError = "";
     for (const name of targets) {
-      const err = await genVoice(name, force);
+      // force=false so we never re-synthesize a sample that's already in R2 (only misses/failures run).
+      const err = await genVoice(name, false);
       if (err) {
         failed++;
         if (!firstError) firstError = err;
@@ -277,7 +286,8 @@ export default function StorageForm() {
         Pre-generate the 30 prebuilt voice samples and store them in R2 so the chat “Preview voice”
         button plays instantly. They’re synthesized with the server Gemini keys (failing over to the
         next key if one fails). <strong>Click any voice below to (re)generate just that one</strong>, or use the
-        buttons to do them all. Requires storage and at least one Gemini key to be configured.
+        buttons to generate the missing ones / retry the failed ones — bulk actions never re-synthesize a
+        sample that already succeeded. Requires storage and at least one Gemini key to be configured.
       </p>
 
       {!secretConfigured && (
@@ -309,6 +319,7 @@ export default function StorageForm() {
             const generatedCount = voices.filter((v) => v.status === "generated").length;
             const pct = voices.length ? (generatedCount / voices.length) * 100 : 0;
             const missing = voices.some((v) => v.status !== "generated");
+            const hasFailed = voices.some((v) => v.status === "failed");
             return (
               <>
                 <div className="mb-1 flex items-center justify-between text-sm">
@@ -356,11 +367,11 @@ export default function StorageForm() {
                 {samplesMsg && <Banner kind={samplesMsg.kind}>{samplesMsg.text}</Banner>}
 
                 <div className="mt-4 flex gap-2">
-                  <Button onClick={() => generate(false)} disabled={generating || !missing}>
+                  <Button onClick={() => generate("missing")} disabled={generating || !missing}>
                     {generating ? "Generating…" : missing ? "Generate voice samples" : "All 30 generated"}
                   </Button>
-                  <Button variant="ghost" onClick={() => generate(true)} disabled={generating}>
-                    Regenerate all
+                  <Button variant="ghost" onClick={() => generate("failed")} disabled={generating || !hasFailed}>
+                    Retry failed
                   </Button>
                 </div>
               </>
