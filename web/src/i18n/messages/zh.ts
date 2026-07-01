@@ -64,6 +64,8 @@ const zh: Messages = {
     signOut: "退出登录",
     openMenu: "打开菜单",
     menu: "菜单",
+    accountMenu: "账号菜单",
+    deleteAccount: "删除账号",
   },
   chat: {
     greeting: (name: string) => `你好，${name}`,
@@ -78,6 +80,13 @@ const zh: Messages = {
     signOutTitle: "退出登录？",
     signOutMessage: "你需要重新登录才能继续聊天。",
     signOutConfirm: "退出登录",
+    deleteAccountTitle: "删除你的账号？",
+    deleteAccountMessage:
+      "此操作将永久删除你的账号及其中的一切——你的聊天记录、语音录音，以及 AI 对你建立的全部记忆。此操作无法撤销。",
+    deleteAccountPrompt: (word: string) => `输入 ${word} 以确认。`,
+    deleteAccountKeyword: "删除",
+    deleteAccountConfirm: "永久删除",
+    deleteAccountError: "删除账号时出错，请重试。",
   },
   composer: {
     recording: "正在录音…完成后点击停止按钮。",

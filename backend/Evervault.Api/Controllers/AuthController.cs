@@ -21,11 +21,15 @@ public class AuthController : ControllerBase
 
     private readonly IGoogleAuthService _google;
     private readonly AppDbContext _db;
+    private readonly IStorageService _storage;
+    private readonly ILogger<AuthController> _log;
 
-    public AuthController(IGoogleAuthService google, AppDbContext db)
+    public AuthController(IGoogleAuthService google, AppDbContext db, IStorageService storage, ILogger<AuthController> log)
     {
         _google = google;
         _db = db;
+        _storage = storage;
+        _log = log;
     }
 
     public record IdTokenRequest(string IdToken);
@@ -79,6 +83,34 @@ public class AuthController : ControllerBase
     [Authorize(AuthenticationSchemes = Scheme)]
     public async Task<IActionResult> Logout()
     {
+        await HttpContext.SignOutAsync(Scheme);
+        return Ok();
+    }
+
+    /// <summary>Permanently delete the signed-in user's account and ALL data derived from it:
+    /// chat memories, the memory profile, stored audio blobs, and the account row itself. The
+    /// session cookie is cleared so the browser is signed out. Irreversible.</summary>
+    [HttpDelete("account")]
+    [Authorize(AuthenticationSchemes = Scheme)]
+    public async Task<IActionResult> DeleteAccount()
+    {
+        var uid = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+        // Best-effort blob purge first: audio lives under chat-audio/{uid}/. If storage is
+        // unconfigured or errors, still delete the DB rows so the account is truly gone.
+        try
+        {
+            await _storage.DeleteByPrefixAsync($"chat-audio/{uid}/", HttpContext.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to purge stored audio for deleted user {UserId}", uid);
+        }
+
+        await _db.ChatMemories.Where(m => m.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.UserMemoryFacts.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.EndUsers.Where(u => u.Id == uid).ExecuteDeleteAsync();
+
         await HttpContext.SignOutAsync(Scheme);
         return Ok();
     }

@@ -43,4 +43,8 @@ public interface IStorageService
 
     /// <summary>All object keys under a prefix (handles pagination). Empty if storage isn't configured.</summary>
     Task<IReadOnlyList<string>> ListKeysAsync(string prefix, CancellationToken ct = default);
+
+    /// <summary>Delete every object under a prefix (handles pagination + batching). No-op if storage
+    /// isn't configured. Used to purge a user's blobs when their account is deleted.</summary>
+    Task DeleteByPrefixAsync(string prefix, CancellationToken ct = default);
 }

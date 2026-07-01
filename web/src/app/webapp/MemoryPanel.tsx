@@ -145,8 +145,7 @@ export default function MemoryPanel({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <header className="flex items-center justify-between border-b border-black/10 px-5 py-4 dark:border-white/10">
-          <h2 className="font-semibold">{t.memory.title}</h2>
+        <header className="flex items-center justify-end border-b border-black/10 px-5 py-4 dark:border-white/10">
           <button onClick={onClose} className="rounded-md p-1.5 hover:bg-black/5 dark:hover:bg-white/10" aria-label={t.memory.close}>
             <X size={18} />
           </button>

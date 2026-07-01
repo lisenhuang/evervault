@@ -1,6 +1,7 @@
 "use client";
 
-import { Brain, LogOut, MessageCircle, Settings2, SquarePen } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Brain, ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import LanguageToggle from "@/i18n/LanguageToggle";
 import { useT } from "@/i18n/LanguageProvider";
@@ -22,6 +23,7 @@ export default function Sidebar({
   onOpenMemories,
   onOpenSettings,
   onSignOut,
+  onDeleteAccount,
   open,
   onClose,
 }: {
@@ -31,11 +33,40 @@ export default function Sidebar({
   onOpenMemories: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
+  onDeleteAccount: () => void;
   open: boolean;
   onClose: () => void;
 }) {
   const t = useT();
   const act = (fn: () => void) => () => {
+    fn();
+    onClose();
+  };
+
+  // Account menu opened by clicking the user's name (holds Delete account + Sign out).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+
+  // Close the menu on outside click or Escape, only while it's open.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!accountRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  // Run a menu action: close the menu, run it, and dismiss the mobile overlay.
+  const runItem = (fn: () => void) => () => {
+    setMenuOpen(false);
     fn();
     onClose();
   };
@@ -81,29 +112,58 @@ export default function Sidebar({
 
       <div className="my-1 border-t border-black/10 dark:border-white/10" />
 
-      <div className="flex items-center gap-2 px-2 py-2">
-        {user.picture ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={user.picture}
-            alt={user.name}
-            className="h-8 w-8 shrink-0 rounded-full object-cover shadow-sm"
-          />
-        ) : (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/10 text-xs font-semibold dark:bg-white/15">
-            {(user.name || "?").charAt(0).toUpperCase()}
+      <div ref={accountRef} className="relative">
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-neutral-900"
+          >
+            <button
+              onClick={runItem(onDeleteAccount)}
+              role="menuitem"
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+            >
+              <Trash2 size={18} className="shrink-0" aria-hidden="true" />
+              {t.sidebar.deleteAccount}
+            </button>
+            <button
+              onClick={runItem(onSignOut)}
+              role="menuitem"
+              className={ROW}
+            >
+              <LogOut size={18} className="shrink-0" aria-hidden="true" />
+              {t.sidebar.signOut}
+            </button>
           </div>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{user.name}</div>
-        </div>
+
         <button
-          onClick={act(onSignOut)}
-          title={t.sidebar.signOut}
-          aria-label={t.sidebar.signOut}
-          className="rounded-md p-2 text-black/60 transition hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label={t.sidebar.accountMenu}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition hover:bg-black/5 dark:hover:bg-white/10"
         >
-          <LogOut size={18} />
+          {user.picture ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.picture}
+              alt={user.name}
+              className="h-8 w-8 shrink-0 rounded-full object-cover shadow-sm"
+            />
+          ) : (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/10 text-xs font-semibold dark:bg-white/15">
+              {(user.name || "?").charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{user.name}</div>
+          </div>
+          <ChevronUp
+            size={16}
+            className={`shrink-0 text-black/40 transition-transform dark:text-white/40 ${menuOpen ? "" : "rotate-180"}`}
+            aria-hidden="true"
+          />
         </button>
       </div>
     </div>

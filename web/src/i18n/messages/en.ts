@@ -63,6 +63,8 @@ const en = {
     signOut: "Sign out",
     openMenu: "Open menu",
     menu: "Menu",
+    accountMenu: "Account menu",
+    deleteAccount: "Delete account",
   },
   chat: {
     greeting: (name: string) => `Hi ${name}`,
@@ -77,6 +79,13 @@ const en = {
     signOutTitle: "Sign out?",
     signOutMessage: "You'll need to sign in again to continue chatting.",
     signOutConfirm: "Sign out",
+    deleteAccountTitle: "Delete your account?",
+    deleteAccountMessage:
+      "This permanently erases your account and everything in it — your chat history, voice recordings, and all the memories the AI has built about you. This can't be undone.",
+    deleteAccountPrompt: (word: string) => `Type ${word} to confirm.`,
+    deleteAccountKeyword: "CONFIRM",
+    deleteAccountConfirm: "Delete forever",
+    deleteAccountError: "Something went wrong deleting your account. Please try again.",
   },
   composer: {
     recording: "Recording… tap the stop button when you're done.",

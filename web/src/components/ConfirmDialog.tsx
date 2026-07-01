@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 // A small reusable centered-modal confirmation dialog. We build our own (no native
 // `confirm()` — see web/CLAUDE.md) so it stays styled and dark-mode aware. Button styles
@@ -14,6 +14,9 @@ type Props = {
   cancelLabel?: string;
   confirmVariant?: "primary" | "danger";
   busy?: boolean;
+  /** When set, the user must type this exact word to enable the confirm button (destructive gate). */
+  requireText?: string;
+  inputPlaceholder?: string;
   onConfirm: () => void;
   onClose: () => void;
 };
@@ -26,15 +29,27 @@ export default function ConfirmDialog({
   cancelLabel = "Cancel",
   confirmVariant = "primary",
   busy = false,
+  requireText,
+  inputPlaceholder,
   onConfirm,
   onClose,
 }: Props) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState("");
 
-  // Escape closes; autofocus the confirm button. Both only while open.
+  // Reset the typed-confirmation field and focus (input if gated, else the confirm button)
+  // whenever the dialog opens. Keyed on `open` only so the field isn't wiped mid-typing when
+  // the parent re-renders and passes new handler identities.
   useEffect(() => {
     if (!open) return;
-    confirmRef.current?.focus();
+    setText("");
+    (requireText != null ? inputRef.current : confirmRef.current)?.focus();
+  }, [open, requireText]);
+
+  // Escape closes, while open.
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -43,6 +58,9 @@ export default function ConfirmDialog({
   }, [open, onClose]);
 
   if (!open) return null;
+
+  const gated = requireText != null && text.trim() !== requireText;
+  const disabled = busy || gated;
 
   const confirmStyle =
     confirmVariant === "danger"
@@ -63,6 +81,22 @@ export default function ConfirmDialog({
       >
         <h2 className="text-lg font-semibold">{title}</h2>
         {message && <p className="mt-2 text-sm text-black/60 dark:text-white/60">{message}</p>}
+        {requireText != null && (
+          <input
+            ref={inputRef}
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !disabled) onConfirm();
+            }}
+            placeholder={inputPlaceholder}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            className="mt-4 w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition focus:border-black/30 dark:border-white/20 dark:focus:border-white/40"
+          />
+        )}
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
@@ -76,7 +110,7 @@ export default function ConfirmDialog({
             ref={confirmRef}
             type="button"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={disabled}
             className={`rounded-md px-4 py-2 text-sm font-medium transition disabled:pointer-events-none disabled:opacity-50 ${confirmStyle}`}
           >
             {confirmLabel}

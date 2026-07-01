@@ -212,6 +212,36 @@ public class StorageService : IStorageService
         return keys;
     }
 
+    public async Task DeleteByPrefixAsync(string prefix, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync();
+        if (r is null) return;
+        using var client = r.Value.Client;
+
+        string? continuationToken = null;
+        do
+        {
+            var listed = await client.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = r.Value.Bucket,
+                Prefix = prefix,
+                ContinuationToken = continuationToken,
+            }, ct);
+
+            var objects = listed.S3Objects;
+            if (objects is { Count: > 0 })
+            {
+                // DeleteObjects handles up to 1000 keys per request; a page is already ≤1000.
+                await client.DeleteObjectsAsync(new DeleteObjectsRequest
+                {
+                    BucketName = r.Value.Bucket,
+                    Objects = objects.Select(o => new KeyVersion { Key = o.Key }).ToList(),
+                }, ct);
+            }
+            continuationToken = listed.IsTruncated == true ? listed.NextContinuationToken : null;
+        } while (continuationToken is not null);
+    }
+
     private static IAmazonS3 BuildClient(
         string accountId, string accessKeyId, string secret, string? endpoint, string region, string? jurisdiction)
     {

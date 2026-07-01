@@ -20,7 +20,7 @@ import { store } from "./lib/store";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
-import type { Me } from "./authApi";
+import { api, type Me } from "./authApi";
 import type { ChatMessage } from "./types";
 import { useLang } from "@/i18n/LanguageProvider";
 import { aiReplyDirective } from "@/i18n/config";
@@ -54,6 +54,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteAccountError, setDeleteAccountError] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const recorderRef = useRef<Recorder | null>(null);
@@ -472,6 +475,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callState]);
 
+  async function deleteAccount() {
+    setDeletingAccount(true);
+    setDeleteAccountError("");
+    try {
+      const res = await api("/api/auth/account", { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      setConfirmDeleteAccount(false);
+      onLogout(); // account + cookie gone server-side; reset the UI to the sign-in screen
+    } catch {
+      setDeleteAccountError(t.chat.deleteAccountError);
+    } finally {
+      setDeletingAccount(false);
+    }
+  }
+
   return (
     <div className="app-shell flex flex-row bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <Sidebar
@@ -487,6 +505,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onOpenMemories={() => setMemoryPanelOpen(true)}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
+        onDeleteAccount={() => {
+          setDeleteAccountError("");
+          setConfirmDeleteAccount(true);
+        }}
         open={navOpen}
         onClose={() => setNavOpen(false)}
       />
@@ -617,6 +639,30 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           setConfirmLogout(false);
           onLogout();
         }}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteAccount}
+        title={t.chat.deleteAccountTitle}
+        message={
+          <>
+            {t.chat.deleteAccountMessage}
+            <span className="mt-2 block">{t.chat.deleteAccountPrompt(t.chat.deleteAccountKeyword)}</span>
+            {deleteAccountError && (
+              <span className="mt-2 block text-red-600 dark:text-red-400">{deleteAccountError}</span>
+            )}
+          </>
+        }
+        requireText={t.chat.deleteAccountKeyword}
+        inputPlaceholder={t.chat.deleteAccountKeyword}
+        confirmLabel={t.chat.deleteAccountConfirm}
+        cancelLabel={t.common.cancel}
+        confirmVariant="danger"
+        busy={deletingAccount}
+        onClose={() => {
+          if (!deletingAccount) setConfirmDeleteAccount(false);
+        }}
+        onConfirm={deleteAccount}
       />
     </div>
   );
