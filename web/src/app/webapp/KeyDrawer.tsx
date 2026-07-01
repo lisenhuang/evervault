@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
+import { ClipboardPaste, Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
 import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
 import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
 import ModelSelect from "./ModelSelect";
 import VoicePreviewButton from "./VoicePreviewButton";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { useT } from "@/i18n/LanguageProvider";
 
 export default function KeyDrawer({
@@ -48,10 +49,20 @@ export default function KeyDrawer({
   const t = useT();
   const [draft, setDraft] = useState(apiKey);
   const [show, setShow] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   useEffect(() => {
     if (open) setDraft(apiKey);
   }, [open, apiKey]);
+
+  async function pasteKey() {
+    try {
+      const v = (await navigator.clipboard.readText()).trim();
+      if (v) setDraft(v);
+    } catch {
+      /* clipboard read blocked/denied — no-op */
+    }
+  }
 
   const texts = models ? textModels(models) : [];
   const audios = models ? audioModels(models) : [];
@@ -106,14 +117,25 @@ export default function KeyDrawer({
                   placeholder="AIza…"
                   className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 pr-9 text-base outline-none transition focus:border-blue-500 md:text-sm dark:border-white/20"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShow((s) => !s)}
-                  className="absolute top-1/2 right-2 -translate-y-1/2 text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70"
-                  aria-label={show ? t.settings.hideKey : t.settings.showKey}
-                >
-                  {show ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+                {draft ? (
+                  <button
+                    type="button"
+                    onClick={() => setShow((s) => !s)}
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70"
+                    aria-label={show ? t.settings.hideKey : t.settings.showKey}
+                  >
+                    {show ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={pasteKey}
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70"
+                    aria-label={t.settings.pasteKey}
+                  >
+                    <ClipboardPaste size={16} />
+                  </button>
+                )}
               </div>
               <button
                 onClick={() => onSaveKey(draft.trim())}
@@ -125,8 +147,8 @@ export default function KeyDrawer({
             </div>
             {apiKey && (
               <button
-                onClick={onClearKey}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs text-red-600 hover:underline dark:text-red-400"
+                onClick={() => setConfirmRemove(true)}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs text-black/50 transition hover:text-black/80 dark:text-white/50 dark:hover:text-white/80"
               >
                 <Trash2 size={13} /> {t.settings.removeKey}
               </button>
@@ -208,6 +230,18 @@ export default function KeyDrawer({
           </section>
         </div>
       </aside>
+      <ConfirmDialog
+        open={confirmRemove}
+        title={t.settings.removeKeyConfirmTitle}
+        message={t.settings.removeKeyConfirmBody}
+        confirmLabel={t.settings.removeKeyConfirmButton}
+        cancelLabel={t.common.cancel}
+        onConfirm={() => {
+          setConfirmRemove(false);
+          onClearKey();
+        }}
+        onClose={() => setConfirmRemove(false)}
+      />
     </div>
   );
 }

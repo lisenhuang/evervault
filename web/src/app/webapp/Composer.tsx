@@ -29,6 +29,7 @@ export default function Composer({
 }) {
   const t = useT();
   const [text, setText] = useState("");
+  const [focused, setFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   function grow() {
@@ -84,7 +85,7 @@ export default function Composer({
             onClick={callClick}
             disabled={disabled || recording || processing || inCall}
             title={inCall ? t.composer.callInProgress : t.composer.startCall}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+            className={`${focused ? "hidden md:flex" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40`}
           >
             <Phone size={18} />
           </button>
@@ -92,7 +93,7 @@ export default function Composer({
             onClick={micClick}
             disabled={disabled || processing}
             title={recording ? t.composer.stopRecording : t.composer.recordVoice}
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
+            className={`${focused ? "hidden md:flex" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
               recording
                 ? "bg-red-600 text-white hover:bg-red-700"
                 : "border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
@@ -108,6 +109,8 @@ export default function Composer({
               rows={1}
               disabled={disabled || recording}
               placeholder={recording ? t.composer.listening : t.composer.placeholder}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
               onChange={(e) => {
                 setText(e.target.value);
                 grow();
@@ -131,9 +134,6 @@ export default function Composer({
             <Send size={18} />
           </button>
         </div>
-        <p className="mt-1.5 text-center text-[11px] text-black/40 dark:text-white/40">
-          {t.composer.disclaimer}
-        </p>
       </div>
     </div>
   );
