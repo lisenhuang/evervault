@@ -161,6 +161,8 @@ const zh: Messages = {
     voiceHintPrefix: "用于朗读回复和实时通话的说话音色。",
     voiceHintLink: "试听全部音色",
     voiceHintSuffix: "。",
+    voiceGenderMale: "男声",
+    voiceGenderFemale: "女声",
   },
   voicePreview: {
     loading: "加载中…",

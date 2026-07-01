@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { ClipboardPaste, Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
-import { audioModels, liveModels, type ModelInfo, PREBUILT_VOICES, textModels } from "./lib/gemini";
+import { audioModels, liveModels, type ModelInfo, textModels } from "./lib/gemini";
 import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
 import ModelSelect from "./ModelSelect";
 import VoicePreviewButton from "./VoicePreviewButton";
+import VoiceSelect from "./VoiceSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useT } from "@/i18n/LanguageProvider";
 
@@ -67,8 +68,6 @@ export default function KeyDrawer({
   const texts = models ? textModels(models) : [];
   const audios = models ? audioModels(models) : [];
   const lives = models ? liveModels(models) : [];
-  const selectCls =
-    "mt-1 w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition focus:border-blue-500 dark:border-white/20 dark:bg-neutral-900";
 
   return (
     <div className={`fixed inset-0 z-30 ${open ? "" : "pointer-events-none"}`} aria-hidden={!open}>
@@ -200,17 +199,9 @@ export default function KeyDrawer({
                   hint={t.settings.liveModelHint}
                 />
 
-                <label className="block">
+                <div className="block">
                   <span className="text-xs font-medium text-black/70 dark:text-white/70">{t.settings.voice}</span>
-                  <select value={voice} onChange={(e) => onChangeVoice(e.target.value)} className={selectCls}>
-                    {[...PREBUILT_VOICES]
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((v) => (
-                        <option key={v.name} value={v.name}>
-                          {v.name} — {v.mood} · {v.gender}
-                        </option>
-                      ))}
-                  </select>
+                  <VoiceSelect value={voice} onChange={onChangeVoice} />
                   <VoicePreviewButton voice={voice} model={audioModel} />
                   <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
                     {t.settings.voiceHintPrefix}
@@ -224,7 +215,7 @@ export default function KeyDrawer({
                     </a>
                     {t.settings.voiceHintSuffix}
                   </span>
-                </label>
+                </div>
               </div>
             )}
           </section>

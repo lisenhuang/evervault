@@ -160,6 +160,8 @@ const en = {
     voiceHintPrefix: "The speaking voice for spoken replies and live calls. ",
     voiceHintLink: "Preview all voices",
     voiceHintSuffix: ".",
+    voiceGenderMale: "Male",
+    voiceGenderFemale: "Female",
   },
   voicePreview: {
     loading: "Loading…",
