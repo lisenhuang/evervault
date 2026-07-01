@@ -190,6 +190,8 @@ const zh: Messages = {
     gateBody: "用文字或语音与 AI 交谈。登录即可开始。",
     signingIn: "正在为你登录…",
     failed: "登录失败，请重试。",
+    googleContinue: "使用 Google 继续",
+    googleSignIn: "使用 Google 登录",
   },
   common: {
     confirm: "确认",

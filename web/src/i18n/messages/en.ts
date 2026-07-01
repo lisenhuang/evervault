@@ -190,6 +190,8 @@ const en = {
     gateBody: "Talk to AI by text or voice. Sign in to get started.",
     signingIn: "Signing you in…",
     failed: "Sign-in failed. Please try again.",
+    googleContinue: "Continue with Google",
+    googleSignIn: "Sign in with Google",
   },
   common: {
     confirm: "Confirm",
