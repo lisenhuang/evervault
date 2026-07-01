@@ -77,7 +77,6 @@ const zh: Messages = {
   },
   sidebar: {
     newChat: "新对话",
-    memories: "记忆",
     settings: "设置",
     theme: "主题",
     language: "语言",
@@ -92,10 +91,6 @@ const zh: Messages = {
     greetingFallbackName: "朋友",
     emptyBody: "用文字随便问点什么，或点击麦克风开口说话。回复也可以朗读给你听。",
     addKey: "添加你的 Gemini 密钥即可开始",
-    noticePrefix: "你的对话会被保存，方便你（和 AI）日后回顾。可在",
-    noticeMemoriesLink: "记忆",
-    noticeSuffix: "中管理它们。",
-    dismiss: "关闭",
     micBlocked: "麦克风权限被拦截。请在浏览器中允许，以使用语音功能。",
     signOutTitle: "退出登录？",
     signOutMessage: "你需要重新登录才能继续聊天。",

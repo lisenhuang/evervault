@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Brain, ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
+import { ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import LanguageToggle from "@/i18n/LanguageToggle";
 import { useT } from "@/i18n/LanguageProvider";
@@ -20,7 +20,6 @@ export default function Sidebar({
   user,
   textModel,
   onNewChat,
-  onOpenMemories,
   onOpenSettings,
   onSignOut,
   onDeleteAccount,
@@ -30,7 +29,6 @@ export default function Sidebar({
   user: Me;
   textModel: string;
   onNewChat: () => void;
-  onOpenMemories: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
   onDeleteAccount: () => void;
@@ -87,10 +85,6 @@ export default function Sidebar({
         <button onClick={act(onNewChat)} className={ROW}>
           <SquarePen size={18} className="shrink-0" aria-hidden="true" />
           {t.sidebar.newChat}
-        </button>
-        <button onClick={act(onOpenMemories)} className={ROW}>
-          <Brain size={18} className="shrink-0" aria-hidden="true" />
-          {t.sidebar.memories}
         </button>
         <button onClick={act(onOpenSettings)} className={ROW}>
           <Settings2 size={18} className="shrink-0" aria-hidden="true" />
