@@ -160,10 +160,17 @@ public class GeminiProvider : IAiProvider
         return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls);
     }
 
-    public async Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
+    public Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
+        string rawKey, string model, string text, string voiceName, CancellationToken ct)
+        // Gemini 3.x TTS is served by the Interactions API; 2.x uses generateContent (different shapes).
+        => model.Contains("gemini-3", StringComparison.OrdinalIgnoreCase)
+            ? SynthViaInteractionsAsync(rawKey, model, text, voiceName, ct)
+            : SynthViaGenerateContentAsync(rawKey, model, text, voiceName, ct);
+
+    // Gemini 2.x TTS: v1beta generateContent with AUDIO modality (camelCase config).
+    private async Task<(byte[] Pcm, string Mime)> SynthViaGenerateContentAsync(
         string rawKey, string model, string text, string voiceName, CancellationToken ct)
     {
-        // v1beta generateContent with AUDIO modality. camelCase keys (generationConfig/speechConfig/...).
         var payload = new Dictionary<string, object?>
         {
             ["contents"] = new[] { new { role = "user", parts = new[] { new { text } } } },
@@ -202,6 +209,71 @@ public class GeminiProvider : IAiProvider
 
         // Malformed / no audio: throw Transient (not a silent return) so failover tries the next key.
         throw new AiProviderException(AiErrorKind.Transient, "Gemini returned no audio for the TTS request.");
+    }
+
+    // Gemini 3.x TTS: v1beta Interactions API (snake_case body, different response envelope).
+    private async Task<(byte[] Pcm, string Mime)> SynthViaInteractionsAsync(
+        string rawKey, string model, string text, string voiceName, CancellationToken ct)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["input"] = text,
+            ["response_format"] = new { type = "audio" },
+            ["generation_config"] = new { speech_config = new[] { new { voice = voiceName } } },
+        };
+
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, "/v1beta/interactions", rawKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+
+        using var doc = JsonDocument.Parse(body);
+        if (TryFindAudioData(doc.RootElement, out var b64, out var mime))
+            return (Convert.FromBase64String(b64), mime ?? "audio/L16;codec=pcm;rate=24000");
+
+        throw new AiProviderException(AiErrorKind.Transient, "Gemini returned no audio for the TTS request.");
+    }
+
+    /// <summary>Tolerantly locate base64 audio in a response of uncertain shape (the Interactions API
+    /// response envelope isn't fully documented): the first object with a long "data" string, capturing
+    /// any sibling "*mime*" field. Handles output_audio.data and arbitrary nesting.</summary>
+    private static bool TryFindAudioData(JsonElement el, out string data, out string? mime)
+    {
+        data = "";
+        mime = null;
+        if (el.ValueKind == JsonValueKind.Object)
+        {
+            string? found = null;
+            string? m = null;
+            foreach (var prop in el.EnumerateObject())
+            {
+                if (prop.NameEquals("data") && prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    var s = prop.Value.GetString();
+                    if (!string.IsNullOrEmpty(s) && s.Length > 32) found = s;
+                }
+                else if (prop.Name.Contains("mime", StringComparison.OrdinalIgnoreCase)
+                         && prop.Value.ValueKind == JsonValueKind.String)
+                    m = prop.Value.GetString();
+            }
+            if (found is not null)
+            {
+                data = found;
+                mime = m;
+                return true;
+            }
+            foreach (var prop in el.EnumerateObject())
+                if (TryFindAudioData(prop.Value, out data, out mime)) return true;
+        }
+        else if (el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in el.EnumerateArray())
+                if (TryFindAudioData(item, out data, out mime)) return true;
+        }
+        return false;
     }
 
     // --- helpers ---

@@ -30,14 +30,19 @@ public class VoiceSamplesController : ControllerBase
         _log = log;
     }
 
-    /// <summary>GET /api/voice-samples/{voice} → 302 to a presigned R2 URL (generating on first miss).</summary>
+    /// <summary>GET /api/voice-samples/{voice}?model=... → 302 to a presigned R2 URL (generating on
+    /// first miss). <paramref name="model"/> defaults to the standard sample model; must be a TTS model.</summary>
     [HttpGet("{voice}")]
-    public async Task<IActionResult> Get(string voice, CancellationToken ct)
+    public async Task<IActionResult> Get(string voice, [FromQuery] string? model, CancellationToken ct)
     {
         if (!VoiceSampleOptions.Voices.Contains(voice))
             return NotFound(new { error = "Unknown voice." });
 
-        var key = VoiceSampleOptions.Key(VoiceSampleOptions.Model, voice);
+        var m = VoiceSampleOptions.ResolveModel(model);
+        if (!VoiceSampleOptions.IsAllowedModel(m))
+            return BadRequest(new { error = "Unsupported voice model." });
+
+        var key = VoiceSampleOptions.Key(m, voice);
 
         try
         {
@@ -51,7 +56,7 @@ public class VoiceSamplesController : ControllerBase
             // 2) Miss → synthesize via key failover, WAV-encode, upload.
             var (pcm, mime) = await _failover.RunAsync("gemini",
                 (prov, rawKey) => prov.SynthesizeSpeechAsync(
-                    rawKey, VoiceSampleOptions.Model, VoiceSampleOptions.SampleText, voice, ct));
+                    rawKey, m, VoiceSampleOptions.SampleText, voice, ct));
 
             var wav = WavWriter.FromPcm16Mono(pcm, WavWriter.SampleRateFromMime(mime));
             using var ms = new MemoryStream(wav);

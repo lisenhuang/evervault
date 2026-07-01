@@ -74,11 +74,16 @@ public class StorageController : ControllerBase
         return Ok(new GenerateSamplesResult(generated, skipped, failed, errors));
     }
 
-    /// <summary>Status of all 30 voice-preview samples: which already exist in R2 (sorted A–Z).</summary>
+    /// <summary>Status of all 30 voice-preview samples for a model: which already exist in R2 (sorted A–Z).
+    /// <paramref name="model"/> defaults to the standard sample model; must be a TTS model.</summary>
     [HttpGet("samples")]
-    public async Task<ActionResult<VoiceSamplesStatus>> Samples(CancellationToken ct)
+    public async Task<ActionResult<VoiceSamplesStatus>> Samples([FromQuery] string? model, CancellationToken ct)
     {
-        var prefix = $"voice-samples/{VoiceSampleOptions.Model}/";
+        var m = VoiceSampleOptions.ResolveModel(model);
+        if (!VoiceSampleOptions.IsAllowedModel(m))
+            return BadRequest(new { error = "Unsupported voice model." });
+
+        var prefix = $"voice-samples/{m}/";
         var generated = new HashSet<string>(StringComparer.Ordinal);
         try
         {
@@ -95,18 +100,24 @@ public class StorageController : ControllerBase
             .OrderBy(v => v, StringComparer.Ordinal)
             .Select(v => new VoiceSampleStatusItem(v, generated.Contains(v)))
             .ToList();
-        return Ok(new VoiceSamplesStatus(VoiceSampleOptions.Model, voices));
+        return Ok(new VoiceSamplesStatus(m, voices));
     }
 
     /// <summary>Generate (or regenerate with ?force=true) a single voice sample and upload it to R2.
-    /// Mirrors the lazy synth in VoiceSamplesController but is admin-triggered per voice for live progress.</summary>
+    /// Mirrors the lazy synth in VoiceSamplesController but is admin-triggered per voice for live progress.
+    /// <paramref name="model"/> defaults to the standard sample model; must be a TTS model.</summary>
     [HttpPost("samples/{voice}")]
-    public async Task<IActionResult> GenerateSample(string voice, [FromQuery] bool force, CancellationToken ct)
+    public async Task<IActionResult> GenerateSample(
+        string voice, [FromQuery] string? model, [FromQuery] bool force, CancellationToken ct)
     {
         if (!VoiceSampleOptions.Voices.Contains(voice))
             return NotFound(new { error = "Unknown voice." });
 
-        var key = VoiceSampleOptions.Key(VoiceSampleOptions.Model, voice);
+        var m = VoiceSampleOptions.ResolveModel(model);
+        if (!VoiceSampleOptions.IsAllowedModel(m))
+            return BadRequest(new { error = "Unsupported voice model." });
+
+        var key = VoiceSampleOptions.Key(m, voice);
         try
         {
             if (!force && await _storage.ObjectExistsAsync(key, ct))
@@ -114,7 +125,7 @@ public class StorageController : ControllerBase
 
             var (pcm, mime) = await _failover.RunAsync("gemini",
                 (prov, rawKey) => prov.SynthesizeSpeechAsync(
-                    rawKey, VoiceSampleOptions.Model, VoiceSampleOptions.SampleText, voice, ct));
+                    rawKey, m, VoiceSampleOptions.SampleText, voice, ct));
 
             var wav = WavWriter.FromPcm16Mono(pcm, WavWriter.SampleRateFromMime(mime));
             using var ms = new MemoryStream(wav);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, Circle, Loader2, X } from "lucide-react";
 import { api } from "./adminApi";
-import { Banner, Button, Card, Field } from "./ui";
+import { Banner, Button, Card, Field, Select } from "./ui";
 
 type Dto = {
   accountId: string;
@@ -19,6 +19,9 @@ type Dto = {
 
 type SampleStatus = "idle" | "generating" | "generated" | "failed";
 type VoiceStat = { name: string; status: SampleStatus; error?: string };
+
+// TTS models samples can be generated with. gemini-3.x uses the Interactions API; 2.x uses generateContent.
+const TTS_MODELS = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"];
 
 function VoiceIcon({ status }: { status: SampleStatus }) {
   if (status === "generating")
@@ -45,6 +48,7 @@ export default function StorageForm() {
   const [generating, setGenerating] = useState(false);
   const [samplesLoading, setSamplesLoading] = useState(true);
   const [voices, setVoices] = useState<VoiceStat[]>([]);
+  const [model, setModel] = useState(TTS_MODELS[0]);
 
   useEffect(() => {
     void (async () => {
@@ -62,16 +66,22 @@ export default function StorageForm() {
     })();
   }, []);
 
+  // Reload the per-voice status whenever the selected model changes (status is per-model in R2).
   useEffect(() => {
+    let cancelled = false;
+    setSamplesLoading(true);
     void (async () => {
-      const res = await api("/api/admin/storage/samples");
-      if (res.ok) {
+      const res = await api(`/api/admin/storage/samples?model=${encodeURIComponent(model)}`);
+      if (!cancelled && res.ok) {
         const d: { model: string; voices: { name: string; generated: boolean }[] } = await res.json();
         setVoices(d.voices.map((v): VoiceStat => ({ name: v.name, status: v.generated ? "generated" : "idle" })));
       }
-      setSamplesLoading(false);
+      if (!cancelled) setSamplesLoading(false);
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [model]);
 
   function body() {
     return JSON.stringify({
@@ -109,40 +119,58 @@ export default function StorageForm() {
     }
   }
 
-  // Generates one voice at a time so each row updates live. `force` regenerates existing ones too.
+  // Generate one voice with the selected model; updates that row live. Returns an error string or null.
+  async function genVoice(name: string, force: boolean): Promise<string | null> {
+    setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "generating", error: undefined } : v)));
+    try {
+      const res = await api(
+        `/api/admin/storage/samples/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}${force ? "&force=true" : ""}`,
+        { method: "POST" },
+      );
+      if (res.ok) {
+        setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "generated" } : v)));
+        return null;
+      }
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      const err = d.error ?? `HTTP ${res.status}`;
+      setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "failed", error: err } : v)));
+      return err;
+    } catch {
+      setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "failed", error: "Network error." } : v)));
+      return "Network error.";
+    }
+  }
+
+  // Bulk: generate one voice at a time so each row updates live. `force` regenerates existing ones too.
   async function generate(force: boolean) {
     setGenerating(true);
     setSamplesMsg(null);
     const targets = voices.filter((v) => force || v.status !== "generated").map((v) => v.name);
     let ok = 0;
     let failed = 0;
-
+    let firstError = "";
     for (const name of targets) {
-      setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "generating", error: undefined } : v)));
-      try {
-        const res = await api(
-          `/api/admin/storage/samples/${encodeURIComponent(name)}${force ? "?force=true" : ""}`,
-          { method: "POST" },
-        );
-        if (res.ok) {
-          ok++;
-          setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "generated" } : v)));
-        } else {
-          failed++;
-          const d = (await res.json().catch(() => ({}))) as { error?: string };
-          setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "failed", error: d.error } : v)));
-        }
-      } catch {
+      const err = await genVoice(name, force);
+      if (err) {
         failed++;
-        setVoices((cur) => cur.map((v) => (v.name === name ? { ...v, status: "failed", error: "Network error." } : v)));
+        if (!firstError) firstError = err;
+      } else {
+        ok++;
       }
     }
-
     setGenerating(false);
     setSamplesMsg({
       kind: failed > 0 ? "error" : "success",
-      text: `Done — ${ok} generated${failed > 0 ? `, ${failed} failed (hover a red row for the reason)` : ""}.`,
+      text: failed > 0 ? `${ok} generated, ${failed} failed. First error: ${firstError}` : `Done — all ${ok} generated.`,
     });
+  }
+
+  // Row click: (re)generate just that one voice.
+  async function generateOne(name: string) {
+    if (generating) return;
+    setSamplesMsg(null);
+    const err = await genVoice(name, true);
+    if (err) setSamplesMsg({ kind: "error", text: `${name} failed: ${err}` });
   }
 
   return (
@@ -217,7 +245,8 @@ export default function StorageForm() {
       <p className="mb-4 text-sm text-black/60 dark:text-white/60">
         Pre-generate the 30 prebuilt voice samples and store them in R2 so the chat “Preview voice”
         button plays instantly. They’re synthesized with the server Gemini keys (failing over to the
-        next key if one fails). Requires storage and at least one Gemini key to be configured.
+        next key if one fails). <strong>Click any voice below to (re)generate just that one</strong>, or use the
+        buttons to do them all. Requires storage and at least one Gemini key to be configured.
       </p>
 
       {!secretConfigured && (
@@ -225,6 +254,21 @@ export default function StorageForm() {
           <Banner kind="info">Configure and save your R2 storage above before generating samples.</Banner>
         </div>
       )}
+
+      <div className="mb-4">
+        <label className="mb-1 block text-xs font-medium text-black/70 dark:text-white/70">TTS model</label>
+        <Select value={model} onChange={setModel} disabled={generating}>
+          {TTS_MODELS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </Select>
+        <p className="mt-1 text-xs text-black/45 dark:text-white/45">
+          Samples are stored per model. Match the “Voice (speech) model” users pick in chat settings so their
+          previews use these files. (gemini-3.x uses the Interactions API; 2.x uses generateContent.)
+        </p>
+      </div>
 
       {samplesLoading ? (
         <p className="text-sm text-black/50 dark:text-white/50">Loading…</p>
@@ -248,13 +292,21 @@ export default function StorageForm() {
                   />
                 </div>
 
-                <ul className="mb-4 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                <ul className="mb-4 grid grid-cols-2 gap-x-3 gap-y-0.5 sm:grid-cols-3">
                   {voices.map((v) => (
-                    <li key={v.name} className="flex items-center gap-1.5 text-sm" title={v.error}>
-                      <VoiceIcon status={v.status} />
-                      <span className={v.status === "failed" ? "text-red-600 dark:text-red-400" : ""}>
-                        {v.name}
-                      </span>
+                    <li key={v.name}>
+                      <button
+                        type="button"
+                        onClick={() => generateOne(v.name)}
+                        disabled={generating || v.status === "generating"}
+                        title={v.error ?? (v.status === "generated" ? "Click to regenerate" : "Click to generate")}
+                        className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm transition hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10"
+                      >
+                        <VoiceIcon status={v.status} />
+                        <span className={v.status === "failed" ? "text-red-600 dark:text-red-400" : ""}>
+                          {v.name}
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>

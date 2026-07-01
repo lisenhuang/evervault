@@ -13,7 +13,7 @@ type Status = "idle" | "loading" | "playing" | "error";
  * (server keys, with failover) and caches it in R2, so later plays are instant. Keeps a stoppable
  * handle so it can cancel on re-click, on a voice change, or on unmount.
  */
-export default function VoicePreviewButton({ voice }: { voice: string }) {
+export default function VoicePreviewButton({ voice, model }: { voice: string; model?: string }) {
   const t = useT();
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
@@ -43,11 +43,11 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stop stale audio when the picker changes — it no longer matches the selection.
+  // Stop stale audio when the voice or model changes — it no longer matches the selection.
   useEffect(() => {
     stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voice]);
+  }, [voice, model]);
 
   async function handleClick() {
     if (status === "playing") {
@@ -60,7 +60,10 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
     setError("");
     setStatus("loading");
     try {
-      const handle = playUrlHandle(`/api/voice-samples/${encodeURIComponent(voice)}`);
+      const url =
+        `/api/voice-samples/${encodeURIComponent(voice)}` +
+        (model ? `?model=${encodeURIComponent(model)}` : "");
+      const handle = playUrlHandle(url);
       handleRef.current = handle;
       await handle.started; // rejects on load/play error (e.g. 502 all-keys-failed)
       if (!mounted.current || id !== runId.current) return; // stale / cancelled

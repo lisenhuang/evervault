@@ -189,7 +189,7 @@ export default function KeyDrawer({
                         </option>
                       ))}
                   </select>
-                  <VoicePreviewButton voice={voice} />
+                  <VoicePreviewButton voice={voice} model={audioModel} />
                   <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
                     {t.settings.voiceHintPrefix}
                     <a

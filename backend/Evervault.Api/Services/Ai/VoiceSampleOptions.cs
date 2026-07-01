@@ -25,4 +25,14 @@ public static class VoiceSampleOptions
 
     /// <summary>Deterministic R2 key. The model is part of the path so changing it regenerates.</summary>
     public static string Key(string model, string voice) => $"voice-samples/{model}/{voice}.wav";
+
+    /// <summary>Guardrail for a caller-supplied TTS model id: non-empty, bounded, and a TTS model
+    /// (contains "tts") so the endpoint can't be used to trigger arbitrary generateContent calls.</summary>
+    public static bool IsAllowedModel(string? model)
+        => !string.IsNullOrWhiteSpace(model) && model.Length <= 100
+           && model.Contains("tts", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Resolve a caller-supplied model to a trimmed value, or the default when blank.</summary>
+    public static string ResolveModel(string? model)
+        => string.IsNullOrWhiteSpace(model) ? Model : model.Trim();
 }
