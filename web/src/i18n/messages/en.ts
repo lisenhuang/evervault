@@ -53,6 +53,26 @@ const en = {
     ctaBody:
       "Start a conversation today, right from your browser — no setup, no clutter. The iPhone and Android apps are coming soon, so your memory will travel with you wherever you go.",
     footerTagline: "A safe place where your thoughts, conversations, and memories are never lost.",
+    roadmapBadge: "On the roadmap",
+    roadmapTitle: "Where EverVault is going",
+    roadmapBody:
+      "A memory this personal opens up far more than recall. Here's what we're designing next — each idea grounded in the same private, retrieval-backed memory at EverVault's core, so every new experience still knows you and how you think.",
+    roadmapSoon: "Planned",
+    roadmap1Title: "A shareable AI version of you",
+    roadmap1Body:
+      "Share a private link and let family or friends talk to an AI that speaks as you — recapping what you've been up to lately and replying in your own first-person voice.",
+    roadmap2Title: "Speaks in your own voice",
+    roadmap2Body:
+      "Optional voice cloning brings your spoken presence to every reply, so conversations feel warm, familiar, and unmistakably you.",
+    roadmap3Title: "Audio-call reminders",
+    roadmap3Body:
+      "In the upcoming iPhone & Android app, ask to be reminded of anything — and get a real spoken phone call at exactly the right moment, not just another silent notification.",
+    roadmap4Title: "Talk on your own schedule",
+    roadmap4Body:
+      "Because your AI knows your current context and the way you reason, others can have a real conversation with you even when your calendars never line up — no scheduling required.",
+    roadmap5Title: "A memory that lasts",
+    roadmap5Body:
+      "Everything you share compounds into a lasting reflection of your thoughts and reasoning — one that can endure and be revisited long into the future.",
   },
   sidebar: {
     newChat: "New chat",
