@@ -234,8 +234,6 @@ const zh: Messages = {
     label: "语言",
     en: "English",
     zh: "中文",
-    switchToEn: "切换到英文",
-    switchToZh: "切换到中文",
   },
 };
 

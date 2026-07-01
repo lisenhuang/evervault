@@ -8,6 +8,20 @@ export type Lang = "en" | "zh";
 export const LANGS: readonly Lang[] = ["en", "zh"];
 export const DEFAULT_LANG: Lang = "en";
 
+/** Native display name for each language, shown in the language menu. To add a language, extend
+ *  `Lang` + `LANGS` + `LANG_LABELS` + `LANG_SHORT` and add its message dictionary — the menu picks
+ *  it up automatically (no toggle logic to update). */
+export const LANG_LABELS: Record<Lang, string> = {
+  en: "English",
+  zh: "中文",
+};
+
+/** Short badge shown on the compact (landing-header) language trigger. */
+export const LANG_SHORT: Record<Lang, string> = {
+  en: "EN",
+  zh: "中",
+};
+
 /** Cookie name for the persisted language choice — readable on both server and client. */
 export const LANG_COOKIE = "ev:lang";
 

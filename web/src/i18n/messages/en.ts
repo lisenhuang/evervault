@@ -234,8 +234,6 @@ const en = {
     label: "Language",
     en: "English",
     zh: "中文",
-    switchToEn: "Switch to English",
-    switchToZh: "Switch to Chinese",
   },
 };
 
