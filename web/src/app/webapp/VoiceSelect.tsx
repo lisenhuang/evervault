@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Mars, Venus } from "lucide-react";
+import { computeDropdownPlacement } from "./lib/dropdownPlacement";
 import { PREBUILT_VOICES } from "./lib/gemini";
 import { useT } from "@/i18n/LanguageProvider";
 
@@ -110,6 +111,7 @@ export default function VoiceSelect({ value, onChange }: { value: string; onChan
 
   const triggerCls =
     "mt-1 flex w-full items-center justify-between gap-2 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-left text-sm outline-none transition focus:border-blue-500 dark:border-white/20 dark:bg-neutral-900";
+  const placement = open && rect ? computeDropdownPlacement(rect) : null;
 
   return (
     <div className="block">
@@ -142,18 +144,26 @@ export default function VoiceSelect({ value, onChange }: { value: string; onChan
 
       {open &&
         rect &&
+        placement &&
         typeof document !== "undefined" &&
         createPortal(
           // Portal to <body>: the drawer panel uses a CSS transform, which would
           // otherwise make this `position: fixed` popover resolve against the
-          // drawer instead of the viewport (pushing it off-screen).
+          // drawer instead of the viewport (pushing it off-screen). Opens upward
+          // instead of down when the trigger is near the bottom of the screen.
           <div
             ref={popRef}
             id={listId}
             role="listbox"
             aria-label={t.settings.voice}
-            style={{ position: "fixed", top: rect.bottom + 4, left: rect.left, width: rect.width }}
-            className="z-60 max-h-64 overflow-y-auto rounded-lg border border-black/10 bg-white py-1 shadow-xl dark:border-white/10 dark:bg-neutral-900"
+            style={{
+              position: "fixed",
+              left: rect.left,
+              width: rect.width,
+              maxHeight: placement.maxHeight,
+              ...(placement.openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+            }}
+            className="z-60 overflow-y-auto rounded-lg border border-black/10 bg-white py-1 shadow-xl dark:border-white/10 dark:bg-neutral-900"
           >
             {VOICES.map((v, i) => {
               const isSel = v.name === value;
