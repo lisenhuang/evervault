@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Brain, ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
-import LanguageToggle from "@/i18n/LanguageToggle";
+import LanguageMenu from "@/i18n/LanguageMenu";
 import { useT } from "@/i18n/LanguageProvider";
 import type { Me } from "./authApi";
 
@@ -102,7 +102,7 @@ export default function Sidebar({
 
       <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
         <span className="text-sm font-medium text-black/70 dark:text-white/70">{t.sidebar.language}</span>
-        <LanguageToggle variant="row" />
+        <LanguageMenu variant="row" />
       </div>
 
       <div className="flex items-center justify-between rounded-lg px-3 py-1.5">

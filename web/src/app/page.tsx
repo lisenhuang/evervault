@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import ThemeToggle from "@/components/theme/ThemeToggle";
-import LanguageToggle from "@/i18n/LanguageToggle";
+import LanguageMenu from "@/i18n/LanguageMenu";
 import { useT } from "@/i18n/LanguageProvider";
 import {
   Sparkles,
@@ -61,7 +61,7 @@ export default function Home() {
             <span className="text-[15px] font-semibold tracking-tight">EverVault</span>
           </Link>
           <div className="flex items-center gap-1.5">
-            <LanguageToggle />
+            <LanguageMenu />
             <ThemeToggle />
             <Link
               href="/webapp"
