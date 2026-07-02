@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "./types";
@@ -48,9 +48,15 @@ export default function MessageList({
 }) {
   const t = useT();
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollToEnd = useCallback((behavior: ScrollBehavior) => {
+    endRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, scrollSignal]);
+    scrollToEnd("smooth");
+  }, [messages, scrollSignal, scrollToEnd]);
+  // Instant (non-smooth) follow while a reply types itself out word by word — queueing a smooth
+  // scroll per word would lag behind the reveal.
+  const followReveal = useCallback(() => scrollToEnd("auto"), [scrollToEnd]);
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
@@ -94,37 +100,7 @@ export default function MessageList({
             <Avatar name={userName} picture={userPicture} />
           </div>
         ) : (
-          <div key={m.id} className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
-              <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
-            </div>
-            <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
-              {m.text ? (
-                <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
-                    {m.text}
-                  </ReactMarkdown>
-                </div>
-              ) : m.streaming ? (
-                // Voice replies feel like texting a person: a spinner lands immediately so the wait
-                // never reads as an empty bubble, then it gives way to a "typing…" indicator after a
-                // short pause. Everything else keeps the plain immediate spinner.
-                m.kind === "voice" ? (
-                  <VoiceReplyPending />
-                ) : (
-                  <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
-                )
-              ) : null}
-              {m.audio && (
-                <button
-                  onClick={() => onPlayAudio(m)}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
-                >
-                  <Volume2 size={13} /> {t.message.playReply}
-                </button>
-              )}
-            </div>
-          </div>
+          <AssistantMessage key={m.id} m={m} onPlayAudio={onPlayAudio} onReveal={followReveal} />
         ),
       )}
       <div ref={endRef} />
@@ -132,24 +108,94 @@ export default function MessageList({
   );
 }
 
-// Feedback for a pending voice reply. A loading spinner shows immediately so the wait never reads as
-// an empty bubble, then — after a short pause (2s) — it gives way to a chat-style "typing…" indicator,
-// mimicking someone who pauses before they start typing. Quick replies land during the spinner phase.
-function VoiceReplyPending() {
-  const [typing, setTyping] = useState(false);
+// A pending reply stays invisible this long before the "typing…" dots appear. Replies that land
+// sooner skip the indicator entirely — like a person who just starts typing.
+const TYPING_DELAY_MS = 2000;
+
+// An assistant reply, staged to feel like a person on the other end:
+// 1. For the first 2s nothing renders at all — no avatar, no bubble — as if they haven't reacted yet.
+// 2. Past 2s with no reply, the avatar appears with a "typing…" dots bubble.
+// 3. Once text lands it's revealed word by word (brisk, not dumped in one go) — see useWordReveal.
+// Only replies that mount mid-stream animate; completed history (e.g. live-call transcripts) and
+// errors render in full immediately.
+function AssistantMessage({
+  m,
+  onPlayAudio,
+  onReveal,
+}: {
+  m: ChatMessage;
+  onPlayAudio: (m: ChatMessage) => void;
+  onReveal: () => void;
+}) {
+  const t = useT();
+  const mountedStreaming = useRef(!!m.streaming).current;
+  const text = useWordReveal(m.text, mountedStreaming && !m.error);
+  const [typingDots, setTypingDots] = useState(false);
   useEffect(() => {
-    const id = setTimeout(() => setTyping(true), 2000);
+    const id = setTimeout(() => setTypingDots(true), TYPING_DELAY_MS);
     return () => clearTimeout(id);
   }, []);
-  return typing ? (
-    <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
-      <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
-      <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
-      <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
-    </span>
-  ) : (
-    <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" role="status" aria-label="Assistant is thinking" />
+  // Keep the view pinned to the bottom as words land.
+  useEffect(() => {
+    if (text) onReveal();
+  }, [text, onReveal]);
+
+  if (!text && !m.error) {
+    if (!typingDots) return null; // silent grace period — the reply may land before "typing" ever shows
+    return (
+      <div className="flex items-start gap-3">
+        <AiAvatar />
+        <Bubble>
+          <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
+            <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
+            <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
+            <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
+          </span>
+        </Bubble>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-3">
+      <AiAvatar />
+      <Bubble>
+        <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
+            {text}
+          </ReactMarkdown>
+        </div>
+        {m.audio && (
+          <button
+            onClick={() => onPlayAudio(m)}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
+          >
+            <Volume2 size={13} /> {t.message.playReply}
+          </button>
+        )}
+      </Bubble>
+    </div>
   );
+}
+
+// Word-by-word reveal of `text` (which may itself still be growing while the reply streams in).
+// One word per tick reads as brisk human typing; when a long backlog is queued the step scales up
+// so the tail of a big reply doesn't drag on for tens of seconds. Disabled → the full text, as-is.
+const REVEAL_TICK_MS = 24;
+
+function useWordReveal(text: string, enabled: boolean): string {
+  const tokens = useMemo(() => text.match(/\S+\s*/g) ?? [], [text]);
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    if (!enabled || shown >= tokens.length) return;
+    const id = setTimeout(
+      () => setShown((s) => s + Math.max(1, Math.floor((tokens.length - s) / 40))),
+      REVEAL_TICK_MS,
+    );
+    return () => clearTimeout(id);
+  }, [enabled, shown, tokens.length]);
+  if (!enabled) return text;
+  return tokens.slice(0, Math.min(shown, tokens.length)).join("");
 }
 
 function Avatar({ name, picture }: { name: string; picture: string | null }) {
@@ -159,6 +205,22 @@ function Avatar({ name, picture }: { name: string; picture: string | null }) {
   ) : (
     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/10 text-xs font-semibold dark:bg-white/15">
       {(name || "?").charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function AiAvatar() {
+  return (
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
+      <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
+    </div>
+  );
+}
+
+function Bubble({ children }: { children: ReactNode }) {
+  return (
+    <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
+      {children}
     </div>
   );
 }
