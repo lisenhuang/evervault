@@ -179,9 +179,12 @@ function AssistantMessage({
 }
 
 // Word-by-word reveal of `text` (which may itself still be growing while the reply streams in).
-// One word per tick reads as brisk human typing; when a long backlog is queued the step scales up
-// so the tail of a big reply doesn't drag on for tens of seconds. Disabled → the full text, as-is.
-const REVEAL_TICK_MS = 24;
+// Each tick costs a full re-render (markdown re-parse + scroll), so the tick is pinned near frame
+// rate and several words land per tick — sequential enough to read as typing, but never sluggish.
+// A queued backlog scales the step up so the tail of a big reply lands in about a second.
+// Disabled → the full text, as-is.
+const REVEAL_TICK_MS = 16;
+const REVEAL_WORDS_PER_TICK = 2;
 
 function useWordReveal(text: string, enabled: boolean): string {
   const tokens = useMemo(() => text.match(/\S+\s*/g) ?? [], [text]);
@@ -189,7 +192,7 @@ function useWordReveal(text: string, enabled: boolean): string {
   useEffect(() => {
     if (!enabled || shown >= tokens.length) return;
     const id = setTimeout(
-      () => setShown((s) => s + Math.max(1, Math.floor((tokens.length - s) / 40))),
+      () => setShown((s) => s + Math.max(REVEAL_WORDS_PER_TICK, Math.floor((tokens.length - s) / 10))),
       REVEAL_TICK_MS,
     );
     return () => clearTimeout(id);
