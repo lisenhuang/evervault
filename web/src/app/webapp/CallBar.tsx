@@ -12,8 +12,8 @@ const WAVE_DELAYS = ["-0.4s", "-0.2s", "0s", "-0.2s", "-0.4s"];
 /**
  * Inline, non-blocking live-call controls. Docks just above the composer so the chat stays
  * visible and scrollable during a call (the transcript keeps streaming into the message list).
- * The audio button animates continuously while the call is live so it's obvious you're talking
- * in real time — and doubles as the mute toggle.
+ * The audio orb animates continuously while the call is live so it's obvious you're talking
+ * in real time — and doubles as the mute toggle, alongside the dedicated mute button.
  */
 export default function CallBar({
   state,
@@ -131,6 +131,22 @@ export default function CallBar({
             {error ? error : muted ? t.call.mutedHint : t.call.liveHint}
           </p>
         </div>
+
+        {/* Mute / unmute mic */}
+        <button
+          onClick={onToggleMute}
+          disabled={connecting || terminal}
+          title={muted ? t.call.unmute : t.call.mute}
+          aria-label={muted ? t.call.unmuteMic : t.call.muteMic}
+          aria-pressed={muted}
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full shadow-sm transition disabled:opacity-50 ${
+            muted
+              ? "bg-neutral-700 text-white hover:bg-neutral-600 dark:bg-white dark:text-black dark:hover:bg-neutral-200"
+              : "bg-black/5 text-black hover:bg-black/10 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+          }`}
+        >
+          {muted ? <MicOff size={20} /> : <Mic size={20} />}
+        </button>
 
         {/* End call */}
         <button

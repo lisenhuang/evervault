@@ -128,7 +128,7 @@ const zh: Messages = {
     unmuteMic: "取消麦克风静音",
     muteMic: "将麦克风静音",
     endCall: "结束通话",
-    mutedHint: "麦克风已静音——点击圆球取消静音",
+    mutedHint: "麦克风已静音——点击麦克风按钮取消静音",
     liveHint: "尽管开口——我会出声回答。随时说话都可以打断我。",
   },
   message: {
