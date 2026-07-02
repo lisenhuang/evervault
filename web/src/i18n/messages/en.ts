@@ -136,7 +136,7 @@ const en = {
     unmuteMic: "Unmute microphone",
     muteMic: "Mute microphone",
     endCall: "End call",
-    mutedHint: "Your mic is muted — tap the orb to unmute",
+    mutedHint: "Your mic is muted — tap the mic button to unmute",
     liveHint: "Just talk — I'll answer out loud. Speak any time to interrupt.",
   },
   message: {
