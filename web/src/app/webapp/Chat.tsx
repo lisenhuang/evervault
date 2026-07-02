@@ -11,7 +11,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeImage, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
-import type { PreparedImage } from "./lib/image";
+import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
@@ -28,14 +28,22 @@ import { aiReplyDirective } from "@/i18n/config";
 const uid = () => crypto.randomUUID();
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong.");
 
+// One attachment as a Gemini part: images/PDFs go inline; extracted documents go as delimited text.
+function fileToPart(f: PreparedFile) {
+  if (f.kind === "text") {
+    return { text: `--- Attached file: ${f.name} ---\n${f.text ?? ""}\n--- End of file: ${f.name} ---` };
+  }
+  return { inlineData: { mimeType: f.mimeType, data: f.base64 ?? "" } };
+}
+
 function toContents(msgs: ChatMessage[]): Content[] {
   return msgs
-    .filter((m) => (m.text || m.image) && !m.error)
+    .filter((m) => (m.text || m.files?.length) && !m.error)
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      // Replay attached images inline so follow-up questions about a picture keep working.
+      // Replay attached files inline so follow-up questions about a picture/document keep working.
       parts: [
-        ...(m.image ? [{ inlineData: { mimeType: m.image.mimeType, data: m.image.base64 } }] : []),
+        ...(m.files ?? []).map(fileToPart),
         ...(m.text ? [{ text: m.text }] : []),
       ],
     }));
@@ -285,17 +293,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     });
   }
 
-  async function sendText(text: string, image?: PreparedImage) {
+  async function sendText(text: string, files?: PreparedFile[]) {
     if (!apiKey) {
       setDrawerOpen(true);
       return;
     }
+    const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
     const userMsg: ChatMessage = {
       id: uid(),
       role: "user",
       text,
-      kind: image ? "image" : "text",
-      ...(image ? { image: { base64: image.base64, mimeType: image.mimeType } } : {}),
+      kind: images.length ? "image" : "text",
+      ...(files?.length ? { files } : {}),
     };
     const asstId = uid();
     const base = [...messages, userMsg];
@@ -305,19 +314,26 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const preface = await ragPreface(text);
       const contents = preface ? [preface, ...toContents(base)] : toContents(base);
       const reply = await runAssistant(asstId, contents, false);
-      if (image) {
-        // Recognize the attached image (a second, vision generateContent call), then record the turn:
-        // the description is embedded and stored in the vector DB alongside the image itself (→ R2),
-        // so past pictures can be recalled by what's in them. Best-effort — never blocks the chat.
+      if (files?.length) {
+        // Recognize each attached image (a second, vision generateContent call per image), then
+        // record the turn: descriptions + document names are embedded and stored in the vector DB,
+        // and the first image itself goes to R2, so past attachments can be recalled by content.
+        // Best-effort — never blocks the chat.
         void (async () => {
-          const desc = await describeImage(apiKey, textModel, image.base64, image.mimeType).catch(() => "");
-          const userContent = [text.trim(), desc ? `[Image] ${desc}` : ""].filter(Boolean).join("\n") || "(image)";
+          const lines = await Promise.all(
+            files.map(async (f) => {
+              if (f.kind !== "image" || !f.base64) return `[File] ${f.name}`;
+              const desc = await describeImage(apiKey, textModel, f.base64, f.mimeType).catch(() => "");
+              return desc ? `[Image] ${desc}` : "[Image]";
+            }),
+          );
+          const userContent = [text.trim(), ...lines].filter(Boolean).join("\n") || "(attachment)";
           void recordTextTurns(
             [
-              { role: "user", text: userContent, modality: "image" },
+              { role: "user", text: userContent, modality: images.length ? "image" : "text" },
               { role: "assistant", text: reply, modality: "text" },
             ],
-            { imageBase64: image.base64, imageMime: image.mimeType },
+            images[0] ? { imageBase64: images[0].base64, imageMime: images[0].mimeType } : undefined,
           );
         })();
       } else {

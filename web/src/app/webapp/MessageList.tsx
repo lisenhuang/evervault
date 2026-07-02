@@ -1,11 +1,12 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
+import { FileText, Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "./types";
 import { formatDuration } from "./lib/time";
+import { formatSize } from "./lib/files";
 import { useT } from "@/i18n/LanguageProvider";
 
 const md: Components = {
@@ -74,13 +75,28 @@ export default function MessageList({
         ) : m.role === "user" ? (
           <div key={m.id} className="flex items-start justify-end gap-3">
             <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm">
-              {m.image && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`data:${m.image.mimeType};base64,${m.image.base64}`}
-                  alt={t.message.imageAlt}
-                  className={`max-h-64 w-full rounded-xl object-contain ${m.text ? "mb-2" : ""}`}
-                />
+              {m.files && m.files.length > 0 && (
+                <div className={`flex flex-col gap-1.5 ${m.text ? "mb-2" : ""}`}>
+                  {m.files.map((f) =>
+                    f.kind === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={f.id}
+                        src={`data:${f.mimeType};base64,${f.base64}`}
+                        alt={t.message.imageAlt}
+                        className="max-h-64 w-full rounded-xl object-contain"
+                      />
+                    ) : (
+                      <span key={f.id} className="flex items-center gap-2 rounded-xl bg-white/15 px-3 py-2">
+                        <FileText size={16} className="shrink-0 opacity-90" aria-hidden="true" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-medium" title={f.name}>{f.name}</span>
+                          <span className="block text-[10px] opacity-75">{formatSize(f.size)}</span>
+                        </span>
+                      </span>
+                    ),
+                  )}
+                </div>
               )}
               {m.kind === "voice" ? (
                 m.text ? (
