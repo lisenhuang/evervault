@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
+import { Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "./types";
@@ -94,37 +94,7 @@ export default function MessageList({
             <Avatar name={userName} picture={userPicture} />
           </div>
         ) : (
-          <div key={m.id} className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
-              <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
-            </div>
-            <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
-              {m.text ? (
-                <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
-                    {m.text}
-                  </ReactMarkdown>
-                </div>
-              ) : m.streaming ? (
-                // Voice replies feel like texting a person: a spinner lands immediately so the wait
-                // never reads as an empty bubble, then it gives way to a "typing…" indicator after a
-                // short pause. Everything else keeps the plain immediate spinner.
-                m.kind === "voice" ? (
-                  <VoiceReplyPending />
-                ) : (
-                  <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" />
-                )
-              ) : null}
-              {m.audio && (
-                <button
-                  onClick={() => onPlayAudio(m)}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
-                >
-                  <Volume2 size={13} /> {t.message.playReply}
-                </button>
-              )}
-            </div>
-          </div>
+          <AssistantRow key={m.id} m={m} onPlayAudio={onPlayAudio} playLabel={t.message.playReply} />
         ),
       )}
       <div ref={endRef} />
@@ -132,24 +102,98 @@ export default function MessageList({
   );
 }
 
-// Feedback for a pending voice reply. A loading spinner shows immediately so the wait never reads as
-// an empty bubble, then — after a short pause (2s) — it gives way to a chat-style "typing…" indicator,
-// mimicking someone who pauses before they start typing. Quick replies land during the spinner phase.
-function VoiceReplyPending() {
-  const [typing, setTyping] = useState(false);
+// An assistant turn. Two human touches make the wait feel like texting a real person:
+//   1. While the reply is still pending (streaming, nothing to show yet) we render *nothing at all*
+//      — no avatar, no empty bubble — for the first 2s. Only if it's still not ready after that do we
+//      reveal the avatar + a "typing…" indicator, the way someone pauses before they start typing.
+//      A quick reply that lands inside the 2s window skips the indicator entirely.
+//   2. Once text arrives it's revealed word by word (fast) instead of dumping the whole chunk at once.
+// Applies to both text and voice replies.
+function AssistantRow({
+  m,
+  onPlayAudio,
+  playLabel,
+}: {
+  m: ChatMessage;
+  onPlayAudio: (m: ChatMessage) => void;
+  playLabel: string;
+}) {
+  const pending = !!m.streaming && !m.text && !m.error;
+  const [showTyping, setShowTyping] = useState(false);
   useEffect(() => {
-    const id = setTimeout(() => setTyping(true), 2000);
+    if (!pending) return;
+    const id = setTimeout(() => setShowTyping(true), 2000);
     return () => clearTimeout(id);
-  }, []);
-  return typing ? (
+  }, [pending]);
+
+  // Errors are shown in full immediately; a real reply is typed out word by word.
+  const revealed = useWordReveal(m.error ? "" : m.text);
+  const body = m.error ? m.text : revealed;
+
+  // Hold the whole row back until either text starts arriving or the 2s "thinking" pause elapses.
+  if (pending && !showTyping) return null;
+
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
+        <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
+      </div>
+      <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
+        {body ? (
+          <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
+              {body}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <TypingDots />
+        )}
+        {m.audio && (
+          <button
+            onClick={() => onPlayAudio(m)}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
+          >
+            <Volume2 size={13} /> {playLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Chat-style "typing…" indicator: three dots bouncing in sequence.
+function TypingDots() {
+  return (
     <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
       <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
     </span>
-  ) : (
-    <Loader2 size={16} className="animate-spin text-black/40 dark:text-white/40" role="status" aria-label="Assistant is thinking" />
   );
+}
+
+// Reveals `full` progressively, word by word, at a fast pace. As `full` grows while the reply
+// streams in, the cursor chases it; when it stops growing the cursor finishes off the tail. To keep
+// long replies from crawling, it catches up in bigger bites the further behind it falls. Returns the
+// slice of `full` to show right now.
+function useWordReveal(full: string) {
+  const [shownLen, setShownLen] = useState(0);
+  useEffect(() => {
+    if (shownLen >= full.length) return; // caught up — nothing scheduled until `full` grows again
+    const backlog = full.length - shownLen;
+    const words = backlog > 160 ? 4 : backlog > 60 ? 2 : 1;
+    const id = setTimeout(() => {
+      let next = shownLen;
+      for (let w = 0; w < words && next < full.length; w++) {
+        while (next < full.length && /\s/.test(full[next])) next++; // skip whitespace
+        while (next < full.length && !/\s/.test(full[next])) next++; // consume the word
+      }
+      setShownLen(next);
+    }, 35);
+    return () => clearTimeout(id);
+  }, [shownLen, full]);
+
+  return full.slice(0, Math.min(shownLen, full.length));
 }
 
 function Avatar({ name, picture }: { name: string; picture: string | null }) {
