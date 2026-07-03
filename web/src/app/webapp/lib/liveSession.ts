@@ -31,6 +31,22 @@ export class LiveSession {
   private loopback = new EchoLoopback();
   private cb!: LiveCallbacks;
   private stopped = false;
+  /**
+   * Set when the model's voice plays on a path the platform's echo canceller can't reference —
+   * always on iOS (its canceller only "hears" MediaStream-element playback, never Web Audio),
+   * and elsewhere when the loopback fails. The session then runs half duplex: mic chunks are
+   * dropped while model audio is sounding, so the speaker's sound can't come back as "user
+   * speech" and make the model interrupt itself. Null = echo-cancelled path, full duplex.
+   */
+  private gateReason: "ios" | "no-loopback" | null = null;
+  /** User declared headphones: no acoustic echo, so the gate lifts and voice barge-in returns. */
+  private headphones = false;
+  private gatedSinceMs: number | null = null;
+  private streamEndSent = false;
+  /** A model turn is streaming audio (set on its first chunk, cleared on turnComplete/interrupted). */
+  private modelTurnActive = false;
+  /** Tap-to-interrupt: swallow the rest of the current turn's audio and transcript. */
+  private discardTurnAudio = false;
 
   constructor(
     private apiKey: string,
@@ -99,6 +115,22 @@ export class LiveSession {
     });
 
     await this.mic.start((b64) => {
+      if (this.halfDuplex && this.player.echoRisk) {
+        // The speaker is (or was just) sounding the model's voice with no echo cancellation:
+        // drop the chunk. The gate closes the moment a turn's first buffer is scheduled —
+        // before any sound leaves the hardware — so no echo-bearing chunk slips through.
+        if (this.gatedSinceMs == null) {
+          this.gatedSinceMs = Date.now();
+        } else if (!this.streamEndSent && Date.now() - this.gatedSinceMs > 1000) {
+          // Gemini caches trailing audio across pauses; after a long gate, flush it so stale
+          // pre-gate sound isn't glued onto the front of the user's next utterance.
+          this.session?.sendRealtimeInput({ audioStreamEnd: true });
+          this.streamEndSent = true;
+        }
+        return;
+      }
+      this.gatedSinceMs = null;
+      this.streamEndSent = false;
       this.session?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
     });
 
@@ -108,10 +140,11 @@ export class LiveSession {
     // element play while the page is already capturing.
     //
     // On iOS the loopback plays back SILENTLY (WebKit can't carry Web Audio output through it), so
-    // there we play straight to the speaker to stay audible; iOS echo is left to the VAD tuning
-    // above (and is the candidate for an in-app echo canceller if that proves insufficient).
+    // there we play straight to the speaker to stay audible. Direct output is invisible to the
+    // echo canceller, so any such path also flips the session to half duplex (see gateReason).
     if (isIOS()) {
       this.player.useDirectOutput();
+      this.gateReason = "ios";
     } else {
       try {
         await this.loopback.start(this.player.stream);
@@ -119,6 +152,7 @@ export class LiveSession {
         console.warn("[live] echo-cancelling loopback unavailable; using direct speaker output", e);
         this.loopback.stop();
         this.player.useDirectOutput();
+        this.gateReason = "no-loopback";
       }
     }
 
@@ -140,18 +174,27 @@ export class LiveSession {
     const sc = m.serverContent;
     if (sc?.interrupted) {
       this.player.clear(); // barge-in: drop whatever the model was saying
+      this.modelTurnActive = false;
+      this.discardTurnAudio = false;
       this.cb.onState("listening");
     }
     for (const p of sc?.modelTurn?.parts ?? []) {
       const data = p.inlineData?.data;
-      if (data) {
+      // After a tap-to-interrupt, the server keeps streaming the rest of the turn (there's no
+      // cancel message in the Live API) — swallow it so nothing plays or re-enters "speaking".
+      if (data && !this.discardTurnAudio) {
         this.player.enqueue(data);
+        this.modelTurnActive = true;
         this.cb.onState("speaking");
       }
     }
     if (sc?.inputTranscription?.text) this.cb.onUserText(sc.inputTranscription.text);
-    if (sc?.outputTranscription?.text) this.cb.onModelText(sc.outputTranscription.text);
+    // Also drop the discarded turn's transcript: the chat log (and the memories built from it)
+    // should only contain speech the user actually heard, matching real barge-in semantics.
+    if (sc?.outputTranscription?.text && !this.discardTurnAudio) this.cb.onModelText(sc.outputTranscription.text);
     if (sc?.turnComplete) {
+      this.modelTurnActive = false;
+      this.discardTurnAudio = false;
       this.cb.onTurnComplete();
       if (!this.player.isPlaying) this.cb.onState("listening");
     }
@@ -159,6 +202,35 @@ export class LiveSession {
 
   setMuted(m: boolean) {
     this.mic.setMuted(m);
+  }
+
+  /** The model's voice plays on an echo-prone path here, so the headphones escape is relevant. */
+  get echoProne(): boolean {
+    return this.gateReason !== null;
+  }
+
+  /** Mic gating in force: echo-prone and the user hasn't declared headphones. */
+  get halfDuplex(): boolean {
+    return this.echoProne && !this.headphones;
+  }
+
+  setHeadphones(on: boolean) {
+    this.headphones = on;
+  }
+
+  /**
+   * Tap-to-interrupt for half-duplex mode (voice can't barge in there): stop playback locally and
+   * swallow the rest of the turn. The server keeps generating — its context retains the full
+   * reply — but the user stops hearing it, and the mic reopens after the short post-stop tail.
+   */
+  interrupt() {
+    if (!this.modelTurnActive && !this.player.isPlaying) return;
+    // Only swallow the remainder of a turn that is still streaming. A tap during the playback
+    // drain after turnComplete has nothing left to discard — and a stale flag would swallow the
+    // entire NEXT reply, since only interrupted/turnComplete clear it.
+    this.discardTurnAudio = this.modelTurnActive;
+    this.player.clear();
+    this.cb.onState("listening");
   }
 
   async stop() {

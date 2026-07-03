@@ -88,6 +88,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [callState, setCallState] = useState<LiveState | null>(null);
   const [callMuted, setCallMuted] = useState(false);
   const [callError, setCallError] = useState("");
+  // Echo-prone output path (iOS speaker, or the loopback failed): the session runs half duplex —
+  // the mic is gated while the model speaks, so interrupting is by tap instead of by voice. The
+  // headphones toggle (persisted) lifts the gate, since headphones produce no acoustic echo.
+  const [callEchoProne, setCallEchoProne] = useState(false);
+  const [callHalfDuplex, setCallHalfDuplex] = useState(false);
+  const [callHeadphones, setCallHeadphones] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem("voice:headphones") === "1",
+  );
   // ms timestamp of when the current call connected (null until connected / when no call is active).
   // Drives the live mm:ss timer in the CallBar; the ref mirror lets the end/close handlers read it
   // without a stale closure when they log the call duration into chat history.
@@ -458,6 +466,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
     setCallError("");
     setCallMuted(false);
+    setCallEchoProne(false);
+    setCallHalfDuplex(false);
     setCallStartedAt(null);
     liveUserIdRef.current = null;
     liveAsstIdRef.current = null;
@@ -466,6 +476,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
     const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext, lang);
+    session.setHeadphones(callHeadphones);
     liveRef.current = session;
     setCallState("connecting");
     try {
@@ -493,6 +504,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         },
         onError: setCallError,
       });
+      // Which output path the session ended up on is only known once start() resolves; it drives
+      // the CallBar's half-duplex affordances (tap-to-interrupt orb, headphones toggle).
+      setCallEchoProne(session.echoProne);
+      setCallHalfDuplex(session.halfDuplex);
     } catch (e) {
       setCallError(errMsg(e));
       setCallState("error");
@@ -513,6 +528,25 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       liveRef.current?.setMuted(next);
       return next;
     });
+  }
+
+  function toggleHeadphones() {
+    const next = !callHeadphones;
+    setCallHeadphones(next);
+    try {
+      localStorage.setItem("voice:headphones", next ? "1" : "0");
+    } catch {
+      /* storage may be unavailable (private mode) — the toggle still works for this call */
+    }
+    const s = liveRef.current;
+    if (s) {
+      s.setHeadphones(next);
+      setCallHalfDuplex(s.halfDuplex);
+    }
+  }
+
+  function interruptCall() {
+    liveRef.current?.interrupt();
   }
 
   useEffect(() => () => void liveRef.current?.stop(), []);
@@ -624,7 +658,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             muted={callMuted}
             error={callError}
             startedAt={callStartedAt}
+            echoProne={callEchoProne}
+            halfDuplex={callHalfDuplex}
+            headphones={callHeadphones}
             onToggleMute={toggleMute}
+            onToggleHeadphones={toggleHeadphones}
+            onInterrupt={interruptCall}
             onEnd={endCall}
           />
         )}

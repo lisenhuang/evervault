@@ -138,6 +138,11 @@ const en = {
     endCall: "End call",
     mutedHint: "Your mic is muted — tap the mic button to unmute",
     liveHint: "Just talk — I'll answer out loud. Speak any time to interrupt.",
+    stopReply: "Stop the reply",
+    gatedHint: "Just talk — I'll answer out loud.",
+    gatedSpeakingHint: "Answering — tap the wave to stop me.",
+    headphonesOnTitle: "Headphones mode: interrupt me by speaking. Tap if you're on the speaker.",
+    headphonesOffTitle: "On the speaker, tap the wave to interrupt. Using headphones? Tap here to interrupt by voice.",
   },
   message: {
     callEnded: "Call ended",

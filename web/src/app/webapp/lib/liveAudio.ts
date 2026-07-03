@@ -23,6 +23,29 @@ export function isIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
+/**
+ * Best-effort Audio Session hint (Safari-only draft API; no-op elsewhere). Pinning
+ * "play-and-record" before capture keeps iOS on the speaker-friendly call category for the whole
+ * call; restoring "auto" when capture stops releases it, so later media playback isn't stuck at
+ * call volume/routing (WebKit keeps a non-"auto" type as a hard override for the page's lifetime).
+ */
+function setAudioSessionType(type: "play-and-record" | "auto") {
+  if (!isIOS()) return;
+  try {
+    const nav = navigator as Navigator & { audioSession?: { type: string } };
+    if (nav.audioSession) nav.audioSession.type = type;
+  } catch {
+    /* experimental API — ignore */
+  }
+}
+
+// How long past the last scheduled sample the speaker is still considered "sounding": hardware
+// output latency plus room decay. Gates the mic in half-duplex mode (see LiveSession).
+const ECHO_TAIL_S = 0.3;
+// After a manual stop (barge-in / tap-to-interrupt) only the hardware drain remains, so the mic
+// can reopen sooner and catch the start of what the user says next.
+const CLEAR_TAIL_S = 0.2;
+
 export class MicStreamer {
   private ctx?: AudioContext;
   private stream?: MediaStream;
@@ -31,6 +54,7 @@ export class MicStreamer {
   private muted = false;
 
   async start(onChunk: (base64Pcm16: string) => void): Promise<void> {
+    setAudioSessionType("play-and-record");
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
@@ -62,6 +86,7 @@ export class MicStreamer {
     this.source?.disconnect();
     this.stream?.getTracks().forEach((t) => t.stop());
     void this.ctx?.close();
+    setAudioSessionType("auto");
   }
 }
 
@@ -70,6 +95,7 @@ export class AudioPlayer {
   private dest: MediaStreamAudioDestinationNode;
   private out: AudioNode;
   private nextTime = 0;
+  private lastStopAt = 0;
   private sources = new Set<AudioBufferSourceNode>();
   /** Fires when all scheduled output has finished playing (the model stopped speaking). */
   onIdle?: () => void;
@@ -122,8 +148,21 @@ export class AudioPlayer {
     return this.nextTime > this.ctx.currentTime + 0.02;
   }
 
+  /**
+   * True while scheduled output (or its acoustic tail) may still be sounding from the speaker —
+   * i.e. an open mic would pick the model's own voice back up. Drives the half-duplex mic gate
+   * on platforms whose echo canceller can't remove Web Audio output (see liveSession.ts).
+   */
+  get echoRisk(): boolean {
+    if (this.nextTime === 0 && this.lastStopAt === 0) return false; // nothing has played yet
+    return this.ctx.currentTime < Math.max(this.nextTime + ECHO_TAIL_S, this.lastStopAt + CLEAR_TAIL_S);
+  }
+
   /** Barge-in: stop everything currently scheduled. */
   clear() {
+    // Only a stop that cut real sound leaves the speaker draining. A clear that arrives after
+    // playback already finished must not gate the mic — the user may be mid-sentence by then.
+    const hadAudio = this.sources.size > 0 || this.isPlaying;
     for (const s of this.sources) {
       try {
         s.stop();
@@ -133,6 +172,7 @@ export class AudioPlayer {
     }
     this.sources.clear();
     this.nextTime = 0;
+    if (hadAudio) this.lastStopAt = this.ctx.currentTime;
   }
 
   async close() {

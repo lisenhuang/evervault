@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertTriangle, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, Headphones, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import type { LiveState } from "./lib/liveSession";
 import { formatDuration } from "./lib/time";
 import { useT } from "@/i18n/LanguageProvider";
@@ -20,7 +20,12 @@ export default function CallBar({
   muted,
   error,
   startedAt,
+  echoProne,
+  halfDuplex,
+  headphones,
   onToggleMute,
+  onToggleHeadphones,
+  onInterrupt,
   onEnd,
 }: {
   state: LiveState;
@@ -28,7 +33,14 @@ export default function CallBar({
   error: string;
   /** ms timestamp of when the call connected, or null while still connecting. Drives the live timer. */
   startedAt: number | null;
+  /** The model's voice plays without echo cancellation here (iOS speaker / no loopback). */
+  echoProne: boolean;
+  /** Mic is gated while the model speaks — interrupting is by tap, not by voice. */
+  halfDuplex: boolean;
+  headphones: boolean;
   onToggleMute: () => void;
+  onToggleHeadphones: () => void;
+  onInterrupt: () => void;
   onEnd: () => void;
 }) {
   const t = useT();
@@ -46,6 +58,26 @@ export default function CallBar({
   const speaking = state === "speaking";
   // "Live" = audio is actively flowing (listening or speaking) and not muted.
   const live = (speaking || state === "listening") && !muted && !connecting && !terminal;
+  // In half-duplex mode voice can't barge in, so while the model speaks the orb becomes the
+  // interrupt control instead of a mute toggle (mute stays on its dedicated button). When muted,
+  // the orb keeps its unmute role so its label and behavior never diverge.
+  const orbInterrupts = halfDuplex && speaking && !muted && !connecting && !terminal;
+  const orbLabel = orbInterrupts ? t.call.stopReply : muted ? t.call.unmuteMic : t.call.muteMic;
+  const orbTitle = orbInterrupts ? t.call.stopReply : muted ? t.call.unmute : t.call.mute;
+
+  // The orb flips from "stop the reply" back to a mute toggle the instant playback drains. A tap
+  // aimed at stopping that lands just after the flip would silently mute the mic — absorb it.
+  const prevOrbInterruptsRef = useRef(false);
+  const interruptEndedAtRef = useRef(0);
+  useEffect(() => {
+    if (prevOrbInterruptsRef.current && !orbInterrupts) interruptEndedAtRef.current = Date.now();
+    prevOrbInterruptsRef.current = orbInterrupts;
+  }, [orbInterrupts]);
+  function onOrbTap() {
+    if (orbInterrupts) return onInterrupt();
+    if (!muted && Date.now() - interruptEndedAtRef.current < 400) return;
+    onToggleMute();
+  }
 
   // Tick the elapsed-time display once a second while the call is connected. On cleanup (the call
   // going terminal, or unmount) we snap once more to the real clock, so the frozen readout reflects
@@ -66,12 +98,12 @@ export default function CallBar({
     <div className="border-t border-black/10 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
       <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2.5">
         {/* Animated audio button — pulsing ring + live voice wave, colored by state.
-            Tapping it mutes/unmutes the mic. */}
+            Tapping it mutes/unmutes the mic — or stops the reply while speaking in half-duplex. */}
         <button
-          onClick={onToggleMute}
+          onClick={onOrbTap}
           disabled={connecting || terminal}
-          title={muted ? t.call.unmute : t.call.mute}
-          aria-label={muted ? t.call.unmuteMic : t.call.muteMic}
+          title={orbTitle}
+          aria-label={orbLabel}
           className="relative flex h-12 w-12 shrink-0 items-center justify-center disabled:opacity-50"
         >
           {live && (
@@ -128,9 +160,37 @@ export default function CallBar({
             )}
           </p>
           <p className="truncate text-xs text-black/50 dark:text-white/50">
-            {error ? error : muted ? t.call.mutedHint : t.call.liveHint}
+            {error
+              ? error
+              : muted
+                ? t.call.mutedHint
+                : halfDuplex
+                  ? speaking
+                    ? t.call.gatedSpeakingHint
+                    : t.call.gatedHint
+                  : t.call.liveHint}
           </p>
         </div>
+
+        {/* Headphones escape hatch — only on echo-prone paths (iOS speaker / no loopback), where
+            the mic is gated while the model speaks. Headphones produce no acoustic echo, so
+            declaring them lifts the gate and brings voice barge-in back. */}
+        {echoProne && (
+          <button
+            onClick={onToggleHeadphones}
+            disabled={connecting || terminal}
+            title={headphones ? t.call.headphonesOnTitle : t.call.headphonesOffTitle}
+            aria-label={headphones ? t.call.headphonesOnTitle : t.call.headphonesOffTitle}
+            aria-pressed={headphones}
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full shadow-sm transition disabled:opacity-50 ${
+              headphones
+                ? "bg-neutral-700 text-white hover:bg-neutral-600 dark:bg-white dark:text-black dark:hover:bg-neutral-200"
+                : "bg-black/5 text-black hover:bg-black/10 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+            }`}
+          >
+            <Headphones size={20} />
+          </button>
+        )}
 
         {/* Mute / unmute mic */}
         <button

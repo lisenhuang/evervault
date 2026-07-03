@@ -139,6 +139,11 @@ const zh: Messages = {
     endCall: "结束通话",
     mutedHint: "麦克风已静音——点击麦克风按钮取消静音",
     liveHint: "尽管开口——我会出声回答。随时说话都可以打断我。",
+    stopReply: "停止回答",
+    gatedHint: "尽管开口——我会出声回答。",
+    gatedSpeakingHint: "正在回答——点击声波即可打断。",
+    headphonesOnTitle: "耳机模式:说话即可打断我。使用扬声器时请点击关闭。",
+    headphonesOffTitle: "使用扬声器时,点击声波打断回答。戴着耳机?点这里开启语音打断。",
   },
   message: {
     callEnded: "通话已结束",
