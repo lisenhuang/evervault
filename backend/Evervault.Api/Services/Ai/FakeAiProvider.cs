@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace Evervault.Api.Services.Ai;
@@ -102,6 +103,65 @@ public class FakeAiProvider : IAiProvider
             pcm[i * 2 + 1] = (byte)((s >> 8) & 0xff);
         }
         return Task.FromResult(((byte[])pcm, "audio/L16;codec=pcm;rate=24000"));
+    }
+
+    // --- Fake webapp/app proxy primitives (AI_FAKE=1 exercises the mobile app offline) ---
+
+    public Task<float[]> EmbedAsync(string rawKey, string model, string text, int dimensions, CancellationToken ct)
+    {
+        if (rawKey.Trim() != "good")
+            throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+        // Deterministic pseudo-vector seeded by the text, then L2-normalized — stable so the same text
+        // recalls itself in vector search offline.
+        var dim = dimensions is 768 or 1536 or 3072 ? dimensions : 1536;
+        var seed = (uint)text.GetHashCode();
+        var vec = new float[dim];
+        for (var i = 0; i < dim; i++)
+        {
+            seed = seed * 1664525 + 1013904223;
+            vec[i] = (seed / (float)uint.MaxValue) - 0.5f;
+        }
+        double norm = Math.Sqrt(vec.Sum(x => (double)x * x));
+        if (norm > 1e-9) for (var i = 0; i < dim; i++) vec[i] = (float)(vec[i] / norm);
+        return Task.FromResult(vec);
+    }
+
+    public Task<string> GenerateTextAsync(string rawKey, string model, string requestBodyJson, CancellationToken ct)
+    {
+        if (rawKey.Trim() != "good")
+            throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+        if (requestBodyJson.Contains("Transcribe", StringComparison.OrdinalIgnoreCase)) return Task.FromResult("(fake transcript)");
+        if (requestBodyJson.Contains("Describe this image", StringComparison.OrdinalIgnoreCase)) return Task.FromResult("A fake image description for offline testing.");
+        // Profile/JSON extraction expects valid JSON.
+        return Task.FromResult("{}");
+    }
+
+    public async Task StreamGenerateAsync(string rawKey, string model, string requestBodyJson,
+        Func<ReadOnlyMemory<byte>, CancellationToken, Task> onSse, CancellationToken ct)
+    {
+        if (rawKey.Trim() != "good")
+            throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+        // Emit a few Gemini-shaped SSE chunks so the app's stream parser works offline.
+        foreach (var word in new[] { "This ", "is ", "the ", "fake ", "AI ", "provider." })
+        {
+            var chunk = JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { text = word } } } } } });
+            var bytes = Encoding.UTF8.GetBytes($"data: {chunk}\n\n");
+            await onSse(bytes, ct);
+        }
+    }
+
+    public Task<IReadOnlyList<WebappModelInfo>> ListModelDetailsAsync(string rawKey, CancellationToken ct)
+    {
+        if (rawKey.Trim() != "good")
+            throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+        IReadOnlyList<WebappModelInfo> models = new List<WebappModelInfo>
+        {
+            new("gemini-flash-lite-latest", "Fake Flash Lite", new[] { "generateContent" }),
+            new("gemini-2.5-flash", "Fake Flash", new[] { "generateContent" }),
+            new("gemini-3.1-flash-tts-preview", "Fake TTS", new[] { "generateContent", "tts" }),
+            new("gemini-3.1-flash-live-preview", "Fake Live", new[] { "bidiGenerateContent" }),
+        };
+        return Task.FromResult(models);
     }
 
     private static Task<AiCompletion> Single(AiToolCall call)

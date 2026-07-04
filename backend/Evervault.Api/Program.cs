@@ -3,6 +3,7 @@ using Evervault.Api.Data;
 using Evervault.Api.Services;
 using Evervault.Api.Services.Ai;
 using Evervault.Api.Services.Ai.Tools;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -54,13 +55,16 @@ static void ApiCookie(CookieAuthenticationOptions options, string cookieName, in
 builder.Services
     .AddAuthentication(AdminController.Scheme)
     .AddCookie(AdminController.Scheme, options => ApiCookie(options, "ev_admin", 7))
-    .AddCookie(AuthController.Scheme, options => ApiCookie(options, "ev_user", 30));
+    .AddCookie(AuthController.Scheme, options => ApiCookie(options, "ev_user", 30))
+    // Native-app end-user session: a stateless Data-Protection bearer token (no cookie, no JWT secret).
+    .AddScheme<AuthenticationSchemeOptions, UserBearerAuthenticationHandler>(AuthController.BearerScheme, _ => { });
 builder.Services.AddAuthorization();
 
 // --- App services ---
 builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddSingleton<UserTokenService>();
 
 // --- AI: keys, providers, failover, agent chat ---
 builder.Services.AddHttpClient();
@@ -71,6 +75,7 @@ builder.Services.AddSingleton<ProposalSigner>();
 builder.Services.AddScoped<IAiKeyService, AiKeyService>();
 builder.Services.AddScoped<KeyFailoverRunner>();
 builder.Services.AddScoped<AgentService>();
+builder.Services.AddScoped<LiveRelay>();
 
 // Agent tools (the only execution surface for the chat).
 builder.Services.AddScoped<IAiTool, ListMemoriesTool>();
@@ -151,10 +156,34 @@ if (app.Configuration["ASPNETCORE_HTTPS_PORTS"] is not null
 
 app.UseCors(DevCorsPolicy);
 
+// Realtime voice relay uses WebSockets (nginx already upgrades /api/* with long timeouts).
+app.UseWebSockets();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// --- Live voice call relay: app ⇄ backend ⇄ Gemini Live (system key injected server-side) ---
+// A GET that upgrades to a WebSocket. Auth is by ?access_token= (RN sockets can't set headers), validated
+// against the same Data-Protection session token as the bearer scheme. Under UsePathBase this serves
+// /api/chat/ai/live.
+app.MapGet("/chat/ai/live", async (HttpContext ctx, LiveRelay relay, UserTokenService tokens) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        return;
+    }
+    var principal = tokens.Validate(ctx.Request.Query["access_token"].ToString());
+    if (principal is null)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+    using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
+    await relay.RunAsync(socket, ctx.RequestAborted);
+});
 
 // Health checks -> /api/health and /api/health/db behind the proxy.
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));

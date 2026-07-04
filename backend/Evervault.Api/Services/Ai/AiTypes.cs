@@ -25,6 +25,11 @@ public record AiModelInfo(
     decimal? CompletionPricePerMTok,
     string? PriceLabel);
 
+/// <summary>A model entry for the end-user webapp/app model picker, carrying the raw
+/// supportedGenerationMethods so the client can bucket models into text (generateContent),
+/// TTS (tts), and live (bidiGenerateContent) — mirroring the browser's REST listing.</summary>
+public record WebappModelInfo(string Id, string DisplayName, IReadOnlyList<string> Methods);
+
 /// <summary>A tool the model may call, in provider-agnostic form. <see cref="ParametersJson"/> is a
 /// JSON-Schema string describing the arguments.</summary>
 public record AiToolSchema(string Name, string Description, string ParametersJson);
@@ -95,6 +100,33 @@ public interface IAiProvider
     Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
         string rawKey, string model, string text, string voiceName, CancellationToken ct)
         => throw new AiProviderException(AiErrorKind.Other, "This provider does not support TTS.");
+
+    // --- End-user webapp/app proxy primitives (keys stay server-side; the client sends provider-native
+    // request bodies so the mobile app can mirror the browser's @google/genai calls without a key). ---
+
+    /// <summary>Embed one text into a vector of the given dimensionality (for the end-user memory store).
+    /// The result is L2-normalized so it shares the browser-embedded vectors' space.</summary>
+    Task<float[]> EmbedAsync(string rawKey, string model, string text, int dimensions, CancellationToken ct)
+        => throw new AiProviderException(AiErrorKind.Other, "This provider does not support embeddings.");
+
+    /// <summary>One-shot generateContent from a provider-native request body (JSON). Returns the
+    /// concatenated text of the first candidate. Used for JSON extraction, transcription, and image
+    /// description — the multimodal one-shot calls the browser makes directly today.</summary>
+    Task<string> GenerateTextAsync(string rawKey, string model, string requestBodyJson, CancellationToken ct)
+        => throw new AiProviderException(AiErrorKind.Other, "This provider does not support generateContent.");
+
+    /// <summary>Streaming generateContent (SSE). After a SUCCESSFUL response status, invokes
+    /// <paramref name="onSse"/> with each raw byte chunk from the provider so the caller can relay it
+    /// verbatim. On an auth/quota/transient error status it throws BEFORE any chunk is emitted, so
+    /// <see cref="KeyFailoverRunner"/> can still advance to the next key without corrupting the stream.</summary>
+    Task StreamGenerateAsync(string rawKey, string model, string requestBodyJson,
+        Func<ReadOnlyMemory<byte>, CancellationToken, Task> onSse, CancellationToken ct)
+        => throw new AiProviderException(AiErrorKind.Other, "This provider does not support streaming.");
+
+    /// <summary>List models with their supportedGenerationMethods so the client can split them into
+    /// text / TTS / live buckets.</summary>
+    Task<IReadOnlyList<WebappModelInfo>> ListModelDetailsAsync(string rawKey, CancellationToken ct)
+        => throw new AiProviderException(AiErrorKind.Other, "This provider does not support model listing.");
 }
 
 public interface IAiProviderFactory

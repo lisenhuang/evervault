@@ -18,7 +18,7 @@ namespace Evervault.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("chat/memories")]
-[Authorize(AuthenticationSchemes = AuthController.Scheme)]
+[Authorize(AuthenticationSchemes = AuthController.UserAuth)]
 public class ChatMemoriesController : ControllerBase
 {
     private readonly AppDbContext _db;

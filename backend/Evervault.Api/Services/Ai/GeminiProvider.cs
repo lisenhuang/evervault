@@ -160,6 +160,111 @@ public class GeminiProvider : IAiProvider
         return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls);
     }
 
+    // --- End-user webapp/app proxy primitives. The client sends provider-native request bodies so the
+    // mobile app can mirror the browser's @google/genai calls; the key is injected here and never leaves
+    // the server. All of these run under KeyFailoverRunner, so they throw typed AiProviderException. ---
+
+    public async Task<float[]> EmbedAsync(string rawKey, string model, string text, int dimensions, CancellationToken ct)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["content"] = new { parts = new[] { new { text } } },
+        };
+        if (dimensions is 768 or 1536 or 3072) payload["outputDimensionality"] = dimensions;
+
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:embedContent", rawKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("embedding", out var emb) || !emb.TryGetProperty("values", out var values))
+            throw new AiProviderException(AiErrorKind.Transient, "Gemini returned no embedding.");
+
+        var vec = values.EnumerateArray().Select(v => (float)v.GetDouble()).ToArray();
+        // L2-normalize so app-embedded vectors share the browser-embedded vectors' space (cosine is
+        // scale-invariant, but keeping magnitudes uniform avoids surprises when the two clients mix).
+        double norm = Math.Sqrt(vec.Sum(x => (double)x * x));
+        if (norm > 1e-9) for (var i = 0; i < vec.Length; i++) vec[i] = (float)(vec[i] / norm);
+        return vec;
+    }
+
+    public async Task<string> GenerateTextAsync(string rawKey, string model, string requestBodyJson, CancellationToken ct)
+    {
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
+        req.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+
+        using var doc = JsonDocument.Parse(body);
+        var sb = new StringBuilder();
+        if (doc.RootElement.TryGetProperty("candidates", out var cands) && cands.GetArrayLength() > 0
+            && cands[0].TryGetProperty("content", out var content)
+            && content.TryGetProperty("parts", out var parts))
+        {
+            foreach (var p in parts.EnumerateArray())
+                if (p.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String) sb.Append(t.GetString());
+        }
+        return sb.ToString();
+    }
+
+    public async Task StreamGenerateAsync(string rawKey, string model, string requestBodyJson,
+        Func<ReadOnlyMemory<byte>, CancellationToken, Task> onSse, CancellationToken ct)
+    {
+        var client = _http.CreateClient();
+        client.Timeout = Timeout.InfiniteTimeSpan; // the stream itself governs duration
+        var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:streamGenerateContent?alt=sse", rawKey);
+        req.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
+
+        // ResponseHeadersRead: inspect the status BEFORE relaying, so a bad-key/quota error still fails
+        // over to the next key without a single byte reaching the client.
+        var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        try
+        {
+            if (!res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadAsStringAsync(ct);
+                throw MapError(res.StatusCode, body);
+            }
+            await using var stream = await res.Content.ReadAsStreamAsync(ct);
+            var buffer = new byte[8192];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+                await onSse(buffer.AsMemory(0, read), ct);
+        }
+        finally
+        {
+            res.Dispose();
+        }
+    }
+
+    public async Task<IReadOnlyList<WebappModelInfo>> ListModelDetailsAsync(string rawKey, CancellationToken ct)
+    {
+        var client = _http.CreateClient();
+        using var res = await client.SendAsync(Req(HttpMethod.Get, "/v1beta/models?pageSize=1000", rawKey), ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+
+        using var doc = JsonDocument.Parse(body);
+        var list = new List<WebappModelInfo>();
+        if (!doc.RootElement.TryGetProperty("models", out var models)) return list;
+        foreach (var m in models.EnumerateArray())
+        {
+            var name = m.GetProperty("name").GetString() ?? "";
+            var id = name.StartsWith("models/", StringComparison.Ordinal) ? name["models/".Length..] : name;
+            var display = m.TryGetProperty("displayName", out var d) ? (d.GetString() ?? id) : id;
+            var methods = m.TryGetProperty("supportedGenerationMethods", out var mm) && mm.ValueKind == JsonValueKind.Array
+                ? mm.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray()
+                : Array.Empty<string>();
+            list.Add(new WebappModelInfo(id, display, methods));
+        }
+        return list;
+    }
+
     public async Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
         string rawKey, string model, string text, string voiceName, CancellationToken ct)
     {

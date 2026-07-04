@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Evervault.Api.Data;
 using Evervault.Api.Models;
 using Google.Apis.Auth;
@@ -15,11 +16,13 @@ public class GoogleAuthService : IGoogleAuthService
 {
     private readonly AppDbContext _db;
     private readonly IDataProtector _protector;
+    private readonly IHttpClientFactory _http;
 
-    public GoogleAuthService(AppDbContext db, IDataProtectionProvider dp)
+    public GoogleAuthService(AppDbContext db, IDataProtectionProvider dp, IHttpClientFactory http)
     {
         _db = db;
         _protector = dp.CreateProtector("Evervault.GoogleAuthSecret");
+        _http = http;
     }
 
     public async Task<GoogleAuthConfigDto?> GetAsync()
@@ -75,5 +78,42 @@ public class GoogleAuthService : IGoogleAuthService
         {
             return null;
         }
+    }
+
+    public async Task<GoogleJsonWebSignature.Payload?> ExchangeCodeAsync(string code, string redirectUri, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return null;
+
+        var c = await _db.GoogleAuthConfigs.AsNoTracking().FirstOrDefaultAsync(ct);
+        if (c is null || !c.Enabled || string.IsNullOrWhiteSpace(c.ClientId) || string.IsNullOrEmpty(c.ClientSecretEncrypted))
+            return null;
+
+        string clientSecret;
+        try { clientSecret = _protector.Unprotect(c.ClientSecretEncrypted); }
+        catch { return null; }
+
+        var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["code"] = code,
+            ["client_id"] = c.ClientId,
+            ["client_secret"] = clientSecret,
+            ["redirect_uri"] = redirectUri,
+            ["grant_type"] = "authorization_code",
+        });
+
+        var client = _http.CreateClient();
+        using var res = await client.PostAsync("https://oauth2.googleapis.com/token", form, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) return null;
+
+        string? idToken;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            idToken = doc.RootElement.TryGetProperty("id_token", out var t) ? t.GetString() : null;
+        }
+        catch { return null; }
+
+        return string.IsNullOrWhiteSpace(idToken) ? null : await VerifyIdTokenAsync(idToken);
     }
 }

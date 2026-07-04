@@ -15,7 +15,7 @@ namespace Evervault.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("chat/profile")]
-[Authorize(AuthenticationSchemes = AuthController.Scheme)]
+[Authorize(AuthenticationSchemes = AuthController.UserAuth)]
 public class UserProfileController : ControllerBase
 {
     private readonly AppDbContext _db;

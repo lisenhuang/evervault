@@ -27,4 +27,10 @@ public interface IGoogleAuthService
 
     /// <summary>Validate a Google ID token against the configured client id. Null if disabled or invalid.</summary>
     Task<GoogleJsonWebSignature.Payload?> VerifyIdTokenAsync(string idToken);
+
+    /// <summary>Server-side OAuth authorization-code exchange for the native app's in-app-browser login:
+    /// swaps the <paramref name="code"/> (with the stored, decrypted client secret) for tokens, then
+    /// verifies the returned id_token. Returns the verified payload, or null if login is disabled or the
+    /// exchange/verification fails. <paramref name="redirectUri"/> must match the one used to start the flow.</summary>
+    Task<GoogleJsonWebSignature.Payload?> ExchangeCodeAsync(string code, string redirectUri, CancellationToken ct);
 }

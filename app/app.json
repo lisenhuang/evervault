@@ -1,20 +1,34 @@
 {
   "expo": {
-    "name": "app",
-    "slug": "app",
+    "name": "EverVault",
+    "slug": "evervault",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "app",
+    "scheme": "evervault",
     "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.evervault.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
     "android": {
+      "package": "com.evervault.app",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "web": {
       "output": "static",
@@ -25,17 +39,36 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FFFFFF",
-          "android": {
-            "image": "./assets/images/splash-icon.png",
-            "imageWidth": 76
+          "image": "./assets/images/logo-glow.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0F",
+          "dark": {
+            "image": "./assets/images/logo-glow.png",
+            "backgroundColor": "#0A0A0F"
           }
         }
-      ]
+      ],
+      "expo-web-browser",
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "EverVault uses the microphone for voice messages and live voice calls."
+        }
+      ],
+      "expo-image-picker",
+      "react-native-audio-api"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e6684c17-7339-437e-943e-d8b5612a9613"
+      }
     }
   }
 }
