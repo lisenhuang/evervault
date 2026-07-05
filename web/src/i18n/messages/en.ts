@@ -106,6 +106,7 @@ const en = {
     recording: "Recording… tap the stop button when you're done.",
     listening: "Listening…",
     placeholder: "Message EverVault…",
+    placeholderShort: "Type here…",
     callInProgress: "Call in progress",
     startCall: "Start a live voice call",
     stopRecording: "Stop recording",

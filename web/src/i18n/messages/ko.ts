@@ -106,6 +106,7 @@ const ko: Messages = {
     recording: "녹음 중… 끝나면 정지 버튼을 누르세요.",
     listening: "듣는 중…",
     placeholder: "EverVault에게 메시지 보내기…",
+    placeholderShort: "여기에 입력…",
     callInProgress: "통화 중",
     startCall: "실시간 음성 통화 시작",
     stopRecording: "녹음 정지",
