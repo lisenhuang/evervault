@@ -1,10 +1,11 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Mic, PhoneOff, Sparkles, Volume2 } from "lucide-react";
+import { FileText, Mic, PhoneOff, Reply, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage } from "./types";
+import MessageMenu from "./MessageMenu";
+import type { ChatMessage, ReplyRef } from "./types";
 import { formatDuration } from "./lib/time";
 import { formatSize } from "./lib/files";
 import { useT } from "@/i18n/LanguageProvider";
@@ -32,17 +33,31 @@ const md: Components = {
   },
 };
 
+// How long the jumped-to original message stays tinted after tapping a quote.
+const FLASH_MS = 1500;
+
+// Extra classes shared by every message row: `group` drives the hover reply button, the
+// horizontal bleed (-mx/px) lets the flash tint breathe past the bubbles without touching the
+// vertical rhythm (space-y on the list would lose to a vertical margin set here).
+const rowFlashCls = (flashing: boolean) =>
+  `group -mx-2 rounded-2xl px-2 transition-colors duration-500 ${
+    flashing ? "bg-blue-500/10 dark:bg-blue-400/15" : ""
+  }`;
+
 export default function MessageList({
   messages,
   userName,
   userPicture,
   onPlayAudio,
+  onReply,
   scrollSignal,
 }: {
   messages: ChatMessage[];
   userName: string;
   userPicture: string | null;
   onPlayAudio: (m: ChatMessage) => void;
+  /** Start composing a reply that quotes this message. */
+  onReply: (m: ChatMessage) => void;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
   // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
   scrollSignal?: unknown;
@@ -59,6 +74,25 @@ export default function MessageList({
   // scroll per word would lag behind the reveal.
   const followReveal = useCallback(() => scrollToEnd("auto"), [scrollToEnd]);
 
+  // Context menu for one message, opened by right-click (desktop) or long-press (touch).
+  const [menu, setMenu] = useState<{ m: ChatMessage; x: number; y: number } | null>(null);
+  const openMenu = useCallback((m: ChatMessage, x: number, y: number) => setMenu({ m, x, y }), []);
+
+  // Tapping a quote scrolls to the original message and briefly tints it.
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jumpTo = useCallback((id: string) => {
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashId(id);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), FLASH_MS);
+  }, []);
+  useEffect(() => () => {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+  }, []);
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
       {messages.map((m) =>
@@ -73,8 +107,17 @@ export default function MessageList({
             </span>
           </div>
         ) : m.role === "user" ? (
-          <div key={m.id} className="flex items-start justify-end gap-3">
-            <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm">
+          <div
+            key={m.id}
+            id={`msg-${m.id}`}
+            className={`flex items-start justify-end gap-3 ${rowFlashCls(flashId === m.id)}`}
+          >
+            <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />
+            <Pressable
+              onOpen={(x, y) => openMenu(m, x, y)}
+              className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none"
+            >
+              {m.replyTo && <QuotedReply r={m.replyTo} onJump={jumpTo} />}
               {m.files && m.files.length > 0 && (
                 <div className={`flex flex-col gap-1.5 ${m.text ? "mb-2" : ""}`}>
                   {m.files.map((f) =>
@@ -112,14 +155,34 @@ export default function MessageList({
               ) : (
                 <span className="whitespace-pre-wrap">{m.text}</span>
               )}
-            </div>
+            </Pressable>
             <Avatar name={userName} picture={userPicture} />
           </div>
         ) : (
-          <AssistantMessage key={m.id} m={m} onPlayAudio={onPlayAudio} onReveal={followReveal} />
+          <AssistantMessage
+            key={m.id}
+            m={m}
+            flashing={flashId === m.id}
+            onPlayAudio={onPlayAudio}
+            onReveal={followReveal}
+            onOpenMenu={openMenu}
+            onReply={onReply}
+          />
         ),
       )}
       <div ref={endRef} />
+      {menu && (
+        <MessageMenu
+          message={menu.m}
+          x={menu.x}
+          y={menu.y}
+          onReply={() => {
+            setMenu(null);
+            onReply(menu.m);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -136,15 +199,22 @@ const TYPING_DELAY_MS = 2000;
 // errors render in full immediately.
 function AssistantMessage({
   m,
+  flashing,
   onPlayAudio,
   onReveal,
+  onOpenMenu,
+  onReply,
 }: {
   m: ChatMessage;
+  flashing: boolean;
   onPlayAudio: (m: ChatMessage) => void;
   onReveal: () => void;
+  onOpenMenu: (m: ChatMessage, x: number, y: number) => void;
+  onReply: (m: ChatMessage) => void;
 }) {
   const t = useT();
-  const mountedStreaming = useRef(!!m.streaming).current;
+  // Whether this reply mounted mid-stream, captured once at mount — history never animates.
+  const [mountedStreaming] = useState(!!m.streaming);
   const text = useWordReveal(m.text, mountedStreaming && !m.error);
   const [typingDots, setTypingDots] = useState(false);
   useEffect(() => {
@@ -161,21 +231,25 @@ function AssistantMessage({
     return (
       <div className="flex items-start gap-3">
         <AiAvatar />
-        <Bubble>
+        <div className={BUBBLE_CLS}>
           <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
             <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
             <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
             <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
           </span>
-        </Bubble>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex items-start gap-3">
+    <div id={`msg-${m.id}`} className={`flex items-start gap-3 ${rowFlashCls(flashing)}`}>
       <AiAvatar />
-      <Bubble>
+      <Pressable
+        disabled={!!m.streaming}
+        onOpen={(x, y) => onOpenMenu(m, x, y)}
+        className={`${BUBBLE_CLS} [-webkit-touch-callout:none] [@media(hover:none)]:select-none`}
+      >
         <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
             {text}
@@ -189,7 +263,8 @@ function AssistantMessage({
             <Volume2 size={13} /> {t.message.playReply}
           </button>
         )}
-      </Bubble>
+      </Pressable>
+      {!m.streaming && <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />}
     </div>
   );
 }
@@ -217,6 +292,110 @@ function useWordReveal(text: string, enabled: boolean): string {
   return tokens.slice(0, Math.min(shown, tokens.length)).join("");
 }
 
+// Long-press timing for the touch path (iOS never fires `contextmenu`; Android does, but the two
+// paths converge on the same open call). Small drags within the tolerance still count as a press.
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+
+/**
+ * Makes its children open the message menu: right-click / two-finger-tap via `contextmenu`
+ * (default menu suppressed), and long-press via a touch timer for browsers that don't map
+ * long-press to `contextmenu` (iOS Safari). Callers should pair this with
+ * `[@media(hover:none)]:select-none` so long-press doesn't fight text selection on touch.
+ */
+function Pressable({
+  onOpen,
+  disabled,
+  className,
+  children,
+}: {
+  onOpen: (x: number, y: number) => void;
+  disabled?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const start = useRef({ x: 0, y: 0 });
+  const clear = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  }, []);
+  useEffect(() => clear, [clear]);
+
+  return (
+    <div
+      className={className}
+      onContextMenu={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        onOpen(e.clientX, e.clientY);
+      }}
+      onTouchStart={(e) => {
+        if (disabled || e.touches.length !== 1) {
+          clear();
+          return;
+        }
+        const touch = e.touches[0];
+        start.current = { x: touch.clientX, y: touch.clientY };
+        clear();
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          navigator.vibrate?.(10);
+          onOpen(start.current.x, start.current.y);
+        }, LONG_PRESS_MS);
+      }}
+      onTouchMove={(e) => {
+        const touch = e.touches[0];
+        if (
+          touch &&
+          Math.hypot(touch.clientX - start.current.x, touch.clientY - start.current.y) >
+            LONG_PRESS_MOVE_TOLERANCE_PX
+        ) {
+          clear();
+        }
+      }}
+      onTouchEnd={clear}
+      onTouchCancel={clear}
+    >
+      {children}
+    </div>
+  );
+}
+
+// The quote block atop a user message sent as a reply — tap to jump back to the original.
+function QuotedReply({ r, onJump }: { r: ReplyRef; onJump: (id: string) => void }) {
+  const t = useT();
+  return (
+    <button
+      onClick={() => onJump(r.id)}
+      title={t.message.jumpToMessage}
+      className="mb-2 block w-full rounded-lg border-l-2 border-white/70 bg-white/15 px-2.5 py-1.5 text-left transition hover:bg-white/25"
+    >
+      <span className="block text-[11px] font-semibold text-white/95">
+        {r.role === "user" ? t.message.you : t.message.assistantName}
+      </span>
+      <span className="line-clamp-2 block text-xs text-white/80">{r.text || t.message.voiceMessage}</span>
+    </button>
+  );
+}
+
+// Quick reply affordance beside a bubble — hover-only, so it exists just on pointer devices
+// (touch users long-press instead). Also reachable by keyboard via focus-visible.
+function HoverReplyButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="hidden h-7 w-7 shrink-0 items-center justify-center self-center rounded-full text-black/40 opacity-0 transition group-hover:opacity-100 hover:bg-black/5 hover:text-black/70 focus-visible:opacity-100 dark:text-white/40 dark:hover:bg-white/10 dark:hover:text-white/70 [@media(hover:hover)]:flex"
+    >
+      <Reply size={15} aria-hidden="true" />
+    </button>
+  );
+}
+
 function Avatar({ name, picture }: { name: string; picture: string | null }) {
   return picture ? (
     // eslint-disable-next-line @next/next/no-img-element
@@ -236,10 +415,5 @@ function AiAvatar() {
   );
 }
 
-function Bubble({ children }: { children: ReactNode }) {
-  return (
-    <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900">
-      {children}
-    </div>
-  );
-}
+const BUBBLE_CLS =
+  "max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900";

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileText, FileUp, FolderOpen, Images, Loader2, Mic, Paperclip, Phone, Send, Square, X } from "lucide-react";
+import { FileText, FileUp, FolderOpen, Images, Loader2, Mic, Paperclip, Phone, Reply, Send, Square, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import { FILE_ACCEPT, FileError, formatSize, IMAGE_ACCEPT, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
+import type { ChatMessage } from "./types";
 
 export type VoiceState = "idle" | "recording" | "processing";
 
@@ -17,6 +18,8 @@ export default function Composer({
   hasKey,
   inCall,
   onNeedKey,
+  replyTo,
+  onCancelReply,
 }: {
   onSendText: (text: string, files?: PreparedFile[]) => void;
   onStartVoice: () => void;
@@ -27,6 +30,9 @@ export default function Composer({
   hasKey: boolean;
   inCall: boolean;
   onNeedKey: () => void;
+  /** The message the next send will quote (from the message menu's "Reply"). */
+  replyTo: ChatMessage | null;
+  onCancelReply: () => void;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -66,6 +72,11 @@ export default function Composer({
     const ua = navigator.userAgent;
     setIsIOS(/iPad|iPhone|iPod/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1));
   }, []);
+
+  // Picking "Reply" moves the user straight into typing the reply.
+  useEffect(() => {
+    if (replyTo) taRef.current?.focus();
+  }, [replyTo]);
 
   function setFilesSync(next: PreparedFile[]) {
     filesRef.current = next;
@@ -250,6 +261,27 @@ export default function Composer({
         {attachError && (
           <div className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">{attachError}</div>
         )}
+        {replyTo && (
+          <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-black/10 bg-black/4 py-2 pr-1.5 pl-3 dark:border-white/10 dark:bg-white/6">
+            <Reply size={16} className="shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+            <div className="min-w-0 flex-1 border-l-2 border-blue-600/60 pl-2.5 dark:border-blue-400/60">
+              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                {t.message.replyingTo(replyTo.role === "user" ? t.message.you : t.message.assistantName)}
+              </div>
+              <div className="truncate text-xs text-black/60 dark:text-white/60">
+                {replyTo.text || t.message.voiceMessage}
+              </div>
+            </div>
+            <button
+              onClick={onCancelReply}
+              title={t.message.cancelReply}
+              aria-label={t.message.cancelReply}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-black/45 transition hover:bg-black/5 hover:text-black/70 dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white/70"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
         {(files.length > 0 || busy) && (
           <div className="mb-2 flex flex-wrap items-start gap-2">
             {files.map((f) =>
@@ -377,6 +409,8 @@ export default function Composer({
                 if (e.key === "Enter" && !e.shiftKey && !isTouch) {
                   e.preventDefault();
                   send();
+                } else if (e.key === "Escape" && replyTo) {
+                  onCancelReply();
                 }
               }}
               className="max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none md:text-sm disabled:opacity-50"

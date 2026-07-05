@@ -21,7 +21,7 @@ import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, ReplyRef } from "./types";
 import { useLang } from "@/i18n/LanguageProvider";
 import { aiReplyDirective } from "@/i18n/config";
 
@@ -36,6 +36,17 @@ function fileToPart(f: PreparedFile) {
   return { inlineData: { mimeType: f.mimeType, data: f.base64 ?? "" } };
 }
 
+// Cap for the quoted snippet woven into the model prompt — enough to identify the message
+// without replaying a whole essay twice in the context.
+const REPLY_SNIPPET_MAX = 300;
+
+/** Plain-text marker telling the model which earlier message this one replies to. */
+function replyContext(r: ReplyRef): string {
+  const who = r.role === "assistant" ? "your (the assistant's) earlier message" : "the user's own earlier message";
+  const snippet = (r.text || "(voice message)").slice(0, REPLY_SNIPPET_MAX);
+  return `[This message is a direct reply to ${who}: "${snippet}"]`;
+}
+
 function toContents(msgs: ChatMessage[]): Content[] {
   return msgs
     .filter((m) => (m.text || m.files?.length) && !m.error)
@@ -43,6 +54,8 @@ function toContents(msgs: ChatMessage[]): Content[] {
       role: m.role === "assistant" ? "model" : "user",
       // Replay attached files inline so follow-up questions about a picture/document keep working.
       parts: [
+        // The quoted-message marker precedes the text so the model reads the reply in context.
+        ...(m.replyTo ? [{ text: replyContext(m.replyTo) }] : []),
         ...(m.files ?? []).map(fileToPart),
         ...(m.text ? [{ text: m.text }] : []),
       ],
@@ -71,6 +84,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [deleteAccountError, setDeleteAccountError] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  // Message the next send will quote — set from a bubble's context menu (right-click / long-press).
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const recorderRef = useRef<Recorder | null>(null);
   // Only one spoken reply plays at a time — starting another (auto-play or a manual "Play reply"
   // click) stops whatever is currently playing first.
@@ -307,12 +322,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       return;
     }
     const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
+    // Snapshot the quoted message (bounded — the quote renders two lines and the model sees a
+    // capped snippet) and clear the composer's reply bar right away.
+    const replyRef: ReplyRef | null = replyTo
+      ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
+      : null;
+    setReplyTo(null);
     const userMsg: ChatMessage = {
       id: uid(),
       role: "user",
       text,
       kind: images.length ? "image" : "text",
       ...(files?.length ? { files } : {}),
+      ...(replyRef ? { replyTo: replyRef } : {}),
     };
     const asstId = uid();
     const base = [...messages, userMsg];
@@ -335,7 +357,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               return desc ? `[Image] ${desc}` : "[Image]";
             }),
           );
-          const userContent = [text.trim(), ...lines].filter(Boolean).join("\n") || "(attachment)";
+          const userContent =
+            [replyRef ? replyContext(replyRef) : "", text.trim(), ...lines].filter(Boolean).join("\n") ||
+            "(attachment)";
           void recordTextTurns(
             [
               { role: "user", text: userContent, modality: images.length ? "image" : "text" },
@@ -346,7 +370,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         })();
       } else {
         void recordTextTurns([
-          { role: "user", text, modality: "text" },
+          // Keep the quote in the recorded turn so recalled replies still read in context.
+          { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${text}` : text, modality: "text" },
           { role: "assistant", text: reply, modality: "text" },
         ]);
       }
@@ -592,6 +617,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
           void runExtraction(2); // distil the conversation we're leaving before clearing it
           setMessages([]);
+          setReplyTo(null); // a quote from the old chat has nothing to point at anymore
           conversationIdRef.current = uid();
           extractCursorRef.current = 0;
         }}
@@ -647,6 +673,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               userName={user.name}
               userPicture={user.picture}
               onPlayAudio={playAudio}
+              onReply={setReplyTo}
               scrollSignal={!!callState}
             />
           )}
@@ -678,6 +705,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           hasKey={!!apiKey}
           inCall={!!callState}
           onNeedKey={() => setDrawerOpen(true)}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
         />
       </div>
 
