@@ -107,6 +107,7 @@ const zh: Messages = {
     recording: "正在录音…完成后点击停止按钮。",
     listening: "聆听中…",
     placeholder: "给 EverVault 发消息…",
+    placeholderShort: "输入内容…",
     callInProgress: "通话进行中",
     startCall: "发起实时语音通话",
     stopRecording: "停止录音",

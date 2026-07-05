@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
+import { ChevronUp, Languages, LogOut, MessageCircle, Settings2, SquarePen, SunMoon, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import LanguageMenu from "@/i18n/LanguageMenu";
 import { useT } from "@/i18n/LanguageProvider";
@@ -95,12 +95,18 @@ export default function Sidebar({
       <div className="flex-1" />
 
       <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
-        <span className="text-sm font-medium text-black/70 dark:text-white/70">{t.sidebar.language}</span>
+        <span className="flex items-center gap-3 text-sm font-medium text-black/70 dark:text-white/70">
+          <Languages size={18} className="shrink-0" aria-hidden="true" />
+          {t.sidebar.language}
+        </span>
         <LanguageMenu variant="row" />
       </div>
 
       <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
-        <span className="text-sm font-medium text-black/70 dark:text-white/70">{t.sidebar.theme}</span>
+        <span className="flex items-center gap-3 text-sm font-medium text-black/70 dark:text-white/70">
+          <SunMoon size={18} className="shrink-0" aria-hidden="true" />
+          {t.sidebar.theme}
+        </span>
         <ThemeToggle />
       </div>
 

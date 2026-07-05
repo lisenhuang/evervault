@@ -47,6 +47,8 @@ export default function Composer({
   // messaging app; the send button is used to send. On desktop, Enter sends.
   const [isTouch, setIsTouch] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  // Phone-width screens get a short input placeholder — the full one gets clipped.
+  const [isNarrow, setIsNarrow] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -62,6 +64,15 @@ export default function Composer({
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
     const update = () => setIsTouch(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsNarrow(mq.matches);
     update();
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
@@ -387,7 +398,9 @@ export default function Composer({
               value={text}
               rows={1}
               disabled={disabled || recording}
-              placeholder={recording ? t.composer.listening : t.composer.placeholder}
+              placeholder={
+                recording ? t.composer.listening : isNarrow ? t.composer.placeholderShort : t.composer.placeholder
+              }
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               onChange={(e) => {

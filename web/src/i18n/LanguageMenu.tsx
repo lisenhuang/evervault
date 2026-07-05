@@ -19,10 +19,14 @@ import { LANGS, LANG_LABELS, LANG_SHORT, type Lang } from "./config";
  * uses a CSS transform, which would otherwise make a `position: fixed` popover resolve against the
  * drawer instead of the viewport.
  */
+/** Cap on the open list's height — matches the old `max-h-64` (256px). */
+const MENU_MAX_H = 256;
+
 export default function LanguageMenu({ variant = "button" }: { variant?: "button" | "row" }) {
   const { lang, setLang, t } = useLang();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
+  const [openUp, setOpenUp] = useState(false);
   const [active, setActive] = useState(0);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -59,7 +63,14 @@ export default function LanguageMenu({ variant = "button" }: { variant?: "button
   }, [open, active, listId]);
 
   function openList() {
-    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      setRect(r);
+      // Flip the list above the trigger when it would be clipped below (the Sidebar settings row
+      // sits near the bottom of the screen on phones) and there's more room above.
+      const spaceBelow = window.innerHeight - r.bottom - 8;
+      setOpenUp(spaceBelow < MENU_MAX_H && r.top - 8 > spaceBelow);
+    }
     setActive(Math.max(0, LANGS.indexOf(lang)));
     setOpen(true);
   }
@@ -148,11 +159,14 @@ export default function LanguageMenu({ variant = "button" }: { variant?: "button
             aria-label={t.language.label}
             style={{
               position: "fixed",
-              top: rect.bottom + 4,
+              ...(openUp
+                ? { bottom: window.innerHeight - rect.top + 4 }
+                : { top: rect.bottom + 4 }),
               right: window.innerWidth - rect.right,
               minWidth: Math.max(rect.width, 140),
+              maxHeight: Math.min(MENU_MAX_H, (openUp ? rect.top : window.innerHeight - rect.bottom) - 8),
             }}
-            className="z-60 max-h-64 overflow-y-auto rounded-lg border border-black/10 bg-white py-1 shadow-xl dark:border-white/10 dark:bg-neutral-900"
+            className="z-60 overflow-y-auto rounded-lg border border-black/10 bg-white py-1 shadow-xl dark:border-white/10 dark:bg-neutral-900"
           >
             {LANGS.map((l, i) => {
               const isSel = l === lang;

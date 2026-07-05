@@ -106,6 +106,7 @@ const ja: Messages = {
     recording: "録音中… 終わったら停止ボタンをタップしてください。",
     listening: "聞いています…",
     placeholder: "EverVaultにメッセージ…",
+    placeholderShort: "ここに入力…",
     callInProgress: "通話中",
     startCall: "ライブ音声通話を開始",
     stopRecording: "録音を停止",
