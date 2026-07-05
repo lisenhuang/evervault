@@ -1,5 +1,13 @@
 import type { PreparedFile } from "./lib/files";
 
+/** Snapshot of the message a reply quotes — enough to render the quote and locate the original. */
+export type ReplyRef = {
+  id: string;
+  role: "user" | "assistant";
+  /** Original text at reply time (may be empty for a voice message with no transcript). */
+  text: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -16,6 +24,8 @@ export type ChatMessage = {
   audio?: { base64: string; sampleRate: number } | null;
   /** Attached files (images, PDFs, extracted documents) for user messages. */
   files?: PreparedFile[] | null;
+  /** The earlier message this one replies to (set on user messages sent via "Reply"). */
+  replyTo?: ReplyRef | null;
   /** True while the assistant message is still streaming in. */
   streaming?: boolean;
   error?: boolean;

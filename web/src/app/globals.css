@@ -37,6 +37,45 @@
   }
 }
 
+/* Message context-menu entrances: popover scale-in (desktop), sheet slide-up (mobile),
+   backdrop fade. */
+@theme {
+  --animate-menu-in: menu-in 0.12s ease-out;
+
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  --animate-sheet-up: sheet-up 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  --animate-fade-in: fade-in 0.15s ease-out;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
