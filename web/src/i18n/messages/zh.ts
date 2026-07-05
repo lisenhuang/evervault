@@ -258,6 +258,8 @@ const zh: Messages = {
     label: "语言",
     en: "English",
     zh: "中文",
+    ko: "한국어",
+    ja: "日本語",
   },
 };
 

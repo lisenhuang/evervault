@@ -1,11 +1,13 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { htmlLang, type Lang, LANG_COOKIE } from "./config";
+import { htmlLang, type Lang, LANG_COOKIE, LANGS } from "./config";
 import en, { type Messages } from "./messages/en";
 import zh from "./messages/zh";
+import ko from "./messages/ko";
+import ja from "./messages/ja";
 
-const DICTS: Record<Lang, Messages> = { en, zh };
+const DICTS: Record<Lang, Messages> = { en, zh, ko, ja };
 
 type LanguageContextValue = {
   /** Active display language. */
@@ -37,7 +39,10 @@ export function LanguageProvider({ initialLang, children }: { initialLang: Lang;
     setLangState(next);
     persist(next);
   }, []);
-  const toggle = useCallback(() => setLang(lang === "zh" ? "en" : "zh"), [lang, setLang]);
+  const toggle = useCallback(
+    () => setLang(LANGS[(LANGS.indexOf(lang) + 1) % LANGS.length]),
+    [lang, setLang],
+  );
 
   const value = useMemo<LanguageContextValue>(
     () => ({ lang, setLang, toggle, t: DICTS[lang] }),

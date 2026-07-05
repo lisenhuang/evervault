@@ -1,5 +1,5 @@
-// English message catalog. This is the CANONICAL shape: `Messages = typeof en`, and zh.ts must
-// satisfy it, so a missing/renamed key fails the type-check. Components read these via useT()
+// English message catalog. This is the CANONICAL shape: `Messages = typeof en`, and every other
+// catalog (zh.ts, ko.ts, ja.ts) must satisfy it, so a missing/renamed key fails the type-check. Components read these via useT()
 // (e.g. `t.sidebar.newChat`) — fully typed, no runtime string-key parsing. Brand name "EverVault"
 // is intentionally never translated. Strings that interpolate are functions.
 
@@ -258,6 +258,8 @@ const en = {
     label: "Language",
     en: "English",
     zh: "中文",
+    ko: "한국어",
+    ja: "日本語",
   },
 };
 
