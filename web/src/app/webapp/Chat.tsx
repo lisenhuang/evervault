@@ -466,7 +466,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (ref.current) return cur.map((m) => (m.id === ref.current ? { ...m, text: m.text + delta } : m));
       const id = uid();
       ref.current = id;
-      return [...cur, { id, role, text: delta }];
+      const msg: ChatMessage = { id, role, text: delta };
+      // The Live API can deliver the user's input transcription after the model's reply has
+      // already started streaming. Keep chat order = speaking order: this turn's user bubble
+      // always sits above the assistant bubble that answers it.
+      if (role === "user" && liveAsstIdRef.current) {
+        const i = cur.findIndex((m) => m.id === liveAsstIdRef.current);
+        if (i !== -1) return [...cur.slice(0, i), msg, ...cur.slice(i)];
+      }
+      return [...cur, msg];
     });
   }
 
