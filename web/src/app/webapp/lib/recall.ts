@@ -13,8 +13,8 @@ type Turn = { role: "user" | "assistant"; text: string };
 const SUMMARY_BONUS = 0.05; // summaries are higher-signal than raw turns → nudge them up
 const RECENCY_BONUS_MAX = 0.05; // most recent memories get a small lift
 const RECENCY_HALFLIFE_DAYS = 30;
-const ABS_CUTOFF = 0.5; // never inject a hit whose RAW cosine distance is worse than this (≈0.5 similarity)
-const REL_CUTOFF = 0.15; // …or much worse than the best hit
+const ABS_CUTOFF = 0.6; // never inject a hit whose RAW cosine distance is worse than this (≈0.4 similarity)
+const REL_CUTOFF = 0.2; // …or much worse than the best hit
 const JACCARD_DUP = 0.6; // skip a hit too similar to one already kept
 const MAX_HITS = 5;
 

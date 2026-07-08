@@ -2,11 +2,31 @@
 // can answer "what time is it" and resolve relative dates ("tomorrow", "last week"). Recalled memories
 // are dated too, so the model also knows *when* past things were said.
 
-/** One-line statement of the user's current local date/time + timezone, for the system instruction. */
+/** Local ISO 8601 timestamp *with* numeric offset, e.g. "2026-07-08T06:50:00+12:00". Unlike
+ * `Date#toISOString()` (always UTC "Z"), this keeps the user's wall-clock time and offset so the model
+ * can compute correct date ranges ("yesterday 00:00") for memory recall without guessing the offset. */
+function localIso(now: Date): string {
+  const offMin = -now.getTimezoneOffset(); // getTimezoneOffset is inverted (UTC−local)
+  const sign = offMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offMin);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return (
+    `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
+    `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+  );
+}
+
+/** One-line statement of the user's current local date/time + timezone, for the system instruction.
+ * Includes a machine-readable ISO 8601 timestamp (with offset) so the model can accurately derive
+ * date ranges for date-scoped memory recall ("yesterday", "last week") instead of guessing the offset
+ * from the timezone name alone. */
 export function currentTimeContext(): string {
   const now = new Date();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return `The current date and time is ${now.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" })} (${tz}).`;
+  const human = now.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" });
+  return `The current date and time is ${human} (${tz}). In ISO 8601: ${localIso(now)}.`;
 }
 
 /** Short date label for a recalled memory, e.g. "Jun 15, 2026". */
