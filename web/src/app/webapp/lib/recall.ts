@@ -13,8 +13,8 @@ type Turn = { role: "user" | "assistant"; text: string };
 const SUMMARY_BONUS = 0.05; // summaries are higher-signal than raw turns → nudge them up
 const RECENCY_BONUS_MAX = 0.05; // most recent memories get a small lift
 const RECENCY_HALFLIFE_DAYS = 30;
-const ABS_CUTOFF = 0.7; // never inject a hit whose adjusted distance is worse than this
-const REL_CUTOFF = 0.25; // …or much worse than the best hit
+const ABS_CUTOFF = 0.5; // never inject a hit whose RAW cosine distance is worse than this (≈0.5 similarity)
+const REL_CUTOFF = 0.15; // …or much worse than the best hit
 const JACCARD_DUP = 0.6; // skip a hit too similar to one already kept
 const MAX_HITS = 5;
 
@@ -80,7 +80,10 @@ export async function retrieveContext(opts: {
   for (const h of ranked) {
     if (kept.length >= MAX_HITS) break;
     const s = score(h, opts.nowMs);
-    if (s > ABS_CUTOFF || s > best + REL_CUTOFF) break; // ranked ascending → the rest are worse
+    if (s > best + REL_CUTOFF) break; // ranked ascending by adjusted score → the rest are worse
+    // Absolute relevance is judged on the RAW cosine distance, so the summary/recency bonuses can lift
+    // ranking but never smuggle a weak match past the gate. Text-fallback hits have no distance → 0.5.
+    if ((h.distance ?? 0.5) > ABS_CUTOFF) continue;
     const hw = words(h.content);
     if (keptWords.some((kw) => jaccard(hw, kw) > JACCARD_DUP)) continue; // near-duplicate of a kept hit
     if (profileWords && jaccard(hw, profileWords) > JACCARD_DUP) continue; // already in the profile block
@@ -90,12 +93,21 @@ export async function retrieveContext(opts: {
   if (kept.length === 0) return null;
 
   const text =
-    "Context — relevant things from earlier conversations with this user (use only if relevant, don't " +
-    "mention this note):\n" +
-    kept
-      .map((h) => `- (${formatMemoryDate(h.createdAt)}${h.kind === "summary" ? ", summary" : ""}) ${h.content}`)
-      .join("\n");
+    "Notes from your earlier conversations with this user — these are your own saved notes, not the " +
+    "user's current words. Each line marks who said it. Use only if clearly relevant, don't mention " +
+    'this note, and never claim the user said something unless the line is marked "You said":\n' +
+    kept.map((h) => `- ${describeHit(h)}`).join("\n");
   return { role: "user", parts: [{ text }] };
+}
+
+/** Render a recalled hit with its date and speaker so the model can't misattribute it. Summaries are
+ * AI-authored recaps of a past conversation; raw turns are labeled with who actually said them. */
+function describeHit(h: MemoryHit): string {
+  const when = formatMemoryDate(h.createdAt);
+  if (h.kind === "summary") return `(${when}, my summary of an earlier conversation) ${h.content}`;
+  if (h.role === "user") return `(${when}) You said: ${h.content}`;
+  if (h.role === "assistant") return `(${when}) I said: ${h.content}`;
+  return `(${when}) ${h.content}`;
 }
 
 /** Recent episodic summaries as a continuity block for a voice call's system instruction, or null. */
@@ -103,7 +115,8 @@ export async function buildRecentContext(k = 3): Promise<string | null> {
   const hits = await searchMemories(null, "", k, { kind: "summary" });
   if (hits.length === 0) return null;
   return (
-    "Recently this user talked with you about (for continuity; don't recite):\n" +
+    "Recently this user talked with you about (your own summaries of past conversations, for " +
+    "continuity; don't recite, and don't attribute these to the user as their exact words):\n" +
     hits.map((h) => `- (${formatMemoryDate(h.createdAt)}) ${h.content}`).join("\n")
   );
 }
