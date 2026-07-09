@@ -25,6 +25,15 @@ type SessionHandle = Awaited<ReturnType<GoogleGenAI["live"]["connect"]>>;
 const SYSTEM_INSTRUCTION =
   "You are EverVault, a warm and concise voice assistant. Keep replies short and natural for a spoken conversation.";
 
+// A single Live WebSocket lives for a capped span (~10 min) and Google closes it, even mid-conversation.
+// Session resumption lets a fresh socket pick the SAME conversation back up (full context intact) via a
+// handle Gemini hands us periodically — so we transparently reconnect and the call feels continuous. This
+// bounds how many times we retry a genuinely broken connection before giving up so a dead key/quota can't
+// loop forever; the counter resets every time a socket comes up healthy (see setupComplete handling).
+const MAX_RECONNECTS = 6;
+
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export class LiveSession {
   private session?: SessionHandle;
   private mic = new MicStreamer();
@@ -48,6 +57,22 @@ export class LiveSession {
   private modelTurnActive = false;
   /** Tap-to-interrupt: swallow the rest of the current turn's audio and transcript. */
   private discardTurnAudio = false;
+  /**
+   * Latest resumption handle Gemini has issued for this conversation. Feeding it to a new socket
+   * resumes the SAME session — the model keeps the full history, so a reconnect is invisible to the
+   * user. Null until the first `sessionResumptionUpdate` arrives (a brand-new call has no handle yet).
+   */
+  private resumptionHandle: string | null = null;
+  /** A resume is mid-flight: the socket is being swapped, so mic chunks are dropped until it's back. */
+  private reconnecting = false;
+  /** Consecutive resume attempts since the last healthy socket; caps runaway reconnect loops. */
+  private reconnectAttempts = 0;
+  /**
+   * A non-retryable failure landed (e.g. the key's quota/rate limit was hit — common on a free Gemini
+   * key). Resuming would just fail again instantly, so once this is set we stop and report the error
+   * instead of reconnecting.
+   */
+  private fatal = false;
 
   constructor(
     private apiKey: string,
@@ -68,59 +93,12 @@ export class LiveSession {
       if (!this.stopped) cb.onState("listening");
     };
 
-    const ai = new GoogleGenAI({ apiKey: this.apiKey });
-    this.session = await ai.live.connect({
-      model: this.model,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-        // When memory is on, give the model the recall_memory + task tools and a persona that knows it
-        // has memory + a task list, so it can search past chats and manage tasks mid-call.
-        ...(this.memoryEnabled
-          ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }] }
-          : {}),
-        // Time + agenda are captured at connect; a multi-hour call won't refresh them (acceptable — the
-        // list_tasks tool gives freshness mid-call). The profile block grounds the call from the first word.
-        systemInstruction: [
-          this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
-          this.memoryEnabled && this.agendaBlock ? this.agendaBlock : "",
-          this.memoryEnabled && this.recentContext ? this.recentContext : "",
-          this.memoryEnabled ? MEMORY_PERSONA : "",
-          this.memoryEnabled ? TASKS_PERSONA : "",
-          SYSTEM_INSTRUCTION,
-          // Steer the spoken reply into the selected UI language (empty for English).
-          aiReplyDirective(this.language),
-          currentTimeContext(),
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-        // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
-        // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
-        realtimeInputConfig: {
-          automaticActivityDetection: {
-            startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
-            endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
-            prefixPaddingMs: 300,
-            silenceDurationMs: 800,
-          },
-        },
-      },
-      callbacks: {
-        onopen: () => {},
-        onmessage: (m: LiveServerMessage) => void this.onMessage(m),
-        onerror: (e: ErrorEvent) => {
-          cb.onError(e.message || "Voice connection error.");
-          cb.onState("error");
-        },
-        onclose: () => {
-          if (!this.stopped) cb.onState("closed");
-        },
-      },
-    });
+    await this.connect();
 
     await this.mic.start((b64) => {
+      // A resume is swapping the socket underneath us — the old session is closing and the new one
+      // isn't ready. Drop the chunk (the sub-second gap is inaudible) rather than send into the void.
+      if (this.reconnecting) return;
       if (this.halfDuplex && this.player.echoRisk) {
         // The speaker is (or was just) sounding the model's voice with no echo cancellation:
         // drop the chunk. The gate closes the moment a turn's first buffer is scheduled —
@@ -165,7 +143,174 @@ export class LiveSession {
     cb.onState("listening");
   }
 
+  /**
+   * Open a Live socket for this call. Used both for the first connect and for every seamless resume:
+   * when `resumptionHandle` is set, Gemini restores the existing conversation onto the new socket, so
+   * the model continues with full context. `contextWindowCompression` lifts the fixed session-duration
+   * cap (a sliding window keeps the context bounded), so long calls don't die from context overflow —
+   * the only reconnects left are the periodic connection resets, which resumption stitches over.
+   */
+  private async connect(): Promise<void> {
+    const ai = new GoogleGenAI({ apiKey: this.apiKey });
+    this.session = await ai.live.connect({
+      model: this.model,
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        // Keep the call alive across Google's per-connection time limit: hand back the resumption
+        // handle so this reconnect continues the same conversation, and compress the context window
+        // so an hours-long call never terminates from hitting the model's context ceiling.
+        sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
+        contextWindowCompression: { slidingWindow: {} },
+        // When memory is on, give the model the recall_memory + task tools and a persona that knows it
+        // has memory + a task list, so it can search past chats and manage tasks mid-call.
+        ...(this.memoryEnabled
+          ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }] }
+          : {}),
+        // Time + agenda are captured at connect; a multi-hour call won't refresh them (acceptable — the
+        // list_tasks tool gives freshness mid-call). The profile block grounds the call from the first word.
+        systemInstruction: [
+          this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
+          this.memoryEnabled && this.agendaBlock ? this.agendaBlock : "",
+          this.memoryEnabled && this.recentContext ? this.recentContext : "",
+          this.memoryEnabled ? MEMORY_PERSONA : "",
+          this.memoryEnabled ? TASKS_PERSONA : "",
+          SYSTEM_INSTRUCTION,
+          // Steer the spoken reply into the selected UI language (empty for English).
+          aiReplyDirective(this.language),
+          currentTimeContext(),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
+        // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
+            endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+            prefixPaddingMs: 300,
+            silenceDurationMs: 800,
+          },
+        },
+      },
+      callbacks: {
+        onopen: () => {},
+        onmessage: (m: LiveServerMessage) => void this.onMessage(m),
+        onerror: (e: ErrorEvent) => this.onSocketError(e),
+        onclose: (e: CloseEvent) => this.onSocketClose(e),
+      },
+    });
+  }
+
+  /**
+   * A quota / rate-limit signal from Google (RESOURCE_EXHAUSTED, HTTP 429, "quota exceeded"). These
+   * commonly hit a free key, and unlike a plain connection drop they DON'T heal on reconnect — the
+   * resumed socket would fail the same way — so we treat them as terminal instead of retrying.
+   */
+  private isQuotaError(text: string): boolean {
+    return /quota|resource[_\s-]?exhausted|\bexhausted\b|rate[_\s-]?limit|too many requests|\b429\b/i.test(text);
+  }
+
+  /** Give up on the call for a reason retrying can't fix, and surface a clear message to the user. */
+  private failFatally(detail: string) {
+    this.fatal = true;
+    console.warn("[live] non-retryable failure; not resuming:", detail);
+    this.cb.onError("The AI provider's usage limit was reached, so the call had to stop.");
+    this.cb.onState("error");
+  }
+
+  /**
+   * The socket errored. A quota/limit error is terminal (see failFatally). Otherwise, on a resumable
+   * session this isn't terminal — the `onclose` that follows transparently resumes — so we stay quiet
+   * and let that happen. We only surface a generic error when there's nothing to resume from (a failed
+   * first connect) or we've exhausted our retry budget.
+   */
+  private onSocketError(e: ErrorEvent) {
+    const msg = e?.message || "";
+    if (this.isQuotaError(msg)) return this.failFatally(msg);
+    if (!this.stopped && !this.fatal && this.resumptionHandle && this.reconnectAttempts < MAX_RECONNECTS) {
+      console.warn("[live] socket error; will attempt resume", msg);
+      return;
+    }
+    this.cb.onError(msg || "Voice connection error.");
+    this.cb.onState("error");
+  }
+
+  /**
+   * The socket closed. If the user hung up (`stopped`) or we've already failed fatally, we're done. A
+   * quota/limit close is terminal. Otherwise, if we hold a resumption handle and still have retries
+   * left, reconnect seamlessly — the call never leaves the live state, so the CallBar keeps its timer
+   * running and the user sees no interruption. Only when we can't resume do we report the call closed.
+   */
+  private onSocketClose(e?: CloseEvent) {
+    if (this.stopped || this.reconnecting || this.fatal) return;
+    const reason = e?.reason || "";
+    if (this.isQuotaError(reason)) return this.failFatally(reason);
+    if (this.resumptionHandle && this.reconnectAttempts < MAX_RECONNECTS) {
+      void this.reconnect();
+      return;
+    }
+    this.cb.onState("closed");
+  }
+
+  /** Bring up a fresh socket that resumes the conversation, retrying with backoff on transient failure. */
+  private async reconnect(): Promise<void> {
+    this.reconnecting = true;
+    this.reconnectAttempts += 1;
+    // Reset only the per-SOCKET turn state; the conversation itself is restored from the handle, so
+    // history, memory, and the model's mid-thought context all survive the swap.
+    this.modelTurnActive = false;
+    this.discardTurnAudio = false;
+    this.streamEndSent = false;
+    this.gatedSinceMs = null;
+    try {
+      await this.connect();
+      if (this.stopped) {
+        // The user hung up while this resume was in flight — close the socket we just opened and bail,
+        // otherwise it would linger after stop() already closed the previous one.
+        try {
+          this.session?.close();
+        } catch {
+          /* ignore */
+        }
+        this.reconnecting = false;
+        return;
+      }
+      this.reconnecting = false;
+      // Mic streaming resumes automatically (its callback reads the live `this.session`). If the new
+      // socket dies again, its own onclose schedules the next attempt.
+      if (!this.player.isPlaying) this.cb.onState("listening");
+    } catch (e) {
+      this.reconnecting = false;
+      const msg = e instanceof Error ? e.message : String(e);
+      // A quota/limit error means the key is spent — retrying can't help, so stop here.
+      if (this.isQuotaError(msg)) return this.failFatally(msg);
+      console.warn(`[live] resume attempt ${this.reconnectAttempts} failed`, e);
+      if (this.stopped) return;
+      if (this.reconnectAttempts < MAX_RECONNECTS) {
+        await delay(400 * this.reconnectAttempts);
+        if (!this.stopped && !this.reconnecting) void this.reconnect();
+      } else {
+        this.cb.onError("Voice connection lost. Please start the call again.");
+        this.cb.onState("error");
+      }
+    }
+  }
+
   private async onMessage(m: LiveServerMessage) {
+    // A socket just came up healthy (initial connect or a resume): clear the failure counter so the
+    // next connection-limit drop gets a fresh budget of resume attempts.
+    if (m.setupComplete) this.reconnectAttempts = 0;
+    // Gemini periodically issues a handle that lets a new socket resume THIS conversation with full
+    // context. Stash the latest resumable one — it's what makes a reconnect feel like nothing happened.
+    const resume = m.sessionResumptionUpdate;
+    if (resume?.resumable && resume.newHandle) this.resumptionHandle = resume.newHandle;
+    // Server is about to close the connection (its per-connection cap). No action needed — the onclose
+    // that follows resumes from the stored handle; we just log how much runway it gave us.
+    if (m.goAway) console.info("[live] server goAway; will resume", m.goAway.timeLeft);
+
     // The model asked to search memory or manage tasks: run the tool(s) and send the results back.
     // Live always populates the call `id`, which sendToolResponse must echo so the model can match it.
     if (m.toolCall?.functionCalls?.length) {
