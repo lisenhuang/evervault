@@ -18,6 +18,12 @@ export type LiveCallbacks = {
   onModelText: (delta: string) => void;
   onTurnComplete: () => void;
   onError: (msg: string) => void;
+  /**
+   * The call auto-closed because the user went silent for the whole idle window (see IDLE_TIMEOUT_MS)
+   * on their turn to speak — e.g. they fell asleep mid-conversation. Fires just before the "closed"
+   * state so the UI can explain why the call ended rather than looking like a plain hang-up.
+   */
+  onIdleTimeout?: () => void;
 };
 
 type SessionHandle = Awaited<ReturnType<GoogleGenAI["live"]["connect"]>>;
@@ -31,6 +37,16 @@ const SYSTEM_INSTRUCTION =
 // bounds how many times we retry a genuinely broken connection before giving up so a dead key/quota can't
 // loop forever; the counter resets every time a socket comes up healthy (see setupComplete handling).
 const MAX_RECONNECTS = 6;
+
+// Auto-hang-up guard for an abandoned call. A Live socket bills for the whole time it's open, even
+// in dead silence, so if the user never says anything on their turn for this long — they walked away
+// or fell asleep mid-conversation — we close the call for them instead of burning tokens on nothing.
+// Only the user's silent time counts: the window resets whenever the user or the model is speaking,
+// so a long model monologue or an active back-and-forth never trips it.
+const IDLE_TIMEOUT_MS = 60_000;
+// How often to check the idle window. Sub-second precision isn't needed — a coarse tick keeps the
+// timer cheap and the close fires within a second of the threshold.
+const IDLE_CHECK_MS = 1_000;
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -73,6 +89,13 @@ export class LiveSession {
    * instead of reconnecting.
    */
   private fatal = false;
+  /**
+   * Wall-clock of the last moment the conversation was audibly active — either party speaking. The
+   * idle monitor closes the call once this is IDLE_TIMEOUT_MS in the past (see markVoiceActivity /
+   * startIdleMonitor). 0 until the monitor starts.
+   */
+  private lastVoiceActivityMs = 0;
+  private idleTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private apiKey: string,
@@ -141,6 +164,50 @@ export class LiveSession {
     }
 
     cb.onState("listening");
+    this.startIdleMonitor();
+  }
+
+  /**
+   * Note that the conversation is audibly active right now, resetting the idle countdown. Called
+   * whenever the user speaks or the model is streaming audio, so the auto-hang-up only elapses during
+   * a genuine silence on the user's turn — never mid-utterance and never during the model's reply.
+   */
+  private markVoiceActivity() {
+    this.lastVoiceActivityMs = Date.now();
+  }
+
+  /**
+   * Start watching for an abandoned call. On each tick, if the model isn't currently speaking and no
+   * reconnect is in flight, and the user has been silent for the whole idle window, hang up on their
+   * behalf. Idempotent-ish: any existing timer is cleared first so a resume never stacks two monitors.
+   */
+  private startIdleMonitor() {
+    this.stopIdleMonitor();
+    this.markVoiceActivity();
+    this.idleTimer = setInterval(() => {
+      if (this.stopped || this.fatal) return;
+      // While the model is talking or a socket swap is underway, it's not the user's silent turn —
+      // keep the window fresh so those spans never count toward the timeout.
+      if (this.modelTurnActive || this.reconnecting) return this.markVoiceActivity();
+      if (Date.now() - this.lastVoiceActivityMs >= IDLE_TIMEOUT_MS) this.handleIdleTimeout();
+    }, IDLE_CHECK_MS);
+  }
+
+  private stopIdleMonitor() {
+    if (this.idleTimer) {
+      clearInterval(this.idleTimer);
+      this.idleTimer = undefined;
+    }
+  }
+
+  /** The user went silent for the whole idle window on their turn — close the call and say why. */
+  private handleIdleTimeout() {
+    if (this.stopped) return;
+    this.stopIdleMonitor();
+    console.info("[live] no user speech for", IDLE_TIMEOUT_MS, "ms — auto-closing the idle call");
+    this.cb.onIdleTimeout?.();
+    this.cb.onState("closed");
+    void this.stop();
   }
 
   /**
@@ -302,7 +369,12 @@ export class LiveSession {
   private async onMessage(m: LiveServerMessage) {
     // A socket just came up healthy (initial connect or a resume): clear the failure counter so the
     // next connection-limit drop gets a fresh budget of resume attempts.
-    if (m.setupComplete) this.reconnectAttempts = 0;
+    if (m.setupComplete) {
+      this.reconnectAttempts = 0;
+      // A fresh socket just came up — treat that as activity so a slow connect/resume never counts
+      // as idle time and hangs up the moment the user is finally live.
+      this.markVoiceActivity();
+    }
     // Gemini periodically issues a handle that lets a new socket resume THIS conversation with full
     // context. Stash the latest resumable one — it's what makes a reconnect feel like nothing happened.
     const resume = m.sessionResumptionUpdate;
@@ -342,16 +414,22 @@ export class LiveSession {
       if (data && !this.discardTurnAudio) {
         this.player.enqueue(data);
         this.modelTurnActive = true;
+        this.markVoiceActivity(); // the model is speaking — not the user's silent turn
         this.cb.onState("speaking");
       }
     }
-    if (sc?.inputTranscription?.text) this.cb.onUserText(sc.inputTranscription.text);
+    if (sc?.inputTranscription?.text) {
+      this.cb.onUserText(sc.inputTranscription.text);
+      this.markVoiceActivity(); // the user just spoke — reset the idle countdown
+    }
     // Also drop the discarded turn's transcript: the chat log (and the memories built from it)
     // should only contain speech the user actually heard, matching real barge-in semantics.
     if (sc?.outputTranscription?.text && !this.discardTurnAudio) this.cb.onModelText(sc.outputTranscription.text);
     if (sc?.turnComplete) {
       this.modelTurnActive = false;
       this.discardTurnAudio = false;
+      // The turn just ended — the user's silent turn starts now, so run the full idle window from here.
+      this.markVoiceActivity();
       this.cb.onTurnComplete();
       if (!this.player.isPlaying) this.cb.onState("listening");
     }
@@ -392,6 +470,7 @@ export class LiveSession {
 
   async stop() {
     this.stopped = true;
+    this.stopIdleMonitor();
     this.mic.stop();
     this.loopback.stop();
     await this.player.close();

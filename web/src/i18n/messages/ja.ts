@@ -132,6 +132,7 @@ const ja: Messages = {
     speaking: "話しています…",
     error: "接続に問題があります",
     closed: "通話が終了しました",
+    idleClosedHint: "しばらく発言がなかったので、時間を節約するために通話を終了しました。もう一度話すには電話ボタンをタップしてください。",
     unmute: "ミュート解除",
     mute: "ミュート",
     unmuteMic: "マイクのミュートを解除",

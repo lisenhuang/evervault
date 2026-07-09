@@ -19,6 +19,7 @@ export default function CallBar({
   state,
   muted,
   error,
+  idleClosed,
   startedAt,
   echoProne,
   halfDuplex,
@@ -31,6 +32,8 @@ export default function CallBar({
   state: LiveState;
   muted: boolean;
   error: string;
+  /** The call auto-ended after a long user silence — show the idle-timeout note as it closes. */
+  idleClosed: boolean;
   /** ms timestamp of when the call connected, or null while still connecting. Drives the live timer. */
   startedAt: number | null;
   /** The model's voice plays without echo cancellation here (iOS speaker / no loopback). */
@@ -162,13 +165,15 @@ export default function CallBar({
           <p className="truncate text-xs text-black/50 dark:text-white/50">
             {error
               ? error
-              : muted
-                ? t.call.mutedHint
-                : halfDuplex
-                  ? speaking
-                    ? t.call.gatedSpeakingHint
-                    : t.call.gatedHint
-                  : t.call.liveHint}
+              : ended && idleClosed
+                ? t.call.idleClosedHint
+                : muted
+                  ? t.call.mutedHint
+                  : halfDuplex
+                    ? speaking
+                      ? t.call.gatedSpeakingHint
+                      : t.call.gatedHint
+                    : t.call.liveHint}
           </p>
         </div>
 

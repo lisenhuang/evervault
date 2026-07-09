@@ -105,6 +105,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [callState, setCallState] = useState<LiveState | null>(null);
   const [callMuted, setCallMuted] = useState(false);
   const [callError, setCallError] = useState("");
+  // The call auto-hung-up because the user went silent too long (fell asleep / walked away). Drives
+  // the CallBar's closing message so the end reads as an intentional idle timeout, not a dropped call.
+  const [callIdleClosed, setCallIdleClosed] = useState(false);
   // Echo-prone output path (iOS speaker, or the loopback failed): the session runs half duplex —
   // the mic is gated while the model speaks, so interrupting is by tap instead of by voice. The
   // headphones toggle (persisted) lifts the gate, since headphones produce no acoustic echo.
@@ -519,6 +522,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       return;
     }
     setCallError("");
+    setCallIdleClosed(false);
     setCallMuted(false);
     setCallEchoProne(false);
     setCallHalfDuplex(false);
@@ -558,6 +562,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           liveAsstTextRef.current = "";
         },
         onError: setCallError,
+        // The user went quiet for the whole idle window on their turn — the session is hanging up for
+        // them. Flag it so the closing bar explains the auto-end; the "closed" state itself is handled
+        // by the effect below (logs the duration, then dismisses).
+        onIdleTimeout: () => setCallIdleClosed(true),
       });
       // Which output path the session ended up on is only known once start() resolves; it drives
       // the CallBar's half-duplex affordances (tap-to-interrupt orb, headphones toggle).
@@ -616,7 +624,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveRef.current = null;
     finishCall(); // log the duration once; no-ops if End already handled it or the call never connected
     if (callState === "closed") {
-      const t = setTimeout(() => setCallState(null), 1500);
+      // Linger a little longer on an idle auto-hang-up so the user can read why the call ended.
+      const t = setTimeout(() => setCallState(null), callIdleClosed ? 4000 : 1500);
       return () => clearTimeout(t);
     }
     // finishCall reads a ref and is safe to omit from deps; rerunning only on callState is intended.
@@ -714,6 +723,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             state={callState}
             muted={callMuted}
             error={callError}
+            idleClosed={callIdleClosed}
             startedAt={callStartedAt}
             echoProne={callEchoProne}
             halfDuplex={callHalfDuplex}
