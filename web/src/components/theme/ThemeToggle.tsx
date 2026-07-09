@@ -1,16 +1,20 @@
 "use client";
 
-import { Moon, Sun } from "lucide-react";
-import { useTheme } from "./ThemeProvider";
+import { Monitor, Moon, Sun } from "lucide-react";
+import { useT } from "@/i18n/LanguageProvider";
+import { useTheme, type ThemePreference } from "./ThemeProvider";
 
 const BTN =
   "rounded-md p-2 text-black/60 transition hover:bg-black/5 dark:text-white/60 dark:hover:bg-white/10";
 
-/** Single button that toggles between light and dark. */
-export default function ThemeToggle({ size = 18 }: { size?: number }) {
-  const { theme, mounted, toggle } = useTheme();
+const ICON = { light: Sun, dark: Moon, system: Monitor } as const;
 
-  // Until mounted we can't know the resolved theme, so render a same-sized
+/** Cycles light → dark → system → light; the icon reflects the current preference. */
+export default function ThemeToggle({ size = 18 }: { size?: number }) {
+  const { preference, mounted, toggle } = useTheme();
+  const t = useT();
+
+  // Until mounted we can't know the resolved preference, so render a same-sized
   // placeholder to reserve layout and avoid a hydration mismatch.
   if (!mounted) {
     return (
@@ -20,16 +24,17 @@ export default function ThemeToggle({ size = 18 }: { size?: number }) {
     );
   }
 
-  const isDark = theme === "dark";
+  const labels: Record<ThemePreference, string> = {
+    light: t.sidebar.themeLight,
+    dark: t.sidebar.themeDark,
+    system: t.sidebar.themeSystem,
+  };
+  const Icon = ICON[preference];
+  const label = `${t.sidebar.theme}: ${labels[preference]}`;
+
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      className={BTN}
-      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-    >
-      {isDark ? <Sun size={size} /> : <Moon size={size} />}
+    <button type="button" onClick={toggle} className={BTN} title={label} aria-label={label}>
+      <Icon size={size} />
     </button>
   );
 }

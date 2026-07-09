@@ -7,7 +7,8 @@ import { getServerLang } from "@/i18n/server";
 import { htmlLang } from "@/i18n/config";
 
 // Runs during HTML parse, before first paint, to set the theme class and avoid a
-// flash of the wrong theme. Stored "light"/"dark" wins; otherwise follow the OS.
+// flash of the wrong theme. Stored "light"/"dark" wins; "system" (or nothing stored)
+// follows the OS.
 const themeScript = `(function(){try{var t=localStorage.getItem("theme");if(t==="dark"||(t!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.classList.add("dark")}}catch(e){}})()`;
 
 const geistSans = Geist({
