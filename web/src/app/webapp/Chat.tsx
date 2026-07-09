@@ -14,6 +14,7 @@ import { type Content, describeImage, listModels, type ModelInfo, streamText, st
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
+import { CAPABILITY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
@@ -265,6 +266,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         renderProfileBlock(profileFactsRef.current),
         renderAgendaBlock(tasksRef.current),
         langDirective,
+        CAPABILITY_BOUNDS,
         MEMORY_PERSONA,
         TASKS_PERSONA,
         currentTimeContext(),
@@ -278,7 +280,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onDelta(delta);
       }
     } else {
-      const sys = [langDirective, currentTimeContext()].filter(Boolean).join("\n\n");
+      const sys = [langDirective, CAPABILITY_BOUNDS, currentTimeContext()].filter(Boolean).join("\n\n");
       for await (const delta of streamText(apiKey, textModel, contents, sys)) {
         onDelta(delta);
       }
