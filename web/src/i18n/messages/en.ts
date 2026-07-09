@@ -132,6 +132,7 @@ const en = {
     speaking: "Speaking…",
     error: "Connection problem",
     closed: "Call ended",
+    idleClosedHint: "It went quiet for a while, so I ended the call to save your minutes. Tap the phone to call again.",
     unmute: "Unmute",
     mute: "Mute",
     unmuteMic: "Unmute microphone",

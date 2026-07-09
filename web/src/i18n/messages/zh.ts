@@ -133,6 +133,7 @@ const zh: Messages = {
     speaking: "讲话中…",
     error: "连接出现问题",
     closed: "通话已结束",
+    idleClosedHint: "有一段时间没有说话,已为你结束通话以节省时长。想再次通话请点击电话按钮。",
     unmute: "取消静音",
     mute: "静音",
     unmuteMic: "取消麦克风静音",

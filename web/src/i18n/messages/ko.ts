@@ -132,6 +132,7 @@ const ko: Messages = {
     speaking: "말하는 중…",
     error: "연결 문제",
     closed: "통화 종료",
+    idleClosedHint: "한동안 말이 없어서 시간을 아끼기 위해 통화를 종료했어요. 다시 통화하려면 전화 버튼을 누르세요.",
     unmute: "음소거 해제",
     mute: "음소거",
     unmuteMic: "마이크 음소거 해제",
