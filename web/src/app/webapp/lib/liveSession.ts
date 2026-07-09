@@ -5,6 +5,7 @@
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServerMessage } from "@google/genai";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
+import { CAPABILITY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
 import { currentTimeContext } from "./time";
@@ -245,6 +246,7 @@ export class LiveSession {
           this.memoryEnabled ? MEMORY_PERSONA : "",
           this.memoryEnabled ? TASKS_PERSONA : "",
           SYSTEM_INSTRUCTION,
+          CAPABILITY_BOUNDS,
           // Steer the spoken reply into the selected UI language (empty for English).
           aiReplyDirective(this.language),
           currentTimeContext(),
