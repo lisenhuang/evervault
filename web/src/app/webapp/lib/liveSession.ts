@@ -6,6 +6,7 @@ import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServe
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
+import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
@@ -56,6 +57,7 @@ export class LiveSession {
     private profileBlock?: string,
     private recentContext?: string,
     private language: Lang = "en",
+    private agendaBlock?: string,
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -74,15 +76,19 @@ export class LiveSession {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        // When memory is on, give the model the recall_memory tool + a persona that knows it has
-        // memory, so it can search past conversations mid-call instead of denying it remembers.
-        ...(this.memoryEnabled ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }] } : {}),
-        // Time is captured at connect; a multi-hour call won't refresh it (acceptable for this use).
-        // The profile block (what we already know about the user) grounds the call from the first word.
+        // When memory is on, give the model the recall_memory + task tools and a persona that knows it
+        // has memory + a task list, so it can search past chats and manage tasks mid-call.
+        ...(this.memoryEnabled
+          ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }] }
+          : {}),
+        // Time + agenda are captured at connect; a multi-hour call won't refresh them (acceptable — the
+        // list_tasks tool gives freshness mid-call). The profile block grounds the call from the first word.
         systemInstruction: [
           this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
+          this.memoryEnabled && this.agendaBlock ? this.agendaBlock : "",
           this.memoryEnabled && this.recentContext ? this.recentContext : "",
           this.memoryEnabled ? MEMORY_PERSONA : "",
+          this.memoryEnabled ? TASKS_PERSONA : "",
           SYSTEM_INSTRUCTION,
           // Steer the spoken reply into the selected UI language (empty for English).
           aiReplyDirective(this.language),
@@ -160,11 +166,17 @@ export class LiveSession {
   }
 
   private async onMessage(m: LiveServerMessage) {
-    // The model asked to search memory: run the tool(s) and send the results back. Live always
-    // populates the call `id`, which sendToolResponse must echo so the model can match the reply.
+    // The model asked to search memory or manage tasks: run the tool(s) and send the results back.
+    // Live always populates the call `id`, which sendToolResponse must echo so the model can match it.
     if (m.toolCall?.functionCalls?.length) {
       const calls = m.toolCall.functionCalls;
-      const results = await Promise.all(calls.map((c) => runRecallTool(c.args ?? {})));
+      const results = await Promise.all(
+        calls.map((c) => {
+          const name = c.name ?? "";
+          const args = c.args ?? {};
+          return isTaskTool(name) ? runTaskTool(name, args) : runRecallTool(args);
+        }),
+      );
       this.session?.sendToolResponse({
         functionResponses: calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } })),
       });

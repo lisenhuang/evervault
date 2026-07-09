@@ -17,6 +17,26 @@ const ABS_CUTOFF = 0.6; // never inject a hit whose RAW cosine distance is worse
 const REL_CUTOFF = 0.2; // …or much worse than the best hit
 const JACCARD_DUP = 0.6; // skip a hit too similar to one already kept
 const MAX_HITS = 5;
+// Keyword-only hits (embeddings off) carry a hybrid `score` instead of a distance. Gate them on being
+// at least ~top-5 in one search lane (RRF weight 1/(60+5)); below that is noise.
+const KEYWORD_MIN_SCORE = 1 / (60 + 5);
+
+/** Effective distance for ranking (lower = better). Vector hits use their real cosine distance; keyword-
+ * only hits (no distance, but a hybrid score) get a pseudo-distance so recency/summary bonuses and dedupe
+ * apply uniformly; hits with neither signal are treated as middling. */
+function baseDistance(h: MemoryHit): number {
+  if (h.distance != null) return h.distance;
+  if (h.score != null) return Math.max(0.3, 0.55 - 6 * h.score); // #1-in-two-lanes ≈ 0.35, #1-in-one ≈ 0.45
+  return 0.5;
+}
+
+/** Whether a hit is relevant enough to inject, judged on its RAW signal (not the bonus-adjusted score),
+ * so summary/recency bonuses can reorder but never smuggle a weak match past the gate. */
+function passesAbsGate(h: MemoryHit): boolean {
+  if (h.distance != null) return h.distance <= ABS_CUTOFF;
+  if (h.score != null) return h.score >= KEYWORD_MIN_SCORE;
+  return false; // no distance and no score (old server / pure substring fallback) → don't auto-inject
+}
 
 /** Build the embedding query from the last few turns + the new message so follow-ups/pronouns resolve. */
 export function buildContextualQuery(recent: Turn[], currentText: string): string {
@@ -44,9 +64,9 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return inter / (a.size + b.size - inter);
 }
 
-/** Adjusted distance (lower = better): start from cosine distance, reward summaries + recency. */
+/** Adjusted distance (lower = better): start from the effective distance, reward summaries + recency. */
 function score(h: MemoryHit, nowMs: number): number {
-  const base = h.distance ?? 0.5; // text-fallback hits have no distance; treat as middling
+  const base = baseDistance(h);
   const summary = h.kind === "summary" ? SUMMARY_BONUS : 0;
   const ageDays = (nowMs - new Date(h.createdAt).getTime()) / 86_400_000;
   const recency = RECENCY_BONUS_MAX * Math.pow(0.5, Math.max(0, ageDays) / RECENCY_HALFLIFE_DAYS);
@@ -81,9 +101,7 @@ export async function retrieveContext(opts: {
     if (kept.length >= MAX_HITS) break;
     const s = score(h, opts.nowMs);
     if (s > best + REL_CUTOFF) break; // ranked ascending by adjusted score → the rest are worse
-    // Absolute relevance is judged on the RAW cosine distance, so the summary/recency bonuses can lift
-    // ranking but never smuggle a weak match past the gate. Text-fallback hits have no distance → 0.5.
-    if ((h.distance ?? 0.5) > ABS_CUTOFF) continue;
+    if (!passesAbsGate(h)) continue; // weak match (raw distance/score below the bar) → skip
     const hw = words(h.content);
     if (keptWords.some((kw) => jaccard(hw, kw) > JACCARD_DUP)) continue; // near-duplicate of a kept hit
     if (profileWords && jaccard(hw, profileWords) > JACCARD_DUP) continue; // already in the profile block

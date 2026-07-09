@@ -24,6 +24,9 @@ export type MemoryHit = {
   hasImage: boolean;
   createdAt: string;
   distance: number | null;
+  // Hybrid-search relevance (higher = better); set on keyword/fused hits, null on pure-vector and
+  // legacy paths (and absent when talking to an older server).
+  score?: number | null;
 };
 
 export function recordTurn(conversationId: string, turns: TurnItem[]): void {

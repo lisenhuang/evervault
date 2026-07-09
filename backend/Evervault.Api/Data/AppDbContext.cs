@@ -18,6 +18,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();
     public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
+    public DbSet<UserTask> UserTasks => Set<UserTask>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -28,6 +29,9 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         base.OnModelCreating(modelBuilder);
 
         modelBuilder.HasPostgresExtension("vector");
+        // Trigram matching for the hybrid keyword search lane (fuzzy substring + CJK, where
+        // whitespace-tokenized FTS can't segment). The GIN index is added in a migration.
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         modelBuilder.Entity<Memory>(e =>
         {
@@ -76,6 +80,18 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(f => f.EndUserId);
             // Supersede anchor: re-extracting the same (user, category, key) updates the row in place.
             e.HasIndex(f => new { f.EndUserId, f.Category, f.Key }).IsUnique();
+        });
+
+        modelBuilder.Entity<UserTask>(e =>
+        {
+            e.Property(t => t.Title).HasMaxLength(200);
+            e.Property(t => t.Details).HasMaxLength(2000);
+            e.Property(t => t.DueTime).HasMaxLength(5);
+            e.Property(t => t.Status).HasMaxLength(16);
+            e.Property(t => t.Source).HasMaxLength(16);
+            e.Property(t => t.SourceConversationId).HasMaxLength(64);
+            // Agenda query path: open tasks for a user, ordered by due date.
+            e.HasIndex(t => new { t.EndUserId, t.Status, t.DueDate });
         });
 
         modelBuilder.Entity<AiKey>(e =>

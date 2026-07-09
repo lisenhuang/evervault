@@ -109,6 +109,7 @@ public class AuthController : ControllerBase
 
         await _db.ChatMemories.Where(m => m.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserMemoryFacts.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.UserTasks.Where(t => t.EndUserId == uid).ExecuteDeleteAsync();
         await _db.EndUsers.Where(u => u.Id == uid).ExecuteDeleteAsync();
 
         await HttpContext.SignOutAsync(Scheme);

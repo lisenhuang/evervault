@@ -15,7 +15,9 @@ import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
+import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
+import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
@@ -133,6 +135,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Derived profile ("what the AI knows about you"): loaded once, injected into every chat, and
   // refreshed after each extraction. Refs (+ store getters) so the unload/idle handlers see live state.
   const profileFactsRef = useRef<Fact[]>([]);
+  const tasksRef = useRef<Task[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
   const extractCursorRef = useRef(0); // messages already distilled into the profile this conversation
   const extractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,6 +146,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const refreshProfile = useCallback(async () => {
     if (!store.getMemoryOn() || !store.getKey()) return;
     profileFactsRef.current = await getProfile();
+  }, []);
+
+  const refreshTasks = useCallback(async () => {
+    if (!store.getMemoryOn() || !store.getKey()) return;
+    tasksRef.current = await getTasks("open");
   }, []);
 
   // Distil new turns into the profile (fire-and-forget; never blocks chat). `minNew` guards against
@@ -158,10 +166,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       model: store.getTextModel(),
       conversationId: conversationIdRef.current,
       currentFacts: profileFactsRef.current,
+      currentTasks: tasksRef.current,
       transcript,
     });
-    if (delta) await refreshProfile();
-  }, [refreshProfile]);
+    if (delta?.profileChanged) await refreshProfile();
+    if (delta?.tasksChanged) await refreshTasks();
+  }, [refreshProfile, refreshTasks]);
 
   const scheduleExtraction = useCallback(() => {
     if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
@@ -189,7 +199,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     else setDrawerOpen(true);
     store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
     void refreshProfile();
-  }, [loadModels, refreshProfile]);
+    void refreshTasks();
+  }, [loadModels, refreshProfile, refreshTasks]);
 
   // Distil the conversation when the user backgrounds or leaves the tab — a natural "conversation end".
   useEffect(() => {
@@ -245,12 +256,22 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // push-to-talk) instead of denying it has any memory.
     const langDirective = aiReplyDirective(lang);
     if (memoryOn) {
-      // Ground the reply in the durable profile (who the user is) + persona + current time.
-      const sys = [renderProfileBlock(profileFactsRef.current), langDirective, MEMORY_PERSONA, currentTimeContext()]
+      // Ground the reply in the durable profile (who the user is) + today's task agenda + persona +
+      // current time. The agenda is re-rendered every turn, so task tool calls show up mid-conversation.
+      const sys = [
+        renderProfileBlock(profileFactsRef.current),
+        renderAgendaBlock(tasksRef.current),
+        langDirective,
+        MEMORY_PERSONA,
+        TASKS_PERSONA,
+        currentTimeContext(),
+      ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION] }];
-      for await (const delta of streamTextWithTools(apiKey, textModel, contents, sys, tools, (_name, args) => runRecallTool(args))) {
+      const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }];
+      const runTool = (name: string, args: Record<string, unknown>) =>
+        isTaskTool(name) ? runTaskTool(name, args, () => void refreshTasks()) : runRecallTool(args);
+      for await (const delta of streamTextWithTools(apiKey, textModel, contents, sys, tools, runTool)) {
         onDelta(delta);
       }
     } else {
@@ -508,7 +529,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveAsstTextRef.current = "";
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
-    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext, lang);
+    const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
+    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext, lang, agendaBlock);
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
     setCallState("connecting");

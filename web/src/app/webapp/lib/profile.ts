@@ -9,6 +9,8 @@ import { upsertSummary } from "../recordApi";
 import { embedDocument } from "./embed";
 import { store } from "./store";
 import { generateJson } from "./gemini";
+import { syncTasks, type Task, type TaskDelta } from "./tasks";
+import { currentTimeContext } from "./time";
 
 export type Fact = {
   id: number;
@@ -132,6 +134,26 @@ const EXTRACTION_SCHEMA: Schema = {
         required: ["category", "key"],
       },
     },
+    tasks: {
+      type: Type.OBJECT,
+      properties: {
+        adds: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              details: { type: Type.STRING },
+              dueDate: { type: Type.STRING }, // "YYYY-MM-DD" or omitted
+              dueTime: { type: Type.STRING }, // "HH:mm" 24h or omitted
+            },
+            required: ["title"],
+          },
+        },
+        completes: { type: Type.ARRAY, items: { type: Type.INTEGER } }, // ids of finished tasks
+        dismisses: { type: Type.ARRAY, items: { type: Type.INTEGER } }, // ids of cancelled tasks
+      },
+    },
     summary: { type: Type.STRING },
   },
   required: ["upserts"],
@@ -156,20 +178,36 @@ const EXTRACTION_SYSTEM =
   "`removes` when the user explicitly corrected or retracted something. Keep each value to one concise " +
   "sentence. Also write a `summary`: 2-4 sentences, factual and in the third person, capturing what " +
   "this conversation was about plus any open follow-ups, so it can be recalled later — do not " +
-  "attribute intentions to the user that they did not state. Return JSON only; if there is nothing " +
-  "durable to record, return an empty upserts array (still provide the summary).";
+  "attribute intentions to the user that they did not state.\n\n" +
+  "You ALSO maintain the user's structured TASK LIST. You are given the CURRENT LOCAL DATE/TIME and the " +
+  "user's CURRENT OPEN TASKS (each with a numeric id). Under `tasks.adds`, record NEW concrete to-dos, " +
+  "commitments, appointments, or deadlines the USER stated they intend or need to do: a short imperative " +
+  "`title` in the user's own language, optional `details`, and `dueDate` (YYYY-MM-DD) ONLY when the user " +
+  "gave or clearly implied one — resolve relative expressions ('tomorrow', 'next Friday', '明天', " +
+  "'周五', '내일') against the CURRENT LOCAL DATE; never guess a date that wasn't implied. Add `dueTime` " +
+  "(24-hour HH:mm) only when a clock time was stated. Do NOT re-add anything already in CURRENT OPEN " +
+  "TASKS (match by meaning, not exact wording). If the transcript shows an open task was finished, put " +
+  "its id in `tasks.completes`; if it was abandoned or cancelled, put its id in `tasks.dismisses`. " +
+  "Questions, hypotheticals, other people's tasks, and your own suggestions are NOT tasks. Division of " +
+  "labor: dated or actionable to-dos are TASKS, not open_loop facts; trigger-based reminders ('remind me " +
+  "to X when I say/do Y') stay open_loop FACTS, not tasks — never record the same item as both.\n\n" +
+  "Return JSON only; if there is nothing durable to record, return an empty upserts array (still provide " +
+  "the summary).";
+
+export type ExtractionResult = { profileChanged: boolean; tasksChanged: boolean };
 
 /**
- * Distil the transcript into profile updates and persist them. Caller should not await this in the
- * chat path. Returns the applied delta (so the caller can refresh its cache), or null if nothing
- * changed or extraction failed.
+ * Distil the transcript into profile facts + task-list updates and persist them. Caller should not
+ * await this in the chat path. Returns which caches changed (so the caller can refresh them), or null
+ * if nothing changed or extraction failed.
  */
 export async function extractAndSyncProfile(opts: {
   model: string;
   conversationId: string;
   currentFacts: Fact[];
+  currentTasks: Task[];
   transcript: { role: "user" | "assistant"; text: string }[];
-}): Promise<ProfileDelta | null> {
+}): Promise<ExtractionResult | null> {
   const key = store.getKey();
   if (!key) return null;
   const turns = opts.transcript.filter((t) => t.text.trim()).slice(-20);
@@ -178,16 +216,29 @@ export async function extractAndSyncProfile(opts: {
   const profileText = opts.currentFacts.length
     ? opts.currentFacts.map((f) => `${f.category} | ${f.key} | ${f.value}`).join("\n")
     : "(none yet)";
+  // Only open tasks are candidates for completion/dedupe; give the model their ids.
+  const openTasks = opts.currentTasks.filter((t) => t.status === "open");
+  const tasksText = openTasks.length
+    ? openTasks.map((t) => `#${t.id} | ${t.title}${t.dueDate ? ` | due ${t.dueDate}` : ""}`).join("\n")
+    : "(none yet)";
   const transcriptText = turns.map((t) => `${t.role === "assistant" ? "AI" : "User"}: ${t.text}`).join("\n");
   const contents = [
     {
       role: "user" as const,
-      parts: [{ text: `CURRENT PROFILE FACTS:\n${profileText}\n\nRECENT TRANSCRIPT:\n${transcriptText}` }],
+      parts: [
+        {
+          text:
+            `CURRENT LOCAL DATE/TIME:\n${currentTimeContext()}\n\n` +
+            `CURRENT PROFILE FACTS:\n${profileText}\n\n` +
+            `CURRENT OPEN TASKS:\n${tasksText}\n\n` +
+            `RECENT TRANSCRIPT:\n${transcriptText}`,
+        },
+      ],
     },
   ];
 
   try {
-    const result = await generateJson<ProfileDelta & { summary?: string }>(
+    const result = await generateJson<ProfileDelta & { summary?: string; tasks?: TaskDelta }>(
       key,
       opts.model,
       contents,
@@ -200,10 +251,17 @@ export async function extractAndSyncProfile(opts: {
       const embedding = (await embedDocument(summary)) ?? undefined;
       upsertSummary(opts.conversationId, summary, embedding);
     }
+
     const delta: ProfileDelta = { upserts: result?.upserts, removes: result?.removes };
-    if (!delta.upserts?.length && !delta.removes?.length) return null; // summary (if any) already upserted
-    syncProfile(delta);
-    return delta;
+    const profileChanged = !!(delta.upserts?.length || delta.removes?.length);
+    if (profileChanged) syncProfile(delta);
+
+    const tasks = result?.tasks;
+    const tasksChanged = !!(tasks?.adds?.length || tasks?.completes?.length || tasks?.dismisses?.length);
+    if (tasksChanged) syncTasks(tasks!, opts.conversationId);
+
+    if (!profileChanged && !tasksChanged) return null; // summary (if any) already upserted
+    return { profileChanged, tasksChanged };
   } catch {
     return null;
   }

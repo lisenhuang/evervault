@@ -36,7 +36,9 @@ public class ChatMemoriesController : ControllerBase
     public record TurnItem(string Role, string Modality, string? Text, string? AudioBase64, string? AudioMime, float[]? Embedding, string? ImageBase64 = null, string? ImageMime = null);
     public record RecordTurnRequest(string? ConversationId, List<TurnItem> Turns);
     public record SearchRequest(float[]? Vector, string? Q, int K = 8, DateTimeOffset? Since = null, DateTimeOffset? Until = null, string? Kind = null);
-    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, bool HasImage, DateTimeOffset CreatedAt, double? Distance);
+    // Score is the fused hybrid-search relevance (higher = better); null on the pure-vector, newest-first,
+    // and legacy-fallback paths. Added as a trailing optional field so existing clients/callers are unaffected.
+    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, bool HasImage, DateTimeOffset CreatedAt, double? Distance, double? Score = null);
     public record SummaryRequest(string ConversationId, string Text, float[]? Embedding);
 
     /// <summary>The embedding policy the browser must embed with (its own key). enabled = locked + model set.</summary>
@@ -121,8 +123,16 @@ public class ChatMemoriesController : ControllerBase
         return Ok(new { ids });
     }
 
-    /// <summary>Recall by vector (preferred) or text fallback. The browser supplies the query vector
-    /// (embedded with its own key + the locked model/dimension).</summary>
+    /// <summary>Recall past memories. Three modes, chosen by what the browser sends:
+    /// <list type="bullet">
+    /// <item>vector only → pure cosine similarity (the original path);</item>
+    /// <item>vector + query text → HYBRID: cosine + full-text + trigram lanes fused by Reciprocal Rank
+    /// Fusion, so exact names/numbers and semantic matches both surface;</item>
+    /// <item>query text only (embeddings off/unavailable) → keyword fusion (full-text + trigram), falling
+    /// back to a substring match if neither lane hits;</item>
+    /// <item>neither → newest-first.</item>
+    /// </list>
+    /// The browser embeds with its own key; the server never embeds.</summary>
     [HttpPost("search")]
     public async Task<ActionResult<IReadOnlyList<MemoryHit>>> Search([FromBody] SearchRequest req)
     {
@@ -134,15 +144,23 @@ public class ChatMemoriesController : ControllerBase
         var until = req.Until;
         // Optional kind filter ("summary" / "turn"); null searches everything (unchanged behavior).
         var kind = string.IsNullOrWhiteSpace(req.Kind) ? null : req.Kind;
+        var q = (req.Q ?? "").Trim();
+        var hasVector = req.Vector is { Length: > 0 };
+        var hasQuery = q.Length > 0;
 
-        if (req.Vector is { Length: > 0 })
+        // The per-user candidate set shared by every lane (always small, since scoped to one user).
+        IQueryable<ChatMemory> Scoped() => _db.ChatMemories
+            .Where(m => m.EndUserId == uid
+                && (since == null || m.CreatedAt >= since)
+                && (until == null || m.CreatedAt < until)
+                && (kind == null || m.Kind == kind));
+
+        // Pure vector (no query text): the original behavior, unchanged.
+        if (hasVector && !hasQuery)
         {
-            var qv = new Vector(req.Vector);
-            var hits = await _db.ChatMemories
-                .Where(m => m.EndUserId == uid && m.Embedding != null
-                    && (since == null || m.CreatedAt >= since)
-                    && (until == null || m.CreatedAt < until)
-                    && (kind == null || m.Kind == kind))
+            var qv = new Vector(req.Vector!);
+            var hits = await Scoped()
+                .Where(m => m.Embedding != null)
                 .OrderBy(m => m.Embedding!.CosineDistance(qv))
                 .Take(k)
                 .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
@@ -150,17 +168,99 @@ public class ChatMemoriesController : ControllerBase
             return Ok(hits);
         }
 
-        var q = (req.Q ?? "").Trim();
-        var rows = await _db.ChatMemories
-            .Where(m => m.EndUserId == uid && (q == "" || EF.Functions.ILike(m.Content, $"%{q}%"))
-                && (since == null || m.CreatedAt >= since)
-                && (until == null || m.CreatedAt < until)
-                && (kind == null || m.Kind == kind))
-            .OrderByDescending(m => m.CreatedAt)
-            .Take(k)
-            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
+        // Neither vector nor query: newest-first (used by recent-context + the recall tool's recent:true).
+        if (!hasQuery)
+        {
+            var recent = await Scoped()
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(k)
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
+                .ToListAsync();
+            return Ok(recent);
+        }
+
+        // There is a query: fuse the applicable lanes (vector optional) with Reciprocal Rank Fusion.
+        const int LaneTake = 50;      // candidates per lane before fusion
+        const double RrfK = 60.0;     // standard RRF damping constant
+        var fusedScore = new Dictionary<int, double>();
+        var vectorDistance = new Dictionary<int, double>();
+
+        void Accumulate(IReadOnlyList<int> ids)
+        {
+            for (var i = 0; i < ids.Count; i++)
+                fusedScore[ids[i]] = fusedScore.GetValueOrDefault(ids[i]) + 1.0 / (RrfK + (i + 1));
+        }
+
+        // Lane 1 — vector cosine similarity (only when the browser sent an embedding).
+        if (hasVector)
+        {
+            var qv = new Vector(req.Vector!);
+            var vec = await Scoped()
+                .Where(m => m.Embedding != null)
+                .OrderBy(m => m.Embedding!.CosineDistance(qv))
+                .Take(LaneTake)
+                .Select(m => new { m.Id, Dist = m.Embedding!.CosineDistance(qv) })
+                .ToListAsync();
+            Accumulate(vec.Select(x => x.Id).ToList());
+            foreach (var x in vec) vectorDistance[x.Id] = x.Dist;
+        }
+
+        // Lane 2 — full-text ('simple' config: tokenizes on whitespace/punctuation; ranks space-delimited
+        // languages well, and is a no-op for unsegmented CJK, which lane 3 covers).
+        var ftsIds = await Scoped()
+            .Where(m => EF.Functions.ToTsVector("simple", m.Content).Matches(EF.Functions.WebSearchToTsQuery("simple", q)))
+            .OrderByDescending(m => EF.Functions.ToTsVector("simple", m.Content).Rank(EF.Functions.WebSearchToTsQuery("simple", q)))
+            .Take(LaneTake)
+            .Select(m => m.Id)
             .ToListAsync();
-        return Ok(rows);
+        Accumulate(ftsIds);
+
+        // Lane 3 — substring + trigram fuzzy match (both accelerated by the trigram GIN index). This is
+        // the CJK lane: word_similarity is unreliable for Chinese/Japanese (incidental single-character
+        // overlap dominates), so a focused CJK term is matched by ILIKE containment, while word_similarity
+        // adds typo/word-order tolerance for space-delimited scripts. A full unsegmented CJK *sentence*
+        // still won't keyword-match here (no segmenter) — the vector lane is the answer for that.
+        var trgmIds = await Scoped()
+            .Where(m => EF.Functions.ILike(m.Content, $"%{q}%") || EF.Functions.TrigramsWordSimilarity(q, m.Content) > 0.3)
+            .OrderByDescending(m => EF.Functions.TrigramsWordSimilarity(q, m.Content))
+            .Take(LaneTake)
+            .Select(m => m.Id)
+            .ToListAsync();
+        Accumulate(trgmIds);
+
+        // Nothing matched any lane (e.g. pg_trgm unavailable and no FTS token overlap): fall back to the
+        // original substring ILIKE, newest-first — strictly no worse than the old behavior.
+        if (fusedScore.Count == 0)
+        {
+            var fallback = await Scoped()
+                .Where(m => EF.Functions.ILike(m.Content, $"%{q}%"))
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(k)
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
+                .ToListAsync();
+            return Ok(fallback);
+        }
+
+        // Materialize the union of candidates, then order by fused score (newest breaks ties) and take k.
+        var ids = fusedScore.Keys.ToList();
+        var candidates = await Scoped()
+            .Where(m => ids.Contains(m.Id))
+            .Select(m => new
+            {
+                m.Id, m.Role, m.Modality, m.Kind, m.Content,
+                HasAudio = m.AudioObjectKey != null, HasImage = m.ImageObjectKey != null, m.CreatedAt,
+            })
+            .ToListAsync();
+
+        var fused = candidates
+            .OrderByDescending(m => fusedScore[m.Id])
+            .ThenByDescending(m => m.CreatedAt)
+            .Take(k)
+            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.HasAudio, m.HasImage, m.CreatedAt,
+                vectorDistance.TryGetValue(m.Id, out var d) ? d : (double?)null,
+                fusedScore[m.Id]))
+            .ToList();
+        return Ok(fused);
     }
 
     [HttpGet]
