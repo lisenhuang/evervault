@@ -286,20 +286,32 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       }
     }
     const finalText = acc || "_(no response)_";
-    setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, streaming: false, text: finalText } : m)));
     if (speak && acc) {
-      // Fire-and-forget: synthesize in the background so the caller can settle its busy/streaming
-      // state immediately. That keeps the composer (incl. the voice button) usable while the reply's
-      // audio is still being generated. We don't auto-play — the "Play reply" button appears once the
-      // audio lands and the user starts it on demand.
+      // Voice reply: hold the text behind the "typing" dots (the placeholder carries pendingAudio)
+      // until the spoken audio is ready, then reveal the text and auto-play — so the reply lands as
+      // text + voice together instead of the text racing ahead of the slower TTS. We keep the message
+      // flagged (streaming + pendingAudio) so the bubble stays on the dots while synthesis runs; the
+      // caller's busy state settles immediately, so the composer stays usable in the meantime.
+      setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: finalText } : m)));
       void (async () => {
         try {
           const audio = await synthesizeSpeech(apiKey, audioModel, acc, voice);
-          setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, audio } : m)));
+          setMessages((cur) =>
+            cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, audio } : m)),
+          );
+          // Auto-play the moment the audio lands; the manual "Play reply" button stays for replay.
+          playAudioClip(audio.base64, audio.sampleRate);
         } catch {
-          /* TTS is best-effort; the text reply still stands */
+          // TTS failed — drop the hold so the text still appears (just without spoken audio).
+          setMessages((cur) =>
+            cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false } : m)),
+          );
         }
       })();
+    } else {
+      setMessages((cur) =>
+        cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, text: finalText } : m)),
+      );
     }
     return acc;
   }
@@ -438,7 +450,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     try {
       const { base64, mimeType } = await rec.stop();
       const base = [...messages, userMsg];
-      setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice" }]);
+      // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready
+      // (see runAssistant), so the text doesn't appear ahead of the slower voice.
+      setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true }]);
       // Transcribe in parallel with the reply (a second, audio-capable generateContent call). Fills the
       // user's bubble in place when it lands; an empty/failed transcript degrades to the "Voice message"
       // label so the turn still reads sensibly and stays in toContents() history.

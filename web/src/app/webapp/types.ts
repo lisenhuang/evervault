@@ -22,6 +22,12 @@ export type ChatMessage = {
   durationSec?: number;
   /** Spoken reply audio (PCM16 base64) for assistant messages, when produced. */
   audio?: { base64: string; sampleRate: number } | null;
+  /**
+   * True while a spoken (voice) reply is withholding its text until its audio is ready: the bubble
+   * keeps showing the "typing" dots even though `text` has already streamed in. Cleared once the
+   * audio lands (text reveals + auto-plays) or TTS fails (text reveals without audio).
+   */
+  pendingAudio?: boolean;
   /** Attached files (images, PDFs, extracted documents) for user messages. */
   files?: PreparedFile[] | null;
   /** The earlier message this one replies to (set on user messages sent via "Reply"). */

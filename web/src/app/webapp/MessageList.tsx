@@ -226,7 +226,10 @@ function AssistantMessage({
     if (text) onReveal();
   }, [text, onReveal]);
 
-  if (!text && !m.error) {
+  // While `pendingAudio` is set the text has streamed in but is deliberately withheld until the
+  // spoken audio is ready — keep the bubble on the "typing"/speaking dots as if the reply is still
+  // being prepared, so text never races ahead of the voice.
+  if ((!text || m.pendingAudio) && !m.error) {
     if (!typingDots) return null; // silent grace period — the reply may land before "typing" ever shows
     return (
       <div className="flex items-start gap-3">
