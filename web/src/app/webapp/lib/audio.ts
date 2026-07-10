@@ -55,14 +55,15 @@ export async function startRecording(): Promise<Recorder> {
 }
 
 /**
- * Play base64 PCM16 (mono) and return a handle to stop it early. `ended` resolves
- * when playback finishes naturally OR is stopped. Call only from a user gesture —
- * the fresh AudioContext is born "running" and is never resumed.
+ * Play base64 PCM16 (mono) and return a handle to control it. `ended` resolves when playback
+ * finishes naturally OR is stopped (never on pause). `pause()`/`resume()` halt and continue the
+ * context clock, so playback picks back up at the exact same sample. Start from a user gesture;
+ * resume() is also gesture-driven (a click), so it's allowed even under iOS autoplay policy.
  */
 export function playPcm16Handle(
   base64: string,
   sampleRate: number,
-): { stop: () => void; ended: Promise<void> } {
+): { stop: () => void; pause: () => void; resume: () => void; ended: Promise<void> } {
   const bytes = base64ToUint8(base64);
   const samples = Math.floor(bytes.byteLength / 2);
   const view = new DataView(bytes.buffer);
@@ -96,6 +97,14 @@ export function playPcm16Handle(
         /* already stopped */
       }
       close();
+    },
+    // Suspend/resume the whole context — playback halts and later continues from the exact sample.
+    // Safe to call redundantly (state-guarded); no-op once the clip has ended and closed the context.
+    pause: () => {
+      if (!closed && ctx.state === "running") void ctx.suspend();
+    },
+    resume: () => {
+      if (!closed && ctx.state === "suspended") void ctx.resume();
     },
     ended,
   };

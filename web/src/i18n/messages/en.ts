@@ -154,6 +154,8 @@ const en = {
     voiceMessage: "Voice message",
     imageAlt: "Attached image",
     playReply: "Play reply",
+    pauseReply: "Pause",
+    resumeReply: "Resume",
     reply: "Reply",
     copy: "Copy",
     copied: "Copied",

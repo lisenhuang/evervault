@@ -92,13 +92,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const recorderRef = useRef<Recorder | null>(null);
   // Only one spoken reply plays at a time — starting another (auto-play or a manual "Play reply"
   // click) stops whatever is currently playing first.
-  const playingAudioRef = useRef<{ stop: () => void } | null>(null);
-  const playAudioClip = useCallback((base64: string, sampleRate: number) => {
+  const playingAudioRef = useRef<{ stop: () => void; pause: () => void; resume: () => void } | null>(null);
+  // Which reply's audio is loaded in the player and whether it's paused — drives the bubble's play
+  // button (animated while playing, "resume" while paused). null when nothing is loaded.
+  const [audioPlaying, setAudioPlaying] = useState<{ id: string; paused: boolean } | null>(null);
+  const playAudioClip = useCallback((id: string, base64: string, sampleRate: number) => {
     playingAudioRef.current?.stop();
     const handle = playPcm16Handle(base64, sampleRate);
     playingAudioRef.current = handle;
+    setAudioPlaying({ id, paused: false });
     void handle.ended.then(() => {
-      if (playingAudioRef.current === handle) playingAudioRef.current = null;
+      if (playingAudioRef.current === handle) {
+        playingAudioRef.current = null;
+        setAudioPlaying(null);
+      }
     });
   }, []);
 
@@ -300,7 +307,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, audio } : m)),
           );
           // Auto-play the moment the audio lands; the manual "Play reply" button stays for replay.
-          playAudioClip(audio.base64, audio.sampleRate);
+          playAudioClip(asstId, audio.base64, audio.sampleRate);
         } catch {
           // TTS failed — drop the hold so the text still appears (just without spoken audio).
           setMessages((cur) =>
@@ -493,7 +500,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   function playAudio(m: ChatMessage) {
-    if (m.audio) playAudioClip(m.audio.base64, m.audio.sampleRate);
+    if (!m.audio) return;
+    const handle = playingAudioRef.current;
+    // Same reply already loaded: toggle pause/resume so it continues from where it stopped.
+    if (handle && audioPlaying && audioPlaying.id === m.id) {
+      if (audioPlaying.paused) {
+        handle.resume();
+        setAudioPlaying({ id: m.id, paused: false });
+      } else {
+        handle.pause();
+        setAudioPlaying({ id: m.id, paused: true });
+      }
+      return;
+    }
+    // A different reply (or nothing loaded): play it from the top.
+    playAudioClip(m.id, m.audio.base64, m.audio.sampleRate);
   }
 
   // --- Realtime voice call (Live API) ---
@@ -728,6 +749,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               userName={user.name}
               userPicture={user.picture}
               onPlayAudio={playAudio}
+              playingAudioId={audioPlaying?.id ?? null}
+              audioPaused={audioPlaying?.paused ?? false}
               onReply={setReplyTo}
               scrollSignal={!!callState}
             />

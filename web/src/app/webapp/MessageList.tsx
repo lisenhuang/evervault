@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Mic, PhoneOff, Reply, Sparkles, Volume2 } from "lucide-react";
+import { FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
@@ -44,11 +44,26 @@ const rowFlashCls = (flashing: boolean) =>
     flashing ? "bg-blue-500/10 dark:bg-blue-400/15" : ""
   }`;
 
+// Three little bars that jump while a reply's audio is playing — a lightweight "now playing"
+// equalizer. Uses staggered animate-bounce so no custom keyframes are needed; bg-current keeps it
+// in step with the button's text color in light and dark.
+function EqualizerBars() {
+  return (
+    <span className="flex h-3.5 items-end gap-0.5" aria-hidden="true">
+      <span className="h-2 w-0.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+      <span className="h-3.5 w-0.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+      <span className="h-2.5 w-0.5 animate-bounce rounded-full bg-current" />
+    </span>
+  );
+}
+
 export default function MessageList({
   messages,
   userName,
   userPicture,
   onPlayAudio,
+  playingAudioId,
+  audioPaused,
   onReply,
   scrollSignal,
 }: {
@@ -56,6 +71,10 @@ export default function MessageList({
   userName: string;
   userPicture: string | null;
   onPlayAudio: (m: ChatMessage) => void;
+  /** Id of the reply whose audio is loaded in the player, or null when nothing is loaded. */
+  playingAudioId: string | null;
+  /** Whether that loaded reply is currently paused (vs actively playing). */
+  audioPaused: boolean;
   /** Start composing a reply that quotes this message. */
   onReply: (m: ChatMessage) => void;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
@@ -163,6 +182,7 @@ export default function MessageList({
             key={m.id}
             m={m}
             flashing={flashId === m.id}
+            audioState={playingAudioId === m.id ? (audioPaused ? "paused" : "playing") : "idle"}
             onPlayAudio={onPlayAudio}
             onReveal={followReveal}
             onOpenMenu={openMenu}
@@ -200,6 +220,7 @@ const TYPING_DELAY_MS = 2000;
 function AssistantMessage({
   m,
   flashing,
+  audioState,
   onPlayAudio,
   onReveal,
   onOpenMenu,
@@ -207,6 +228,8 @@ function AssistantMessage({
 }: {
   m: ChatMessage;
   flashing: boolean;
+  /** Playback state of this reply's spoken audio: idle, actively playing, or paused mid-clip. */
+  audioState: "idle" | "playing" | "paused";
   onPlayAudio: (m: ChatMessage) => void;
   onReveal: () => void;
   onOpenMenu: (m: ChatMessage, x: number, y: number) => void;
@@ -261,9 +284,24 @@ function AssistantMessage({
         {m.audio && (
           <button
             onClick={() => onPlayAudio(m)}
+            aria-label={
+              audioState === "playing" ? t.message.pauseReply : audioState === "paused" ? t.message.resumeReply : t.message.playReply
+            }
             className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
           >
-            <Volume2 size={13} /> {t.message.playReply}
+            {audioState === "playing" ? (
+              <>
+                <EqualizerBars /> {t.message.pauseReply}
+              </>
+            ) : audioState === "paused" ? (
+              <>
+                <Play size={13} /> {t.message.resumeReply}
+              </>
+            ) : (
+              <>
+                <Volume2 size={13} /> {t.message.playReply}
+              </>
+            )}
           </button>
         )}
       </Pressable>

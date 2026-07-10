@@ -155,6 +155,8 @@ const zh: Messages = {
     voiceMessage: "语音消息",
     imageAlt: "附带的图片",
     playReply: "播放回复",
+    pauseReply: "暂停",
+    resumeReply: "继续",
     reply: "回复",
     copy: "复制",
     copied: "已复制",

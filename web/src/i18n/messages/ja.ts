@@ -154,6 +154,8 @@ const ja: Messages = {
     voiceMessage: "ボイスメッセージ",
     imageAlt: "添付画像",
     playReply: "返答を再生",
+    pauseReply: "一時停止",
+    resumeReply: "再開",
     reply: "返信",
     copy: "コピー",
     copied: "コピーしました",

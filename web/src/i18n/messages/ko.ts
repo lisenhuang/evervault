@@ -154,6 +154,8 @@ const ko: Messages = {
     voiceMessage: "음성 메시지",
     imageAlt: "첨부된 이미지",
     playReply: "답변 재생",
+    pauseReply: "일시정지",
+    resumeReply: "계속",
     reply: "답장",
     copy: "복사",
     copied: "복사됨",
