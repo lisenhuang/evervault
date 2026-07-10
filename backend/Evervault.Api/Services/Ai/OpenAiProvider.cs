@@ -19,8 +19,11 @@ public class OpenAiProvider : IAiProvider
 {
     private const string ResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
     private const string ModelsUrl = "https://chatgpt.com/backend-api/codex/models";
-    // Sent as ?client_version= on the models call; the backend gates the returned catalog by it.
-    private const string ClientVersion = "0.99.0";
+    // The Codex CLI version we present. The /models endpoint gates its catalog by ?client_version= (each
+    // model carries a minimal_client_version), so this must be recent or newer models (5.5, 5.6, …) are
+    // hidden. Bump to the current `@openai/codex` release when OpenAI ships new models.
+    private const string ClientVersion = "0.144.1";
+    private const string UserAgent = "codex_cli_rs/" + ClientVersion + " (Evervault Admin)";
 
     // The named HttpClient (registered in Program.cs) with a long timeout — a reasoning turn can far
     // exceed the default 100s while we hold the SSE stream open.
@@ -124,6 +127,7 @@ public class OpenAiProvider : IAiProvider
             req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + rawKey);
             if (!string.IsNullOrWhiteSpace(accountId)) req.Headers.TryAddWithoutValidation("chatgpt-account-id", accountId);
             req.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
+            req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
             using var res = await client.SendAsync(req, ct);
             if (!res.IsSuccessStatusCode) return FallbackModels;
@@ -138,8 +142,10 @@ public class OpenAiProvider : IAiProvider
             {
                 var slug = m.TryGetProperty("slug", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
                 if (string.IsNullOrWhiteSpace(slug)) continue;
-                // Show every model the account's catalog returns (ordered by the backend's priority) — the
-                // Codex surface already scopes this to models usable here, so we don't filter further.
+                // Match Codex's picker: show only "list" models (drops internal entries like "Codex Auto
+                // Review"); keep models with no visibility set (permissive about unknown labels).
+                var vis = m.TryGetProperty("visibility", out var vv) && vv.ValueKind == JsonValueKind.String ? vv.GetString() : null;
+                if (vis is not null && !vis.Equals("list", StringComparison.OrdinalIgnoreCase)) continue;
                 var name = m.TryGetProperty("display_name", out var dn) && dn.ValueKind == JsonValueKind.String
                     && !string.IsNullOrWhiteSpace(dn.GetString()) ? dn.GetString()! : slug!;
                 var priority = m.TryGetProperty("priority", out var p) && p.TryGetInt32(out var pr) ? pr : 0;
@@ -192,6 +198,7 @@ public class OpenAiProvider : IAiProvider
         if (!string.IsNullOrWhiteSpace(accountId)) req.Headers.TryAddWithoutValidation("chatgpt-account-id", accountId);
         req.Headers.TryAddWithoutValidation("OpenAI-Beta", "responses=experimental");
         req.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
+        req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
         // Stable per-conversation session id (derived from the first user message) so the backend's
         // per-session reasoning/rate accounting isn't fragmented across the turns of one chat.
         req.Headers.TryAddWithoutValidation("session_id", StableSessionId(messages));
