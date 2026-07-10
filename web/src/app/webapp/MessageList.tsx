@@ -44,15 +44,22 @@ const rowFlashCls = (flashing: boolean) =>
     flashing ? "bg-blue-500/10 dark:bg-blue-400/15" : ""
   }`;
 
-// Three little bars that jump while a reply's audio is playing — a lightweight "now playing"
-// equalizer. Uses staggered animate-bounce so no custom keyframes are needed; bg-current keeps it
-// in step with the button's text color in light and dark.
+// Three little bars pulsing while a reply's audio is playing — a lightweight "now playing"
+// equalizer. Reuses the call bar's scaleY `wave` keyframes (staggered per bar), which keeps the
+// bars inside their box — unlike a translate animation, which would jump them into the button's
+// edge. The h-3 box matches the 13px icons of the other button states; bg-current keeps it in
+// step with the button's text color in light and dark.
+const EQ_DELAYS = ["-0.6s", "-0.4s", "-0.2s"];
 function EqualizerBars() {
   return (
-    <span className="flex h-3.5 items-end gap-0.5" aria-hidden="true">
-      <span className="h-2 w-0.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-      <span className="h-3.5 w-0.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-      <span className="h-2.5 w-0.5 animate-bounce rounded-full bg-current" />
+    <span className="flex h-3 items-center gap-0.5" aria-hidden="true">
+      {EQ_DELAYS.map((d) => (
+        <span
+          key={d}
+          className="h-full w-0.5 origin-center animate-wave rounded-full bg-current"
+          style={{ animationDelay: d }}
+        />
+      ))}
     </span>
   );
 }
