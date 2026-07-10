@@ -10,6 +10,7 @@ export default function AiChat() {
   const [provider, setProvider] = useState<Provider>("openrouter");
   const [model, setModel] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [reasoning, setReasoning] = useState("auto"); // ChatGPT reasoning effort ("auto" = model default)
   const [modelWarning, setModelWarning] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
   const [usage, setUsage] = useState<AiKeyUsage | null>(null);
@@ -74,6 +75,7 @@ export default function AiChat() {
       if (res.ok) {
         const c = await res.json();
         preferred.current = { gemini: c.geminiModel, openrouter: c.openRouterModel, openai: c.openAiModel };
+        setReasoning(c.openAiReasoning || "auto");
         if (c.selectedProvider === "gemini" || c.selectedProvider === "openrouter" || c.selectedProvider === "openai")
           p = c.selectedProvider;
       }
@@ -130,6 +132,22 @@ export default function AiChat() {
     setModel(m);
     persist(provider, m);
   }
+
+  function changeReasoning(v: string) {
+    setReasoning(v);
+    void api("/api/admin/ai/config", { method: "PUT", body: JSON.stringify({ openAiReasoning: v }) });
+  }
+
+  // Keep the stored ChatGPT reasoning valid for the selected model — its supported levels vary by model.
+  // An unsupported effort would be rejected by the backend, so fall back to "auto" (the model's default).
+  useEffect(() => {
+    if (provider !== "openai") return;
+    const lv = models.find((x) => x.id === model)?.reasoningLevels ?? [];
+    if (reasoning !== "auto" && !lv.includes(reasoning)) {
+      setReasoning("auto");
+      void api("/api/admin/ai/config", { method: "PUT", body: JSON.stringify({ openAiReasoning: "auto" }) });
+    }
+  }, [provider, model, models, reasoning]);
 
   async function handleTurn(res: Response) {
     if (!res.ok) {
@@ -188,6 +206,9 @@ export default function AiChat() {
   }
 
   const shown = models; // already sorted: free first, then paid cheapest → priciest
+  const currentModel = models.find((m) => m.id === model);
+  const reasoningOptions = provider === "openai" ? currentModel?.reasoningLevels ?? [] : [];
+  const effectiveReasoning = reasoning === "auto" || reasoningOptions.includes(reasoning) ? reasoning : "auto";
   const confirmReady = pending && (!pending.dangerous || typedConfirm.trim() === "CONFIRM");
   const canSend = !busy && !pending && !!model && !!input.trim();
   const reset = usage?.supported ? resetInfo(usage, nowTs) : null;
@@ -215,6 +236,16 @@ export default function AiChat() {
             );
           })}
         </Select>
+        {provider === "openai" && reasoningOptions.length > 0 && (
+          <Select value={effectiveReasoning} onChange={changeReasoning} disabled={busy}>
+            <option value="auto">Thinking: Auto</option>
+            {reasoningOptions.map((lvl) => (
+              <option key={lvl} value={lvl}>
+                Thinking: {reasoningLabel(lvl)}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => refreshUsage(provider)} disabled={usageLoading || busy}>
             {usageLoading ? "Checking…" : "Key usage"}
@@ -442,6 +473,20 @@ function UsageWindow({ w, nowTs }: { w: AiRateWindow; nowTs: number }) {
       )}
     </span>
   );
+}
+
+function reasoningLabel(level: string): string {
+  const map: Record<string, string> = {
+    none: "None",
+    minimal: "Minimal",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+    max: "Max",
+    ultra: "Ultra",
+  };
+  return map[level] ?? level.charAt(0).toUpperCase() + level.slice(1);
 }
 
 function countdownStr(resetMs: number, nowTs: number): string {

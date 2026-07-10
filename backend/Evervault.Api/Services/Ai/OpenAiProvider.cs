@@ -138,16 +138,13 @@ public class OpenAiProvider : IAiProvider
             {
                 var slug = m.TryGetProperty("slug", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
                 if (string.IsNullOrWhiteSpace(slug)) continue;
-                // Only "list" models are meant for the picker; skip explicitly hidden ones (be permissive
-                // about unknown values so a new visibility label never blanks the list).
-                var vis = m.TryGetProperty("visibility", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-                if (vis is not null && (vis.Equals("hide", StringComparison.OrdinalIgnoreCase)
-                    || vis.Equals("none", StringComparison.OrdinalIgnoreCase))) continue;
-
+                // Show every model the account's catalog returns (ordered by the backend's priority) — the
+                // Codex surface already scopes this to models usable here, so we don't filter further.
                 var name = m.TryGetProperty("display_name", out var dn) && dn.ValueKind == JsonValueKind.String
                     && !string.IsNullOrWhiteSpace(dn.GetString()) ? dn.GetString()! : slug!;
                 var priority = m.TryGetProperty("priority", out var p) && p.TryGetInt32(out var pr) ? pr : 0;
-                list.Add((priority, new AiModelInfo(slug!, name, Name, false, null, null, "Included in ChatGPT plan")));
+                var (levels, def) = ReasoningLevels(m);
+                list.Add((priority, new AiModelInfo(slug!, name, Name, false, null, null, "Included in ChatGPT plan", levels, def)));
             }
             return list.Count > 0 ? list.OrderBy(x => x.Priority).Select(x => x.Info).ToList() : FallbackModels;
         }
@@ -301,14 +298,37 @@ public class OpenAiProvider : IAiProvider
         };
     }
 
+    // The reasoning-effort levels the Responses API accepts. Models advertise their own subset.
+    private static readonly HashSet<string> KnownEfforts =
+        new(StringComparer.OrdinalIgnoreCase) { "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra" };
+
     private static object? Reasoning(string? effort)
     {
         if (string.IsNullOrWhiteSpace(effort) || string.Equals(effort, "auto", StringComparison.OrdinalIgnoreCase))
-            return null;
-        var e = effort.ToLowerInvariant();
-        if (e == "off") return new { effort = "minimal" };
-        if (e is "low" or "medium" or "high") return new { effort = e };
-        return null;
+            return null;                                   // let the model use its own default
+        var e = effort.Trim().ToLowerInvariant();
+        if (e == "off") return new { effort = "minimal" }; // shared "off" maps to the lightest real level
+        return KnownEfforts.Contains(e) ? new { effort = e } : null;
+    }
+
+    /// <summary>Parse a model entry's <c>supported_reasoning_levels</c> (each {effort, description}) and
+    /// <c>default_reasoning_level</c> into plain strings for the UI.</summary>
+    private static (IReadOnlyList<string>? Levels, string? Default) ReasoningLevels(JsonElement model)
+    {
+        List<string>? levels = null;
+        if (model.TryGetProperty("supported_reasoning_levels", out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var p in arr.EnumerateArray())
+            {
+                var eff = p.ValueKind == JsonValueKind.String ? p.GetString()
+                    : p.TryGetProperty("effort", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString()
+                    : null;
+                if (!string.IsNullOrWhiteSpace(eff)) (levels ??= new()).Add(eff!);
+            }
+        }
+        var def = model.TryGetProperty("default_reasoning_level", out var d) && d.ValueKind == JsonValueKind.String
+            ? d.GetString() : null;
+        return (levels, def);
     }
 
     // --- SSE response parsing ---

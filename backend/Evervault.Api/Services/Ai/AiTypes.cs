@@ -18,7 +18,8 @@ public record AiToolCall(string Id, string Name, string ArgumentsJson);
 /// is optional opaque data the provider needs echoed on the next turn (see <see cref="AiChatMessage"/>).</summary>
 public record AiCompletion(string? Text, List<AiToolCall> ToolCalls, string? ProviderState = null);
 
-/// <summary>A provider-agnostic model entry for the switcher.</summary>
+/// <summary>A provider-agnostic model entry for the switcher. <see cref="ReasoningLevels"/> (when the
+/// provider advertises them, e.g. ChatGPT) lets the UI offer only the effort levels this model supports.</summary>
 public record AiModelInfo(
     string Id,
     string Name,
@@ -26,7 +27,9 @@ public record AiModelInfo(
     bool IsFree,
     decimal? PromptPricePerMTok,
     decimal? CompletionPricePerMTok,
-    string? PriceLabel);
+    string? PriceLabel,
+    IReadOnlyList<string>? ReasoningLevels = null,
+    string? DefaultReasoningLevel = null);
 
 /// <summary>A tool the model may call, in provider-agnostic form. <see cref="ParametersJson"/> is a
 /// JSON-Schema string describing the arguments.</summary>

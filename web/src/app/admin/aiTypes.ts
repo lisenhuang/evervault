@@ -27,6 +27,9 @@ export type ModelInfo = {
   promptPricePerMTok: number | null;
   completionPricePerMTok: number | null;
   priceLabel: string | null;
+  // Reasoning-effort levels this model supports (ChatGPT advertises these; others are null).
+  reasoningLevels: string[] | null;
+  defaultReasoningLevel: string | null;
 };
 
 export type ModelsResult = { provider: string; models: ModelInfo[]; warning: string | null };
@@ -55,7 +58,8 @@ export type ChatConfigDto = {
   geminiModel: string | null;
   openRouterModel: string | null;
   openAiModel: string | null;
-  reasoningEffort: string | null; // "auto" | "off" | "low" | "medium" | "high" | null
+  reasoningEffort: string | null; // "auto" | "off" | "low" | "medium" | "high" | null (Gemini/OpenRouter)
+  openAiReasoning: string | null; // ChatGPT's own level (minimal/low/medium/high/xhigh/…), or "auto"
 };
 
 // "Sign in with ChatGPT" (Codex OAuth) connection status. No secrets.

@@ -52,6 +52,21 @@ public class FakeAiProvider : IAiProvider
     {
         if (rawKey.Trim() != "good")
             throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
+
+        // The OAuth "ChatGPT" provider advertises per-model reasoning levels (real ones come from the
+        // account's /models catalog) so the reasoning selector can be exercised offline.
+        if (_name == "openai")
+        {
+            IReadOnlyList<AiModelInfo> gpt = new List<AiModelInfo>
+            {
+                new("gpt-5-fake", "GPT-5 (fake)", _name, false, null, null, "Included in ChatGPT plan",
+                    new[] { "low", "medium", "high", "xhigh" }, "medium"),
+                new("gpt-5-mini-fake", "GPT-5 mini (fake)", _name, false, null, null, "Included in ChatGPT plan",
+                    new[] { "low", "medium" }, "low"),
+            };
+            return Task.FromResult(gpt);
+        }
+
         IReadOnlyList<AiModelInfo> models = new List<AiModelInfo>
         {
             new($"{_name}/fake-free", "Fake Free Model", _name, true, 0m, 0m, "Free"),
