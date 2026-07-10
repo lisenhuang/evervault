@@ -67,6 +67,7 @@ function ChatGptOAuthCard() {
   const [busy, setBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [redirectUrl, setRedirectUrl] = useState("");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
 
   const reload = useCallback(async () => {
@@ -116,6 +117,7 @@ function ChatGptOAuthCard() {
     setBusy(true);
     await api("/api/admin/ai/openai/connect", { method: "DELETE" });
     setPasteOpen(false);
+    setConfirmDisconnect(false);
     await reload();
     setBusy(false);
     setMsg(null);
@@ -148,9 +150,23 @@ function ChatGptOAuthCard() {
               </dd>
             </dl>
             {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
-            <Button variant="danger" onClick={disconnect} disabled={busy}>
-              Disconnect
-            </Button>
+            {confirmDisconnect ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-black/60 dark:text-white/60">
+                  Disconnect this ChatGPT account? You’ll need to sign in again to reconnect.
+                </span>
+                <Button variant="danger" size="sm" onClick={disconnect} disabled={busy}>
+                  Confirm
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmDisconnect(false)} disabled={busy}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button variant="danger" onClick={() => setConfirmDisconnect(true)} disabled={busy}>
+                Disconnect
+              </Button>
+            )}
           </>
         ) : (
           <>
