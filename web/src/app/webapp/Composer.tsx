@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileText, FileUp, FolderOpen, Images, Loader2, Mic, Paperclip, Phone, Reply, Send, Square, X } from "lucide-react";
+import { FileText, FileUp, FolderOpen, Images, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import { FILE_ACCEPT, FileError, formatSize, IMAGE_ACCEPT, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
 import type { ChatMessage } from "./types";
 
 export type VoiceState = "idle" | "recording" | "processing";
+
+// A voice recording runs for at most this many seconds; the mic button counts down and,
+// on reaching 0, stops-and-sends automatically (same as tapping the button).
+const RECORD_LIMIT = 99;
 
 export default function Composer({
   onSendText,
@@ -49,6 +53,10 @@ export default function Composer({
   const [isIOS, setIsIOS] = useState(false);
   // Phone-width screens get a short input placeholder — the full one gets clipped.
   const [isNarrow, setIsNarrow] = useState(false);
+  // Seconds left in the current recording, shown counting down inside the mic button.
+  const [recordLeft, setRecordLeft] = useState(RECORD_LIMIT);
+  // Guards the auto-send so hitting 0 stops-and-sends exactly once per recording.
+  const autoSentRef = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +96,25 @@ export default function Composer({
   useEffect(() => {
     if (replyTo) taRef.current?.focus();
   }, [replyTo]);
+
+  // Recording countdown: tick down once a second while recording; reset whenever we're not.
+  useEffect(() => {
+    if (voiceState !== "recording") {
+      setRecordLeft(RECORD_LIMIT);
+      autoSentRef.current = false;
+      return;
+    }
+    const id = setInterval(() => setRecordLeft((n) => Math.max(0, n - 1)), 1000);
+    return () => clearInterval(id);
+  }, [voiceState]);
+
+  // Hitting 0 while still recording stops-and-sends automatically (once).
+  useEffect(() => {
+    if (voiceState === "recording" && recordLeft === 0 && !autoSentRef.current) {
+      autoSentRef.current = true;
+      onStopVoice();
+    }
+  }, [voiceState, recordLeft, onStopVoice]);
 
   function setFilesSync(next: PreparedFile[]) {
     filesRef.current = next;
@@ -349,7 +376,15 @@ export default function Composer({
                 : "border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
             }`}
           >
-            {processing ? <Loader2 size={18} className="animate-spin" /> : recording ? <Square size={16} /> : <Mic size={18} />}
+            {processing ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : recording ? (
+              // Fixed w/h keeps the circle from reshaping as the digit count changes; tabular-nums
+              // keeps the number from shifting as it counts down. Tapping still stops-and-sends.
+              <span className="text-sm font-semibold leading-none tabular-nums">{recordLeft}</span>
+            ) : (
+              <Mic size={18} />
+            )}
           </button>
 
           <div className="flex flex-1 items-end rounded-2xl border border-black/15 bg-white px-2 py-1.5 dark:border-white/20 dark:bg-neutral-900">
