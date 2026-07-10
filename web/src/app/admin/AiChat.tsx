@@ -140,6 +140,9 @@ export default function AiChat() {
     setMessages(data.messages);
     if (data.status === "proposal" && data.proposal) setPending(data.proposal);
     else if (data.status === "error") setError(data.error ?? "Something went wrong.");
+    // ChatGPT's 5-hour / weekly usage is captured server-side during the turn — surface it automatically
+    // (for the key-based providers usage stays manual, since it hits their metered key endpoint).
+    if (provider === "openai" && data.status !== "error") void refreshUsage("openai");
   }
 
   async function send() {
@@ -415,7 +418,13 @@ function UsageWindow({ w, nowTs }: { w: AiRateWindow; nowTs: number }) {
   const bar = pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500";
   const cd = w.resetUnixMs ? countdownStr(w.resetUnixMs, nowTs) : null;
   const local = w.resetUnixMs
-    ? new Date(w.resetUnixMs).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })
+    ? new Date(w.resetUnixMs).toLocaleString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
     : undefined;
   return (
     <span className="inline-flex items-center gap-1.5" title={local ? `Resets ${local}` : undefined}>
@@ -425,7 +434,12 @@ function UsageWindow({ w, nowTs }: { w: AiRateWindow; nowTs: number }) {
         <span className={`absolute inset-y-0 left-0 rounded-full ${bar}`} style={{ width: `${pct}%` }} />
       </span>
       <span>{pct.toFixed(0)}%</span>
-      {cd && <span className="text-black/40 dark:text-white/40">· resets in {cd}</span>}
+      {cd && (
+        <span className="text-black/40 dark:text-white/40">
+          · resets in {cd}
+          {local ? ` (${local})` : ""}
+        </span>
+      )}
     </span>
   );
 }

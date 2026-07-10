@@ -18,6 +18,9 @@ namespace Evervault.Api.Services.Ai;
 public class OpenAiProvider : IAiProvider
 {
     private const string ResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
+    private const string ModelsUrl = "https://chatgpt.com/backend-api/codex/models";
+    // Sent as ?client_version= on the models call; the backend gates the returned catalog by it.
+    private const string ClientVersion = "0.99.0";
 
     // The named HttpClient (registered in Program.cs) with a long timeout — a reasoning turn can far
     // exceed the default 100s while we hold the SSE stream open.
@@ -40,13 +43,12 @@ public class OpenAiProvider : IAiProvider
 
     private sealed record RateSnapshot(IReadOnlyList<AiRateWindow> Windows, DateTimeOffset At);
 
-    // A curated static list — the ChatGPT/Codex backend only accepts specific models, and there is no
-    // reliable keyless catalog endpoint. Editable here as OpenAI ships new Codex models.
-    private static readonly AiModelInfo[] Models =
+    // Fallback only — shown before connect or if the live catalog can't be fetched. The real list comes
+    // from the account's /models endpoint (see ListModelsAsync).
+    private static readonly AiModelInfo[] FallbackModels =
     {
         new("gpt-5-codex", "GPT-5 Codex", "openai", false, null, null, "Included in ChatGPT plan"),
         new("gpt-5", "GPT-5", "openai", false, null, null, "Included in ChatGPT plan"),
-        new("gpt-5-mini", "GPT-5 mini", "openai", false, null, null, "Included in ChatGPT plan"),
     };
 
     public Task<(bool Ok, string Message)> ValidateKeyAsync(string rawKey, CancellationToken ct)
@@ -59,6 +61,12 @@ public class OpenAiProvider : IAiProvider
         if (string.IsNullOrWhiteSpace(rawKey))
             return new AiKeyUsage(false, "Connect a ChatGPT account to see plan usage.", null, null, null, null, null, null);
 
+        // A snapshot captured during a recent chat turn is the most reliable source (the standalone usage
+        // endpoint is undocumented), so prefer it when fresh — the bars then appear instantly after a message.
+        var cached = _lastUsage;
+        if (cached is { Windows.Count: > 0 } && DateTimeOffset.UtcNow - cached.At < TimeSpan.FromMinutes(2))
+            return BuildUsage(cached.Windows, note: null);
+
         var fresh = await TryFetchUsageAsync(rawKey, ct);
         if (fresh is { Count: > 0 })
         {
@@ -66,12 +74,11 @@ public class OpenAiProvider : IAiProvider
             return BuildUsage(fresh, note: null);
         }
 
-        var cached = _lastUsage;
         if (cached is { Windows.Count: > 0 })
             return BuildUsage(cached.Windows, note: $"as of your last message ({Ago(cached.At)})");
 
         return new AiKeyUsage(false,
-            "No usage data yet — send a message on the ChatGPT provider, then check again.",
+            "No usage yet — send a message on ChatGPT and your 5-hour and weekly limits will show here.",
             null, null, null, null, null, null);
     }
 
@@ -103,8 +110,52 @@ public class OpenAiProvider : IAiProvider
         catch { return null; }
     }
 
-    public Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<AiModelInfo>>(Models);
+    /// <summary>The models actually available to the connected ChatGPT account, fetched live from the
+    /// Codex <c>/models</c> catalog with the OAuth token (visibility=list, ordered by the backend's
+    /// priority). Falls back to a small static list when disconnected or the catalog can't be read.</summary>
+    public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(rawKey)) return FallbackModels; // not connected → show the fallback
+        try
+        {
+            var accountId = await _accountId.GetAccountIdAsync(ct);
+            var client = _http.CreateClient(HttpClientName);
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{ModelsUrl}?client_version={ClientVersion}");
+            req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + rawKey);
+            if (!string.IsNullOrWhiteSpace(accountId)) req.Headers.TryAddWithoutValidation("chatgpt-account-id", accountId);
+            req.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            using var res = await client.SendAsync(req, ct);
+            if (!res.IsSuccessStatusCode) return FallbackModels;
+
+            var body = await res.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("models", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return FallbackModels;
+
+            var list = new List<(int Priority, AiModelInfo Info)>();
+            foreach (var m in arr.EnumerateArray())
+            {
+                var slug = m.TryGetProperty("slug", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+                if (string.IsNullOrWhiteSpace(slug)) continue;
+                // Only "list" models are meant for the picker; skip explicitly hidden ones (be permissive
+                // about unknown values so a new visibility label never blanks the list).
+                var vis = m.TryGetProperty("visibility", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+                if (vis is not null && (vis.Equals("hide", StringComparison.OrdinalIgnoreCase)
+                    || vis.Equals("none", StringComparison.OrdinalIgnoreCase))) continue;
+
+                var name = m.TryGetProperty("display_name", out var dn) && dn.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(dn.GetString()) ? dn.GetString()! : slug!;
+                var priority = m.TryGetProperty("priority", out var p) && p.TryGetInt32(out var pr) ? pr : 0;
+                list.Add((priority, new AiModelInfo(slug!, name, Name, false, null, null, "Included in ChatGPT plan")));
+            }
+            return list.Count > 0 ? list.OrderBy(x => x.Priority).Select(x => x.Info).ToList() : FallbackModels;
+        }
+        catch
+        {
+            return FallbackModels;
+        }
+    }
 
     public async Task<AiCompletion> CompleteAsync(
         string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
