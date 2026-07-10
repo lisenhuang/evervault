@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileText, FileUp, FolderOpen, Images, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
+import { FileText, FileUp, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
-import { FILE_ACCEPT, FileError, formatSize, IMAGE_ACCEPT, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
+import { FILE_ACCEPT, FileError, formatSize, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
 import type { ChatMessage } from "./types";
 
 export type VoiceState = "idle" | "recording" | "processing";
@@ -45,12 +45,10 @@ export default function Composer({
   const [files, setFiles] = useState<PreparedFile[]>([]);
   const [busyCount, setBusyCount] = useState(0);
   const [attachError, setAttachError] = useState("");
-  const [menuOpen, setMenuOpen] = useState(false); // iOS: Photo Library / Choose Files
   const [dragging, setDragging] = useState(false);
   // On touch devices (phones/tablets) Enter should insert a newline like a
   // messaging app; the send button is used to send. On desktop, Enter sends.
   const [isTouch, setIsTouch] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
   // Phone-width screens get a short input placeholder — the full one gets clipped.
   const [isNarrow, setIsNarrow] = useState(false);
   // Seconds left in the current recording, shown counting down inside the mic button.
@@ -58,7 +56,6 @@ export default function Composer({
   // Guards the auto-send so hitting 0 stops-and-sends exactly once per recording.
   const autoSentRef = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Ref mirrors so slot accounting stays exact across concurrent async preparations, and so the
   // window-level drag handlers (bound once) always call the latest attachFiles.
@@ -84,12 +81,6 @@ export default function Composer({
     update();
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
-  }, []);
-
-  useEffect(() => {
-    // iPadOS reports itself as "Macintosh"; the touch-point check tells it apart from real Macs.
-    const ua = navigator.userAgent;
-    setIsIOS(/iPad|iPhone|iPod/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1));
   }, []);
 
   // Picking "Reply" moves the user straight into typing the reply.
@@ -246,10 +237,9 @@ export default function Composer({
       onNeedKey();
       return;
     }
-    // iOS: let the user pick between the photo library and the Files app; elsewhere the single
-    // combined picker already covers both.
-    if (isIOS) setMenuOpen((o) => !o);
-    else fileInputRef.current?.click();
+    // The single combined picker accepts images and documents; on iOS the OS itself surfaces the
+    // Photo Library / Take Photo / Choose Files choice, so no in-app menu is needed.
+    fileInputRef.current?.click();
   }
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -388,46 +378,16 @@ export default function Composer({
           </button>
 
           <div className="flex flex-1 items-end rounded-2xl border border-black/15 bg-white px-2 py-1.5 dark:border-white/20 dark:bg-neutral-900">
-            <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple className="hidden" onChange={onPick} />
             <input ref={fileInputRef} type="file" accept={FILE_ACCEPT} multiple className="hidden" onChange={onPick} />
-            <div className="relative">
-              {menuOpen && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute bottom-10 left-0 z-20 w-44 overflow-hidden rounded-xl border border-black/10 bg-white shadow-lg dark:border-white/15 dark:bg-neutral-800">
-                    <button
-                      onClick={() => {
-                        setMenuOpen(false);
-                        imageInputRef.current?.click();
-                      }}
-                      className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm transition hover:bg-black/5 dark:hover:bg-white/10"
-                    >
-                      <Images size={16} className="text-black/50 dark:text-white/50" aria-hidden="true" />
-                      {t.composer.attachPhotos}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setMenuOpen(false);
-                        fileInputRef.current?.click();
-                      }}
-                      className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm transition hover:bg-black/5 dark:hover:bg-white/10"
-                    >
-                      <FolderOpen size={16} className="text-black/50 dark:text-white/50" aria-hidden="true" />
-                      {t.composer.attachBrowse}
-                    </button>
-                  </div>
-                </>
-              )}
-              <button
-                onClick={attachClick}
-                disabled={disabled || recording}
-                title={t.composer.attachFiles}
-                aria-label={t.composer.attachFiles}
-                className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10"
-              >
-                <Paperclip size={18} />
-              </button>
-            </div>
+            <button
+              onClick={attachClick}
+              disabled={disabled || recording}
+              title={t.composer.attachFiles}
+              aria-label={t.composer.attachFiles}
+              className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10"
+            >
+              <Paperclip size={18} />
+            </button>
             <textarea
               ref={taRef}
               value={text}
