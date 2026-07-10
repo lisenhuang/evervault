@@ -19,11 +19,19 @@ public class OpenAiProvider : IAiProvider
 {
     private const string ResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
     private const string ModelsUrl = "https://chatgpt.com/backend-api/codex/models";
-    // The Codex CLI version we present. The /models endpoint gates its catalog by ?client_version= (each
-    // model carries a minimal_client_version), so this must be recent or newer models (5.5, 5.6, …) are
-    // hidden. Bump to the current `@openai/codex` release when OpenAI ships new models.
-    private const string ClientVersion = "0.144.1";
-    private const string UserAgent = "codex_cli_rs/" + ClientVersion + " (Evervault Admin)";
+
+    // The /models endpoint gates its catalog by ?client_version= (each model carries a minimal_client_version),
+    // so an old version hides newer models (5.5, 5.6, …). We present the current Codex CLI version, fetched
+    // live from the npm registry (cached) so new models appear without a code change; the constant is only a
+    // last-resort fallback if npm is unreachable.
+    private const string FallbackClientVersion = "0.144.1";
+    private const string NpmLatestUrl = "https://registry.npmjs.org/@openai/codex/latest";
+    private static readonly TimeSpan VersionTtl = TimeSpan.FromHours(6);
+
+    private volatile CachedVersion? _clientVersion;
+    private sealed record CachedVersion(string Version, DateTimeOffset FetchedAt);
+
+    private static string UserAgentFor(string version) => $"codex_cli_rs/{version} (Evervault Admin)";
 
     // The named HttpClient (registered in Program.cs) with a long timeout — a reasoning turn can far
     // exceed the default 100s while we hold the SSE stream open.
@@ -113,6 +121,34 @@ public class OpenAiProvider : IAiProvider
         catch { return null; }
     }
 
+    /// <summary>The Codex CLI version to present to the backend. Fetched from the npm registry and cached
+    /// for <see cref="VersionTtl"/>; falls back to the last-known value, then <see cref="FallbackClientVersion"/>
+    /// if npm can't be reached — so the model catalog stays current without a redeploy.</summary>
+    private async Task<string> GetClientVersionAsync(CancellationToken ct)
+    {
+        var cached = _clientVersion;
+        if (cached is not null && DateTimeOffset.UtcNow - cached.FetchedAt < VersionTtl)
+            return cached.Version;
+        try
+        {
+            var client = _http.CreateClient(HttpClientName);
+            using var res = await client.GetAsync(NpmLatestUrl, ct);
+            if (res.IsSuccessStatusCode)
+            {
+                using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+                if (doc.RootElement.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(v.GetString()))
+                {
+                    var ver = v.GetString()!;
+                    _clientVersion = new CachedVersion(ver, DateTimeOffset.UtcNow);
+                    return ver;
+                }
+            }
+        }
+        catch { /* npm unreachable — use the last-known or fallback below */ }
+        return cached?.Version ?? FallbackClientVersion;
+    }
+
     /// <summary>The models actually available to the connected ChatGPT account, fetched live from the
     /// Codex <c>/models</c> catalog with the OAuth token (visibility=list, ordered by the backend's
     /// priority). Falls back to a small static list when disconnected or the catalog can't be read.</summary>
@@ -122,12 +158,13 @@ public class OpenAiProvider : IAiProvider
         try
         {
             var accountId = await _accountId.GetAccountIdAsync(ct);
+            var clientVersion = await GetClientVersionAsync(ct);
             var client = _http.CreateClient(HttpClientName);
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{ModelsUrl}?client_version={ClientVersion}");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{ModelsUrl}?client_version={clientVersion}");
             req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + rawKey);
             if (!string.IsNullOrWhiteSpace(accountId)) req.Headers.TryAddWithoutValidation("chatgpt-account-id", accountId);
             req.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
-            req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+            req.Headers.TryAddWithoutValidation("User-Agent", UserAgentFor(clientVersion));
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
             using var res = await client.SendAsync(req, ct);
             if (!res.IsSuccessStatusCode) return FallbackModels;
@@ -198,7 +235,7 @@ public class OpenAiProvider : IAiProvider
         if (!string.IsNullOrWhiteSpace(accountId)) req.Headers.TryAddWithoutValidation("chatgpt-account-id", accountId);
         req.Headers.TryAddWithoutValidation("OpenAI-Beta", "responses=experimental");
         req.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
-        req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        req.Headers.TryAddWithoutValidation("User-Agent", UserAgentFor(await GetClientVersionAsync(ct)));
         // Stable per-conversation session id (derived from the first user message) so the backend's
         // per-session reasoning/rate accounting isn't fragmented across the turns of one chat.
         req.Headers.TryAddWithoutValidation("session_id", StableSessionId(messages));
