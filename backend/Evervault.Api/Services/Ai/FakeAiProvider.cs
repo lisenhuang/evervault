@@ -25,6 +25,21 @@ public class FakeAiProvider : IAiProvider
             throw new AiProviderException(AiErrorKind.Auth, "Invalid key (fake provider expects 'good').");
         var now = DateTimeOffset.UtcNow;
         var nextMidnightUtc = new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, TimeSpan.Zero).AddDays(1);
+
+        // The OAuth "ChatGPT" provider reports plan quota windows (5-hour + weekly) instead of credits.
+        if (_name == "openai")
+        {
+            IReadOnlyList<AiRateWindow> windows = new List<AiRateWindow>
+            {
+                new("5-hour limit", 34.0, now.AddHours(2).AddMinutes(10).ToUnixTimeMilliseconds()),
+                new("Weekly limit", 61.5, now.AddDays(3).AddHours(4).ToUnixTimeMilliseconds()),
+            };
+            return Task.FromResult(new AiKeyUsage(
+                true, "5-hour limit: 34% used  ·  Weekly limit: 61.5% used",
+                null, null, null, null, null, null,
+                ResetUnixMs: windows[0].ResetUnixMs, Windows: windows));
+        }
+
         return Task.FromResult(new AiKeyUsage(
             true,
             "Credits: $1.20 used / $10 ($8.80 left) · free tier · free requests today: 20/1000 (980 left)",

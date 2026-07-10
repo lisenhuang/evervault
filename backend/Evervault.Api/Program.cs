@@ -64,8 +64,14 @@ builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 
 // --- AI: keys, providers, failover, agent chat ---
 builder.Services.AddHttpClient();
+// ChatGPT (OAuth) chat streams the Responses API over SSE; a reasoning turn can far exceed the default
+// 100s client timeout while we hold the stream, so this named client gets a long timeout.
+builder.Services.AddHttpClient(OpenAiProvider.HttpClientName, c => c.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.AddSingleton<OpenRouterProvider>();
 builder.Services.AddSingleton<GeminiProvider>();
+builder.Services.AddSingleton<OpenAiProvider>();
+builder.Services.AddSingleton<IOpenAiAccountId, OpenAiAccountIdAdapter>();
+builder.Services.AddScoped<IOpenAiOAuthService, OpenAiOAuthService>();
 builder.Services.AddSingleton<IAiProviderFactory, AiProviderFactory>();
 builder.Services.AddSingleton<ProposalSigner>();
 builder.Services.AddScoped<IAiKeyService, AiKeyService>();

@@ -24,8 +24,8 @@ public class AiChatController : ControllerBase
     }
 
     public record ModelsResult(string Provider, IReadOnlyList<AiModelInfo> Models, string? Warning);
-    public record ChatConfigDto(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? ReasoningEffort);
-    public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? ReasoningEffort);
+    public record ChatConfigDto(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? OpenAiModel, string? ReasoningEffort);
+    public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? OpenAiModel, string? ReasoningEffort);
     public record EmbeddingConfigDto(string Provider, string? Model, int Dimensions, bool Locked, DateTimeOffset? LockedAt);
     public record EmbeddingConfigInput(string? Model, int Dimensions);
 
@@ -75,7 +75,7 @@ public class AiChatController : ControllerBase
     public async Task<ActionResult<ChatConfigDto>> GetConfig()
     {
         var c = await _db.ChatConfigs.AsNoTracking().FirstOrDefaultAsync();
-        return Ok(new ChatConfigDto(c?.SelectedProvider, c?.GeminiModel, c?.OpenRouterModel, c?.ReasoningEffort));
+        return Ok(new ChatConfigDto(c?.SelectedProvider, c?.GeminiModel, c?.OpenRouterModel, c?.OpenAiModel, c?.ReasoningEffort));
     }
 
     [HttpPut("config")]
@@ -89,11 +89,12 @@ public class AiChatController : ControllerBase
         if (input.SelectedProvider is not null) c.SelectedProvider = input.SelectedProvider;
         if (input.GeminiModel is not null) c.GeminiModel = input.GeminiModel;
         if (input.OpenRouterModel is not null) c.OpenRouterModel = input.OpenRouterModel;
+        if (input.OpenAiModel is not null) c.OpenAiModel = input.OpenAiModel;
         if (input.ReasoningEffort is not null) c.ReasoningEffort = input.ReasoningEffort;
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.ChatConfigs.Add(c);
         await _db.SaveChangesAsync();
-        return Ok(new ChatConfigDto(c.SelectedProvider, c.GeminiModel, c.OpenRouterModel, c.ReasoningEffort));
+        return Ok(new ChatConfigDto(c.SelectedProvider, c.GeminiModel, c.OpenRouterModel, c.OpenAiModel, c.ReasoningEffort));
     }
 
     /// <summary>The chat-memory embedding policy (model + dimension). Chosen once, then immutable.</summary>

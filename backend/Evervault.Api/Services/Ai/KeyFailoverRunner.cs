@@ -1,4 +1,5 @@
 using Evervault.Api.Data;
+using Evervault.Api.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,17 +16,24 @@ public class KeyFailoverRunner
     private readonly AppDbContext _db;
     private readonly IDataProtector _protector;
     private readonly IAiProviderFactory _factory;
+    private readonly IOpenAiOAuthService _openai;
 
-    public KeyFailoverRunner(AppDbContext db, IDataProtectionProvider dp, IAiProviderFactory factory)
+    public KeyFailoverRunner(AppDbContext db, IDataProtectionProvider dp, IAiProviderFactory factory, IOpenAiOAuthService openai)
     {
         _db = db;
         _protector = dp.CreateProtector("Evervault.AiKey");
         _factory = factory;
+        _openai = openai;
     }
 
     public async Task<T> RunAsync<T>(string provider, Func<IAiProvider, string, Task<T>> op)
     {
         var p = _factory.Get(provider);
+
+        // "openai" isn't key-based — the credential is a rotating OAuth access token from the connected
+        // ChatGPT account, not an AiKey list. Fetch/refresh it here instead of looping over keys.
+        if (provider == "openai") return await RunOpenAiAsync(p, op);
+
         var keys = await _db.AiKeys.AsNoTracking()
             .Where(k => k.Provider == provider && k.Enabled)
             .OrderBy(k => k.SortOrder).ThenBy(k => k.Id)
@@ -58,5 +66,26 @@ public class KeyFailoverRunner
             }
         }
         throw new AllKeysFailedException(errors);
+    }
+
+    /// <summary>OAuth-token path for the "ChatGPT" provider. Passes the current access token (empty when
+    /// disconnected — read-only ops like model listing still work); on an auth failure with a real token,
+    /// refreshes once and retries. Surfaces a single <see cref="AiProviderException"/>, never AllKeysFailed.</summary>
+    private async Task<T> RunOpenAiAsync<T>(IAiProvider p, Func<IAiProvider, string, Task<T>> op)
+    {
+        if (_factory.IsFake) return await op(p, "good");
+
+        var token = await _openai.TryGetValidAccessTokenAsync(CancellationToken.None);
+        try
+        {
+            return await op(p, token);
+        }
+        catch (AiProviderException ex) when (ex.Kind == AiErrorKind.Auth && !string.IsNullOrEmpty(token))
+        {
+            // The token may have just expired or been revoked upstream — refresh once and retry.
+            var refreshed = await _openai.ForceRefreshAsync(CancellationToken.None);
+            if (string.IsNullOrEmpty(refreshed)) throw;
+            return await op(p, refreshed);
+        }
     }
 }
