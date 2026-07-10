@@ -8,11 +8,14 @@ public class ChatConfig
 {
     public int Id { get; set; }
 
-    /// <summary>"gemini" | "openrouter".</summary>
+    /// <summary>"gemini" | "openrouter" | "openai".</summary>
     public string? SelectedProvider { get; set; }
 
     public string? GeminiModel { get; set; }
     public string? OpenRouterModel { get; set; }
+
+    /// <summary>Remembered model for the OAuth "ChatGPT" provider (e.g. "gpt-5"). Nullable/legacy = unset.</summary>
+    public string? OpenAiModel { get; set; }
 
     /// <summary>Reasoning/thinking effort applied to chat completions, shared across providers:
     /// "auto" (default — send nothing) | "off" | "low" | "medium" | "high". Null (legacy rows) = auto.

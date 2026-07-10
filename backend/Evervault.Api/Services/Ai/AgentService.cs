@@ -144,7 +144,7 @@ public class AgentService
                 }
             }
 
-            messages.Add(new AiChatMessage("assistant", completion.Text, accounted));
+            messages.Add(new AiChatMessage("assistant", completion.Text, accounted, ProviderState: completion.ProviderState));
             messages.AddRange(readResults);
 
             if (writeCall is not null)

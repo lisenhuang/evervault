@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Gauge, X } from "lucide-react";
+import { Check, Gauge, Link2, X } from "lucide-react";
 import { api } from "./adminApi";
 import type {
   AiKeyDto,
@@ -11,9 +11,10 @@ import type {
   EmbeddingConfigDto,
   KeyCheckResult,
   ModelsResult,
+  OpenAiStatus,
   Provider,
 } from "./aiTypes";
-import { Badge, Banner, Button, Card, Select, TextArea } from "./ui";
+import { Badge, Banner, Button, Card, Field, Select, TextArea } from "./ui";
 
 export default function AiKeysForm() {
   const [data, setData] = useState<AiKeysDto>({ gemini: [], openRouter: [] });
@@ -52,10 +53,143 @@ export default function AiKeysForm() {
         onReload={reload}
       />
 
+      <ChatGptOAuthCard />
+
       <ReasoningEffortCard />
 
       <EmbeddingConfigCard />
     </div>
+  );
+}
+
+function ChatGptOAuthCard() {
+  const [status, setStatus] = useState<OpenAiStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [redirectUrl, setRedirectUrl] = useState("");
+  const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
+
+  const reload = useCallback(async () => {
+    const res = await api("/api/admin/ai/openai");
+    if (res.ok) setStatus(await res.json());
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  async function startConnect() {
+    setBusy(true);
+    setMsg(null);
+    const res = await api("/api/admin/ai/openai/connect/start", { method: "POST" });
+    setBusy(false);
+    if (res.ok) {
+      const { authorizeUrl } = await res.json();
+      window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+      setPasteOpen(true);
+    } else {
+      setMsg({ kind: "error", text: "Could not start the ChatGPT login." });
+    }
+  }
+
+  async function finishConnect() {
+    if (!redirectUrl.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    const res = await api("/api/admin/ai/openai/connect/complete", {
+      method: "POST",
+      body: JSON.stringify({ redirectUrl }),
+    });
+    setBusy(false);
+    if (res.ok) {
+      setStatus(await res.json());
+      setPasteOpen(false);
+      setRedirectUrl("");
+      setMsg({ kind: "success", text: "ChatGPT connected." });
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setMsg({ kind: "error", text: d.error ?? "Could not complete the login." });
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    await api("/api/admin/ai/openai/connect", { method: "DELETE" });
+    setPasteOpen(false);
+    await reload();
+    setBusy(false);
+    setMsg(null);
+  }
+
+  const connected = status?.connected === true;
+
+  return (
+    <Card
+      title="ChatGPT (Sign in with ChatGPT)"
+      subtitle="Chat with your paid ChatGPT plan via OAuth — no API key."
+      right={connected ? <Badge tone="green"><Check size={12} aria-hidden="true" /> Connected</Badge> : <Badge tone="gray">Not connected</Badge>}
+    >
+      <div className="space-y-4">
+        <Banner kind="info">
+          Uses the Codex “Sign in with ChatGPT” flow to chat on your <strong>paid</strong> ChatGPT plan
+          (Plus/Pro/Team). This is an <strong>unofficial</strong> backend — it may rate-limit or change without
+          notice. Your tokens are encrypted before storage and never shown again.
+        </Banner>
+
+        {connected ? (
+          <>
+            <dl className="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+              <dt className="text-black/55 dark:text-white/55">Account</dt>
+              <dd className="font-medium">{status?.email ?? "ChatGPT account"}</dd>
+              <dt className="text-black/55 dark:text-white/55">Token renews</dt>
+              <dd className="text-black/70 dark:text-white/70">
+                {status?.expiresAt ? new Date(status.expiresAt).toLocaleString() : "—"}{" "}
+                <span className="text-black/45 dark:text-white/45">(auto-refreshed)</span>
+              </dd>
+            </dl>
+            {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+            <Button variant="danger" onClick={disconnect} disabled={busy}>
+              Disconnect
+            </Button>
+          </>
+        ) : (
+          <>
+            {!pasteOpen ? (
+              <>
+                {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+                <Button onClick={startConnect} disabled={busy}>
+                  <Link2 size={14} aria-hidden="true" /> Connect ChatGPT
+                </Button>
+              </>
+            ) : (
+              <>
+                <Banner kind="warning">
+                  A ChatGPT sign-in tab was opened. After you approve, the browser will try to open a{" "}
+                  <code>localhost:1455</code> page that <strong>won’t load — that’s expected</strong>. Copy the{" "}
+                  <strong>full URL</strong> from that tab’s address bar and paste it below.
+                </Banner>
+                <Field
+                  label="Redirected URL"
+                  value={redirectUrl}
+                  onChange={setRedirectUrl}
+                  placeholder="http://localhost:1455/auth/callback?code=…&state=…"
+                  help="The whole address you were redirected to after signing in."
+                />
+                {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+                <div className="flex gap-2">
+                  <Button onClick={finishConnect} disabled={busy || !redirectUrl.trim()}>
+                    Finish connecting
+                  </Button>
+                  <Button variant="ghost" onClick={() => setPasteOpen(false)} disabled={busy}>
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
   );
 }
 

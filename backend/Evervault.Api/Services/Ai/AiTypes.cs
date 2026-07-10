@@ -7,13 +7,16 @@ public record AiChatMessage(
     string? Content = null,
     List<AiToolCall>? ToolCalls = null,   // present on assistant turns that called tools
     string? ToolCallId = null,            // present on tool-result turns
-    string? Name = null);                 // tool name (on tool-result turns)
+    string? Name = null,                  // tool name (on tool-result turns)
+    string? ProviderState = null);        // opaque provider-only state round-tripped via the client
+                                          // transcript (OpenAI: reasoning items to re-send under store:false)
 
 /// <summary>A tool/function call the model wants to make. Arguments stay as a raw JSON string.</summary>
 public record AiToolCall(string Id, string Name, string ArgumentsJson);
 
-/// <summary>One model round-trip result: either assistant text, tool calls, or both.</summary>
-public record AiCompletion(string? Text, List<AiToolCall> ToolCalls);
+/// <summary>One model round-trip result: either assistant text, tool calls, or both. <see cref="ProviderState"/>
+/// is optional opaque data the provider needs echoed on the next turn (see <see cref="AiChatMessage"/>).</summary>
+public record AiCompletion(string? Text, List<AiToolCall> ToolCalls, string? ProviderState = null);
 
 /// <summary>A provider-agnostic model entry for the switcher.</summary>
 public record AiModelInfo(
@@ -49,7 +52,12 @@ public record AiKeyUsage(
     long? DailyLimit = null,
     long? DailyRemaining = null,
     long? DailyUsed = null,
-    long? ResetUnixMs = null);
+    long? ResetUnixMs = null,
+    IReadOnlyList<AiRateWindow>? Windows = null);
+
+/// <summary>One rolling rate-limit window (e.g. ChatGPT's 5-hour and weekly quotas): how much of the
+/// window is consumed and when it resets. <see cref="ResetUnixMs"/> is epoch milliseconds.</summary>
+public record AiRateWindow(string Label, double UsedPercent, long? ResetUnixMs);
 
 public enum AiErrorKind { Auth, Quota, Transient, Other }
 
@@ -100,4 +108,8 @@ public interface IAiProvider
 public interface IAiProviderFactory
 {
     IAiProvider Get(string provider);
+
+    /// <summary>True when AI_FAKE=1 — every provider resolves to the offline <see cref="FakeAiProvider"/>.
+    /// Lets other seams (e.g. <see cref="KeyFailoverRunner"/>) skip real credential lookups.</summary>
+    bool IsFake { get; }
 }

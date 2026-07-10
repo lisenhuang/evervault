@@ -1,6 +1,6 @@
 // Shared types for the admin AI features. Field names match the backend DTOs (camelCase).
 
-export type Provider = "gemini" | "openrouter";
+export type Provider = "gemini" | "openrouter" | "openai";
 
 export type AiKeyDto = {
   id: number;
@@ -31,6 +31,9 @@ export type ModelInfo = {
 
 export type ModelsResult = { provider: string; models: ModelInfo[]; warning: string | null };
 
+// One rolling quota window (e.g. ChatGPT's 5-hour and weekly limits). resetUnixMs is epoch ms.
+export type AiRateWindow = { label: string; usedPercent: number; resetUnixMs: number | null };
+
 export type AiKeyUsage = {
   supported: boolean;
   summary: string | null;
@@ -44,13 +47,23 @@ export type AiKeyUsage = {
   dailyRemaining: number | null;
   dailyUsed: number | null;
   resetUnixMs: number | null;
+  windows: AiRateWindow[] | null;
 };
 
 export type ChatConfigDto = {
   selectedProvider: string | null;
   geminiModel: string | null;
   openRouterModel: string | null;
+  openAiModel: string | null;
   reasoningEffort: string | null; // "auto" | "off" | "low" | "medium" | "high" | null
+};
+
+// "Sign in with ChatGPT" (Codex OAuth) connection status. No secrets.
+export type OpenAiStatus = {
+  connected: boolean;
+  email: string | null;
+  connectedAt: string | null;
+  expiresAt: string | null;
 };
 
 export type EmbeddingConfigDto = {
@@ -69,6 +82,8 @@ export type ChatMessage = {
   toolCalls?: ToolCall[] | null;
   toolCallId?: string | null;
   name?: string | null;
+  // Opaque provider-only state (OpenAI reasoning items) round-tripped verbatim through the transcript.
+  providerState?: string | null;
 };
 
 export type ProposedAction = {

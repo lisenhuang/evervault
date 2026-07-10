@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CreditCard, MessageCircle, RotateCcw, Wrench, X } from "lucide-react";
+import { AlertTriangle, CreditCard, Gauge, MessageCircle, RotateCcw, Wrench, X } from "lucide-react";
 import { api } from "./adminApi";
-import type { AiKeyUsage, ChatMessage, ChatTurnResponse, ModelInfo, ModelsResult, ProposedAction, Provider } from "./aiTypes";
+import type { AiKeyUsage, AiRateWindow, ChatMessage, ChatTurnResponse, ModelInfo, ModelsResult, ProposedAction, Provider } from "./aiTypes";
 import { Badge, Button, Select } from "./ui";
 
 export default function AiChat() {
@@ -23,7 +23,7 @@ export default function AiChat() {
   const [dismissed, setDismissed] = useState<string[]>([]);
 
   // Preferred model per provider, restored from saved config.
-  const preferred = useRef<{ gemini: string | null; openrouter: string | null }>({ gemini: null, openrouter: null });
+  const preferred = useRef<Record<Provider, string | null>>({ gemini: null, openrouter: null, openai: null });
   const modelsCache = useRef<Record<string, ModelInfo[]>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const [nowTs, setNowTs] = useState(() => Date.now());
@@ -73,8 +73,9 @@ export default function AiChat() {
       let p: Provider = "openrouter";
       if (res.ok) {
         const c = await res.json();
-        preferred.current = { gemini: c.geminiModel, openrouter: c.openRouterModel };
-        if (c.selectedProvider === "gemini" || c.selectedProvider === "openrouter") p = c.selectedProvider;
+        preferred.current = { gemini: c.geminiModel, openrouter: c.openRouterModel, openai: c.openAiModel };
+        if (c.selectedProvider === "gemini" || c.selectedProvider === "openrouter" || c.selectedProvider === "openai")
+          p = c.selectedProvider;
       }
       setProvider(p);
       await loadModels(p);
@@ -114,6 +115,7 @@ export default function AiChat() {
       selectedProvider: p,
       geminiModel: p === "gemini" ? m : preferred.current.gemini,
       openRouterModel: p === "openrouter" ? m : preferred.current.openrouter,
+      openAiModel: p === "openai" ? m : preferred.current.openai,
     };
     preferred.current[p] = m;
     void api("/api/admin/ai/config", { method: "PUT", body: JSON.stringify(body) });
@@ -194,6 +196,7 @@ export default function AiChat() {
         <Select value={provider} onChange={(v) => changeProvider(v as Provider)} disabled={busy}>
           <option value="openrouter">OpenRouter</option>
           <option value="gemini">Gemini</option>
+          <option value="openai">ChatGPT</option>
         </Select>
         <Select value={model} onChange={changeModel} disabled={busy || loadingModels || shown.length === 0}>
           {loadingModels && <option value="">Loading…</option>}
@@ -243,12 +246,16 @@ export default function AiChat() {
       )}
 
       {usage &&
-        (usage.supported && usage.summary ? (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
-            <span className="inline-flex items-center gap-1">
-              <CreditCard size={13} aria-hidden="true" /> {usage.summary}
-            </span>
-            {reset && (
+        (usage.supported && (usage.windows?.length || usage.summary) ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-black/10 px-4 py-1.5 text-xs text-black/55 dark:border-white/10 dark:text-white/55">
+            {usage.windows?.length ? (
+              usage.windows.map((w) => <UsageWindow key={w.label} w={w} nowTs={nowTs} />)
+            ) : (
+              <span className="inline-flex items-center gap-1">
+                <CreditCard size={13} aria-hidden="true" /> {usage.summary}
+              </span>
+            )}
+            {!usage.windows?.length && reset && (
               <span className="text-black/40 dark:text-white/40" title={`Resets ${reset.local}`}>
                 · resets in {reset.countdown} ({reset.local})
               </span>
@@ -264,7 +271,7 @@ export default function AiChat() {
           </div>
         ) : (
           <div className="border-b border-black/10 px-4 py-1.5 text-xs text-black/45 dark:border-white/10 dark:text-white/45">
-            No usage/quota info available for {provider}.
+            {usage.summary || `No usage/quota info available for ${provider}.`}
           </div>
         ))}
 
@@ -400,6 +407,38 @@ function MessageBubble({ m }: { m: ChatMessage }) {
     );
   }
   return null;
+}
+
+// A single quota window (e.g. ChatGPT's 5-hour / weekly limit): a compact bar + % used + reset countdown.
+function UsageWindow({ w, nowTs }: { w: AiRateWindow; nowTs: number }) {
+  const pct = Math.max(0, Math.min(100, w.usedPercent));
+  const bar = pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500";
+  const cd = w.resetUnixMs ? countdownStr(w.resetUnixMs, nowTs) : null;
+  const local = w.resetUnixMs
+    ? new Date(w.resetUnixMs).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })
+    : undefined;
+  return (
+    <span className="inline-flex items-center gap-1.5" title={local ? `Resets ${local}` : undefined}>
+      <Gauge size={13} aria-hidden="true" className="text-black/40 dark:text-white/40" />
+      <span className="font-medium text-black/70 dark:text-white/70">{w.label}</span>
+      <span className="relative h-1.5 w-16 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+        <span className={`absolute inset-y-0 left-0 rounded-full ${bar}`} style={{ width: `${pct}%` }} />
+      </span>
+      <span>{pct.toFixed(0)}%</span>
+      {cd && <span className="text-black/40 dark:text-white/40">· resets in {cd}</span>}
+    </span>
+  );
+}
+
+function countdownStr(resetMs: number, nowTs: number): string {
+  const diff = resetMs - nowTs;
+  if (diff <= 0) return "now";
+  const totalMin = Math.floor(diff / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 function resetInfo(usage: AiKeyUsage, nowTs: number): { local: string; countdown: string } {
