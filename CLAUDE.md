@@ -7,7 +7,13 @@ Guidance for Claude Code when working in this repository.
 - **Do not commit or push to `main` automatically.** Leave committing and pushing
   to `main` for a human to do. You may stage changes, draft commit messages, and
   prepare work, but the human performs the actual commit/push to `main`. If a
-  commit or push is needed, ask first or create a separate branch.
+  commit or push is needed, ask first.
+
+- **Do not create git branches unless a human explicitly tells you to.** Work on the
+  current branch; stage and prepare changes there. Never run `git checkout -b`,
+  `git branch`, `git switch -c`, or `git worktree add` on your own initiative — if you
+  think a new branch is warranted, ask first and let the human decide. Creating,
+  switching, or deleting branches is a human action unless explicitly requested.
 
 - **Production is live — keep every change deploy-compatible.** Prod is published and
   serving real users. A deploy rolls a new app version onto the already-running database
