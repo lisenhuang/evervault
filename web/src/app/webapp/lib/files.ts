@@ -1,7 +1,8 @@
-// Client-side preparation of chat attachments. Images keep the downscale path in image.ts; PDFs go
-// to Gemini as inline base64; anything text-like (Markdown, CSV, source code, SVG, …) is read as
-// text and embedded into the prompt; .docx is converted to plain text in the browser (mammoth,
-// loaded on demand). Legacy .doc has no reliable browser parser and is rejected with a clear error.
+// Client-side preparation of chat attachments. Images keep the downscale path in image.ts; PDFs and
+// audio go to Gemini as inline base64 (the chat text model is audio-capable, so it transcribes and
+// understands uploaded clips directly); anything text-like (Markdown, CSV, source code, SVG, …) is
+// read as text and embedded into the prompt; .docx is converted to plain text in the browser
+// (mammoth, loaded on demand). Legacy .doc has no reliable browser parser and is rejected clearly.
 
 import { isAcceptedImage, prepareImage } from "./image";
 
@@ -10,9 +11,9 @@ export type PreparedFile = {
   name: string;
   /** Size in bytes of the original file (shown on the composer/message chip). */
   size: number;
-  kind: "image" | "pdf" | "text";
+  kind: "image" | "pdf" | "audio" | "text";
   mimeType: string;
-  /** Inline payload for kind "image" | "pdf". */
+  /** Inline payload for kind "image" | "pdf" | "audio". */
   base64?: string;
   /** Preview URL for kind "image". */
   dataUrl?: string;
@@ -37,6 +38,8 @@ export function inlineSize(f: PreparedFile): number {
 
 /** Gemini inline requests top out at 20MB total, so each binary file stays well under that. */
 const MaxPdfBytes = 10_000_000;
+/** Same inline budget for audio (base64 of 10MB ≈ 13.3MB, under MAX_TOTAL_INLINE). ~10min of MP3. */
+const MaxAudioBytes = 10_000_000;
 /** Text files are read whole up to this size, then the extracted text is clipped below. */
 const MaxTextBytes = 5_000_000;
 /** Extracted text is clipped to keep the prompt sane (~30k tokens per file). */
@@ -55,13 +58,31 @@ const TextMimes = new Set([
 const DocxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const DocMime = "application/msword";
 
-/** `accept` for the general picker: images + every document type we can handle. */
+// Audio the chat model can take inline. Keyed by extension so we can fill in a Gemini-friendly mime
+// when the browser reports none — and normalize the mp3 case (browsers say audio/mpeg, Gemini wants
+// audio/mp3). Anything the model can't decode surfaces as a normal chat error.
+const AudioMimeByExt: Record<string, string> = {
+  mp3: "audio/mp3", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac",
+  ogg: "audio/ogg", oga: "audio/ogg", opus: "audio/ogg", flac: "audio/flac",
+  aiff: "audio/aiff", aif: "audio/aiff",
+};
+const AudioExtensions = new Set(Object.keys(AudioMimeByExt));
+
+function audioMime(file: File, ext: string): string {
+  if (file.type === "audio/mpeg") return "audio/mp3";
+  if (file.type.startsWith("audio/")) return file.type;
+  return AudioMimeByExt[ext] ?? "audio/mp3";
+}
+
+/** `accept` for the general picker: images + audio + every document type we can handle. */
 export const FILE_ACCEPT = [
   "image/*",
+  "audio/*",
   "application/pdf",
   DocxMime,
   DocMime,
   ".pdf", ".docx", ".doc",
+  ...[...AudioExtensions].map((e) => `.${e}`),
   ...[...TextExtensions].map((e) => `.${e}`),
 ].join(",");
 
@@ -99,6 +120,11 @@ export async function prepareFile(file: File): Promise<PreparedFile> {
   if (file.type === "application/pdf" || ext === "pdf") {
     if (file.size > MaxPdfBytes) throw new FileError("too-large", name);
     return { id, name, size: file.size, kind: "pdf", mimeType: "application/pdf", base64: await readAsBase64(file, name) };
+  }
+
+  if (file.type.startsWith("audio/") || AudioExtensions.has(ext)) {
+    if (file.size > MaxAudioBytes) throw new FileError("too-large", name);
+    return { id, name, size: file.size, kind: "audio", mimeType: audioMime(file, ext), base64: await readAsBase64(file, name) };
   }
 
   if (file.type === DocxMime || ext === "docx") {

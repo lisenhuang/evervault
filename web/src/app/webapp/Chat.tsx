@@ -397,9 +397,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         void (async () => {
           const lines = await Promise.all(
             files.map(async (f) => {
-              if (f.kind !== "image" || !f.base64) return `[File] ${f.name}`;
-              const desc = await describeImage(apiKey, textModel, f.base64, f.mimeType).catch(() => "");
-              return desc ? `[Image] ${desc}` : "[Image]";
+              if (f.kind === "image" && f.base64) {
+                const desc = await describeImage(apiKey, textModel, f.base64, f.mimeType).catch(() => "");
+                return desc ? `[Image] ${desc}` : "[Image]";
+              }
+              if (f.kind === "audio" && f.base64) {
+                const tx = await transcribeAudio(apiKey, textModel, f.base64, f.mimeType).catch(() => "");
+                return tx ? `[Audio] ${tx}` : `[Audio] ${f.name}`;
+              }
+              return `[File] ${f.name}`;
             }),
           );
           const userContent =

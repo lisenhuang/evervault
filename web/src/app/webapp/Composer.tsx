@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileText, FileUp, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
+import { FileAudio, FileText, FileUp, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import { FILE_ACCEPT, FileError, formatSize, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
 import type { ChatMessage } from "./types";
@@ -328,7 +328,11 @@ export default function Composer({
                   key={f.id}
                   className="relative flex h-20 w-40 flex-col justify-between rounded-xl border border-black/10 bg-black/5 p-2.5 dark:border-white/15 dark:bg-white/10"
                 >
-                  <FileText size={18} className="text-black/50 dark:text-white/50" aria-hidden="true" />
+                  {f.kind === "audio" ? (
+                    <FileAudio size={18} className="text-black/50 dark:text-white/50" aria-hidden="true" />
+                  ) : (
+                    <FileText size={18} className="text-black/50 dark:text-white/50" aria-hidden="true" />
+                  )}
                   <div className="min-w-0">
                     <div className="truncate text-xs font-medium" title={f.name}>{f.name}</div>
                     <div className="text-[10px] text-black/45 dark:text-white/45">{formatSize(f.size)}</div>

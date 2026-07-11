@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } from "lucide-react";
+import { FileAudio, FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
@@ -157,7 +157,11 @@ export default function MessageList({
                       />
                     ) : (
                       <span key={f.id} className="flex items-center gap-2 rounded-xl bg-white/15 px-3 py-2">
-                        <FileText size={16} className="shrink-0 opacity-90" aria-hidden="true" />
+                        {f.kind === "audio" ? (
+                          <FileAudio size={16} className="shrink-0 opacity-90" aria-hidden="true" />
+                        ) : (
+                          <FileText size={16} className="shrink-0 opacity-90" aria-hidden="true" />
+                        )}
                         <span className="min-w-0">
                           <span className="block truncate text-xs font-medium" title={f.name}>{f.name}</span>
                           <span className="block text-[10px] opacity-75">{formatSize(f.size)}</span>
