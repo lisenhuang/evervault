@@ -437,7 +437,9 @@ function ProviderKeys({
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
   // Validity is transient — held here only, shown after a manual check, never loaded from the server.
-  const [results, setResults] = useState<Record<number, { ok: boolean; message: string }>>({});
+  const [results, setResults] = useState<
+    Record<number, { ok: boolean; message: string; embeddingOk?: boolean | null; embeddingMessage?: string | null }>
+  >({});
   const [checkingId, setCheckingId] = useState<number | null>(null);
 
   async function add() {
@@ -468,7 +470,8 @@ function ProviderKeys({
       const d: CheckKeysResult = await res.json();
       setResults((prev) => {
         const next = { ...prev };
-        for (const r of d.results) next[r.id] = { ok: r.ok, message: r.message };
+        for (const r of d.results)
+          next[r.id] = { ok: r.ok, message: r.message, embeddingOk: r.embeddingOk, embeddingMessage: r.embeddingMessage };
         return next;
       });
       const ok = d.results.filter((r) => r.ok).length;
@@ -485,7 +488,10 @@ function ProviderKeys({
     setCheckingId(null);
     if (res.ok) {
       const r: KeyCheckResult = await res.json();
-      setResults((prev) => ({ ...prev, [r.id]: { ok: r.ok, message: r.message } }));
+      setResults((prev) => ({
+        ...prev,
+        [r.id]: { ok: r.ok, message: r.message, embeddingOk: r.embeddingOk, embeddingMessage: r.embeddingMessage },
+      }));
     } else {
       setMsg({ kind: "error", text: "Could not check the key." });
     }
@@ -531,9 +537,24 @@ function ProviderKeys({
                           </Badge>
                         )
                       ) : null}
+                      {/* Embedding capability — set only for Gemini keys (probes gemini-embedding-002). */}
+                      {checkingId !== k.id && r && r.ok && r.embeddingOk != null ? (
+                        r.embeddingOk ? (
+                          <Badge tone="green">
+                            <Check size={12} aria-hidden="true" /> Embedding
+                          </Badge>
+                        ) : (
+                          <Badge tone="red">
+                            <X size={12} aria-hidden="true" /> No embedding
+                          </Badge>
+                        )
+                      ) : null}
                     </div>
                     {r && !r.ok && (
                       <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{r.message}</p>
+                    )}
+                    {r && r.ok && r.embeddingOk === false && r.embeddingMessage && (
+                      <p className="mt-0.5 truncate text-xs text-red-600 dark:text-red-400">{r.embeddingMessage}</p>
                     )}
                   </div>
                   {confirmId === k.id ? (
