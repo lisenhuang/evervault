@@ -153,6 +153,8 @@ const ja: Messages = {
     callEnded: "通話終了",
     voiceMessage: "ボイスメッセージ",
     imageAlt: "添付画像",
+    viewImage: "画像を全画面で表示",
+    closeImage: "画像を閉じる",
     playReply: "返答を再生",
     pauseReply: "一時停止",
     resumeReply: "再開",

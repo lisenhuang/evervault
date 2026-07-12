@@ -5,6 +5,7 @@ import { FileAudio, FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } fr
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
+import ImageLightbox from "./ImageLightbox";
 import type { ChatMessage, ReplyRef } from "./types";
 import { formatDuration } from "./lib/time";
 import { formatSize } from "./lib/files";
@@ -104,6 +105,10 @@ export default function MessageList({
   const [menu, setMenu] = useState<{ m: ChatMessage; x: number; y: number } | null>(null);
   const openMenu = useCallback((m: ChatMessage, x: number, y: number) => setMenu({ m, x, y }), []);
 
+  // Tapping an image bubble opens it full screen (see ImageLightbox).
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const openLightbox = useCallback((src: string, alt: string) => setLightbox({ src, alt }), []);
+
   // Tapping a quote scrolls to the original message and briefly tints it.
   const [flashId, setFlashId] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,13 +153,20 @@ export default function MessageList({
                 <div className={`flex flex-col gap-1.5 ${m.text ? "mb-2" : ""}`}>
                   {m.files.map((f) =>
                     f.kind === "image" ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <button
                         key={f.id}
-                        src={`data:${f.mimeType};base64,${f.base64}`}
-                        alt={t.message.imageAlt}
-                        className="max-h-64 w-full rounded-xl object-contain"
-                      />
+                        type="button"
+                        onClick={() => openLightbox(`data:${f.mimeType};base64,${f.base64}`, t.message.imageAlt)}
+                        aria-label={t.message.viewImage}
+                        className="block cursor-zoom-in overflow-hidden rounded-xl transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`data:${f.mimeType};base64,${f.base64}`}
+                          alt={t.message.imageAlt}
+                          className="max-h-64 w-full object-contain"
+                        />
+                      </button>
                     ) : (
                       <span key={f.id} className="flex items-center gap-2 rounded-xl bg-white/15 px-3 py-2">
                         {f.kind === "audio" ? (
@@ -213,6 +225,9 @@ export default function MessageList({
           }}
           onClose={() => setMenu(null)}
         />
+      )}
+      {lightbox && (
+        <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
       )}
     </div>
   );
