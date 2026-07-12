@@ -9,6 +9,11 @@ Guidance for Claude Code when working in this repository.
   prepare work, but the human performs the actual commit/push to `main`. If a
   commit or push is needed, ask first.
 
+- **Always commit as the git user Ethan `<lisen8018@gmail.com>`.** Every time AI makes a
+  git commit, set the author/committer identity to `Ethan <lisen8018@gmail.com>` (e.g. use
+  `git -c user.name="Ethan" -c user.email="lisen8018@gmail.com" commit ...`). Never commit
+  under any other name or email.
+
 - **Do not create git branches unless a human explicitly tells you to.** Work on the
   current branch; stage and prepare changes there. Never run `git checkout -b`,
   `git branch`, `git switch -c`, or `git worktree add` on your own initiative — if you
