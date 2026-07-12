@@ -203,6 +203,38 @@ export async function describeImage(
   return (res.text ?? "").trim();
 }
 
+/**
+ * Summarize an attached PDF — one-shot, non-streamed. Returns a compact factual summary of the
+ * document (topic, key points, any names/dates), used to embed the file into the memory vector
+ * store so it can be recalled later. Best-effort: callers treat "" as "no summary".
+ */
+export async function describeDocument(
+  apiKey: string,
+  model: string,
+  base64: string,
+  mimeType: string,
+): Promise<string> {
+  const ai = client(apiKey);
+  const res = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data: base64 } },
+          {
+            text:
+              "Summarize this document in 2-5 factual sentences for a searchable archive: its topic, " +
+              "the key points, and any important names, dates, or figures. Return ONLY the summary, " +
+              "with no preamble or commentary.",
+          },
+        ],
+      },
+    ],
+  });
+  return (res.text ?? "").trim();
+}
+
 /** Synthesize speech with a TTS model. Returns base64 PCM16 + its sample rate. */
 export async function synthesizeSpeech(
   apiKey: string,
