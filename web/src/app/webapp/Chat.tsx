@@ -10,7 +10,7 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
-import { type Content, describeImage, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
+import { type Content, describeDocument, describeImage, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
@@ -37,6 +37,49 @@ function fileToPart(f: PreparedFile) {
     return { text: `--- Attached file: ${f.name} ---\n${f.text ?? ""}\n--- End of file: ${f.name} ---` };
   }
   return { inlineData: { mimeType: f.mimeType, data: f.base64 ?? "" } };
+}
+
+// Human-readable file-type label for the memory note, so a recalled attachment reads as "the user
+// sent an audio file" rather than a bare transcript the model might mistake for pasted text.
+const FILE_KIND_LABEL: Record<PreparedFile["kind"], string> = {
+  image: "an image",
+  audio: "an audio file",
+  pdf: "a PDF document",
+  text: "a file",
+};
+
+// How much of one file's extracted content (transcript / description / text) to fold into the memory
+// note. The whole thing is embedded + stored, so keep each attachment's contribution bounded.
+const MEMORY_CONTENT_MAX = 4000;
+
+function clipMemory(text: string): string {
+  return text.length <= MEMORY_CONTENT_MAX ? text : `${text.slice(0, MEMORY_CONTENT_MAX)}…`;
+}
+
+/**
+ * A durable memory line for one attached file. Always records the fact that the user *sent* a file
+ * (its type + name) so it's recalled as an attachment even when the content extraction is empty, then
+ * appends whatever content we can recover: image description, audio transcript, extracted text, or a
+ * PDF summary. Best-effort — a failed extraction still leaves the "user sent X" record.
+ */
+async function fileMemoryLine(apiKey: string, model: string, f: PreparedFile): Promise<string> {
+  const header = `[The user sent ${FILE_KIND_LABEL[f.kind]} named "${f.name}"]`;
+  if (f.kind === "image" && f.base64) {
+    const desc = await describeImage(apiKey, model, f.base64, f.mimeType).catch(() => "");
+    return desc ? `${header} It shows: ${clipMemory(desc)}` : header;
+  }
+  if (f.kind === "audio" && f.base64) {
+    const tx = await transcribeAudio(apiKey, model, f.base64, f.mimeType).catch(() => "");
+    return tx ? `${header} Transcript of the audio: ${clipMemory(tx)}` : header;
+  }
+  if (f.kind === "pdf" && f.base64) {
+    const desc = await describeDocument(apiKey, model, f.base64, f.mimeType).catch(() => "");
+    return desc ? `${header} Document contents: ${clipMemory(desc)}` : header;
+  }
+  if (f.kind === "text" && f.text) {
+    return `${header} File contents: ${clipMemory(f.text)}`;
+  }
+  return header;
 }
 
 // Cap for the quoted snippet woven into the model prompt — enough to identify the message
@@ -390,24 +433,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const contents = preface ? [preface, ...toContents(base)] : toContents(base);
       const reply = await runAssistant(asstId, contents, false);
       if (files?.length) {
-        // Recognize each attached image (a second, vision generateContent call per image), then
-        // record the turn: descriptions + document names are embedded and stored in the vector DB,
-        // and the first image itself goes to R2, so past attachments can be recalled by content.
+        // Record the turn so past attachments can be recalled: each file becomes a memory line that
+        // states the user *sent* a file (type + name) plus whatever content we can extract — image
+        // description, audio transcript, PDF summary, or the file's text (a second generateContent
+        // call per binary file). The first image itself also goes to R2. This way the AI always
+        // remembers a file was sent and what it contained, even if it can't produce the file back.
         // Best-effort — never blocks the chat.
         void (async () => {
-          const lines = await Promise.all(
-            files.map(async (f) => {
-              if (f.kind === "image" && f.base64) {
-                const desc = await describeImage(apiKey, textModel, f.base64, f.mimeType).catch(() => "");
-                return desc ? `[Image] ${desc}` : "[Image]";
-              }
-              if (f.kind === "audio" && f.base64) {
-                const tx = await transcribeAudio(apiKey, textModel, f.base64, f.mimeType).catch(() => "");
-                return tx ? `[Audio] ${tx}` : `[Audio] ${f.name}`;
-              }
-              return `[File] ${f.name}`;
-            }),
-          );
+          const lines = await Promise.all(files.map((f) => fileMemoryLine(apiKey, textModel, f)));
           const userContent =
             [replyRef ? replyContext(replyRef) : "", text.trim(), ...lines].filter(Boolean).join("\n") ||
             "(attachment)";
