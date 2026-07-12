@@ -5,7 +5,7 @@ import { FileAudio, FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } fr
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
-import ImageLightbox from "./ImageLightbox";
+import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import type { ChatMessage, ReplyRef } from "./types";
 import { formatDuration } from "./lib/time";
 import { formatSize } from "./lib/files";
@@ -105,9 +105,13 @@ export default function MessageList({
   const [menu, setMenu] = useState<{ m: ChatMessage; x: number; y: number } | null>(null);
   const openMenu = useCallback((m: ChatMessage, x: number, y: number) => setMenu({ m, x, y }), []);
 
-  // Tapping an image bubble opens it full screen (see ImageLightbox).
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
-  const openLightbox = useCallback((src: string, alt: string) => setLightbox({ src, alt }), []);
+  // Tapping an image bubble opens it full screen (see ImageLightbox). A bubble's images open as a
+  // gallery, starting at the tapped one.
+  const [lightbox, setLightbox] = useState<{ images: LightboxImage[]; index: number } | null>(null);
+  const openLightbox = useCallback(
+    (images: LightboxImage[], index: number) => setLightbox({ images, index }),
+    [],
+  );
 
   // Tapping a quote scrolls to the original message and briefly tints it.
   const [flashId, setFlashId] = useState<string | null>(null);
@@ -156,7 +160,16 @@ export default function MessageList({
                       <button
                         key={f.id}
                         type="button"
-                        onClick={() => openLightbox(`data:${f.mimeType};base64,${f.base64}`, t.message.imageAlt)}
+                        onClick={() => {
+                          const imgs = m.files!.filter((x) => x.kind === "image");
+                          openLightbox(
+                            imgs.map((x) => ({
+                              src: `data:${x.mimeType};base64,${x.base64}`,
+                              alt: t.message.imageAlt,
+                            })),
+                            imgs.findIndex((x) => x.id === f.id),
+                          );
+                        }}
                         aria-label={t.message.viewImage}
                         className="block cursor-zoom-in overflow-hidden rounded-xl transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
                       >
@@ -227,7 +240,11 @@ export default function MessageList({
         />
       )}
       {lightbox && (
-        <ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </div>
   );
