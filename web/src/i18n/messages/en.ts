@@ -153,6 +153,8 @@ const en = {
     callEnded: "Call ended",
     voiceMessage: "Voice message",
     imageAlt: "Attached image",
+    viewImage: "View image full screen",
+    closeImage: "Close image",
     playReply: "Play reply",
     pauseReply: "Pause",
     resumeReply: "Resume",

@@ -154,6 +154,8 @@ const zh: Messages = {
     callEnded: "通话已结束",
     voiceMessage: "语音消息",
     imageAlt: "附带的图片",
+    viewImage: "全屏查看图片",
+    closeImage: "关闭图片",
     playReply: "播放回复",
     pauseReply: "暂停",
     resumeReply: "继续",

@@ -153,6 +153,8 @@ const ko: Messages = {
     callEnded: "통화 종료",
     voiceMessage: "음성 메시지",
     imageAlt: "첨부된 이미지",
+    viewImage: "이미지 전체 화면 보기",
+    closeImage: "이미지 닫기",
     playReply: "답변 재생",
     pauseReply: "일시정지",
     resumeReply: "계속",
