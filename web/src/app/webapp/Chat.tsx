@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Hand, Menu, MessageCircle, Sparkles } from "lucide-react";
 import Sidebar from "./Sidebar";
 import CallBar from "./CallBar";
+import CallEndedModal from "./CallEndedModal";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
@@ -159,6 +160,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // The call auto-hung-up because the user went silent too long (fell asleep / walked away). Drives
   // the CallBar's closing message so the end reads as an intentional idle timeout, not a dropped call.
   const [callIdleClosed, setCallIdleClosed] = useState(false);
+  // The idle-timeout modal is open: the call auto-ended on a long silence, so we surface an
+  // explanatory dialog with a one-tap Reconnect instead of just letting the bar vanish.
+  const [idleEndedOpen, setIdleEndedOpen] = useState(false);
   // Echo-prone output path (iOS speaker, or the loopback failed): the session runs half duplex —
   // the mic is gated while the model speaks, so interrupting is by tap instead of by voice. The
   // headphones toggle (persisted) lifts the gate, since headphones produce no acoustic echo.
@@ -599,6 +603,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
     setCallError("");
     setCallIdleClosed(false);
+    setIdleEndedOpen(false); // a new/reconnected call supersedes any lingering idle-timeout modal
     setCallMuted(false);
     setCallEchoProne(false);
     setCallHalfDuplex(false);
@@ -700,8 +705,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveRef.current = null;
     finishCall(); // log the duration once; no-ops if End already handled it or the call never connected
     if (callState === "closed") {
-      // Linger a little longer on an idle auto-hang-up so the user can read why the call ended.
-      const t = setTimeout(() => setCallState(null), callIdleClosed ? 4000 : 1500);
+      if (callIdleClosed) {
+        // Idle auto-hang-up: swap the bar out for the explanatory modal (which offers Reconnect),
+        // so the reason the call ended — and the way back into it — is unmissable.
+        setIdleEndedOpen(true);
+        setCallState(null);
+        return;
+      }
+      const t = setTimeout(() => setCallState(null), 1500);
       return () => clearTimeout(t);
     }
     // finishCall reads a ref and is safe to omit from deps; rerunning only on callState is intended.
@@ -730,6 +741,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         textModel={textModel}
         onNewChat={() => {
           if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
+          setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're clearing
           void runExtraction(2); // distil the conversation we're leaving before clearing it
           setMessages([]);
           setReplyTo(null); // a quote from the old chat has nothing to point at anymore
@@ -884,6 +896,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           if (!deletingAccount) setConfirmDeleteAccount(false);
         }}
         onConfirm={deleteAccount}
+      />
+
+      <CallEndedModal
+        open={idleEndedOpen}
+        onReconnect={() => {
+          setIdleEndedOpen(false);
+          void startCall(); // resume the conversation on a fresh Live socket
+        }}
+        onClose={() => setIdleEndedOpen(false)}
       />
     </div>
   );
