@@ -132,6 +132,10 @@ using (var scope = app.Services.CreateScope())
             Thread.Sleep(2000);
         }
     }
+
+    // Build the chat-memory ANN index if the embedding dimension is already locked (runtime, not a
+    // static migration, because HNSW needs the admin-chosen dimension). Best-effort; never fatal.
+    Evervault.Api.Data.ChatMemoryVectorIndex.EnsureAsync(db, app.Logger).GetAwaiter().GetResult();
 }
 
 // Behind nginx: honor X-Forwarded-* before anything else in the pipeline.

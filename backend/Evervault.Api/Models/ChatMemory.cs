@@ -6,9 +6,12 @@ namespace Evervault.Api.Models;
 /// One recorded turn of an end-user ↔ AI conversation, for recall. Raw <see cref="Content"/> (text /
 /// transcript / image description) is always stored; push-to-talk audio and attached images are stored
 /// in R2 and referenced by <see cref="AudioObjectKey"/> / <see cref="ImageObjectKey"/>.
-/// <see cref="Embedding"/> is computed in the browser with the user's own Gemini key (the column is a
-/// dimensionless <c>vector</c> so the admin can pick the dimension); it is null until/unless embedded.
-/// Scoped to one <see cref="EndUserId"/>.
+/// <see cref="EmbeddingHalf"/> is computed in the browser with the user's own Gemini key; it is stored as
+/// a half-precision <c>halfvec</c> (≈half the disk of a <c>vector</c>, negligible recall loss) and is the
+/// column recall searches — backed by an HNSW cosine index built once the admin locks the dimension. It is
+/// null until/unless embedded. <see cref="Embedding"/> is the legacy full-precision <c>vector</c> column,
+/// kept and dual-written for one release so the previously-deployed version keeps working during rollout;
+/// a later migration drops it. Scoped to one <see cref="EndUserId"/>.
 /// </summary>
 public class ChatMemory
 {
@@ -21,6 +24,7 @@ public class ChatMemory
     public string Content { get; set; } = string.Empty;
     public string? AudioObjectKey { get; set; }
     public string? ImageObjectKey { get; set; }
-    public Vector? Embedding { get; set; }
+    public Vector? Embedding { get; set; }          // legacy full-precision column (kept for rollout compat)
+    public HalfVector? EmbeddingHalf { get; set; }  // half-precision; the searched column + HNSW-indexed
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
