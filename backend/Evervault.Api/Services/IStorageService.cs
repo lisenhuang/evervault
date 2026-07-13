@@ -38,6 +38,11 @@ public interface IStorageService
     /// <summary>A short-lived presigned GET URL for an object, or null if storage isn't configured.</summary>
     Task<string?> GetPresignedGetUrlAsync(string key, TimeSpan ttl, CancellationToken ct = default);
 
+    /// <summary>The raw object bytes, or null if storage isn't configured or the object is missing.
+    /// Lets the API serve small blobs inline from its own origin (no cross-origin redirect), which
+    /// some browsers' media loaders can't follow reliably.</summary>
+    Task<byte[]?> GetObjectBytesAsync(string key, CancellationToken ct = default);
+
     /// <summary>True if the object exists in the configured bucket. False if missing OR storage unconfigured.</summary>
     Task<bool> ObjectExistsAsync(string key, CancellationToken ct = default);
 

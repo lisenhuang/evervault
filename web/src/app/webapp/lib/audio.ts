@@ -159,6 +159,97 @@ export function playUrlHandle(url: string): {
   };
 }
 
+/**
+ * Fetches an audio file from a SAME-ORIGIN url and plays it through the Web Audio API. Unlike
+ * {@link playUrlHandle} (which hands the url to an HTMLAudioElement), this sidesteps the iOS Safari
+ * "The operation is not supported" failure that a media element hits when its source 302-redirects
+ * cross-origin (e.g. our endpoint → presigned R2): the AudioContext is created synchronously inside
+ * the click gesture — so iOS lets it play — and we fetch + decode the bytes ourselves. The url MUST
+ * return the audio bytes directly (no cross-origin redirect), so the fetch isn't blocked by CORS.
+ *  - `started`: resolves when playback begins; REJECTS on fetch/decode error.
+ *  - `ended`: resolves when playback ends, is stopped, or errors.
+ *  - `stop()`: halts playback and settles both promises.
+ */
+export function playAudioUrlHandle(url: string): {
+  stop: () => void;
+  started: Promise<void>;
+  ended: Promise<void>;
+} {
+  // Create + resume the context synchronously within the user gesture so iOS unlocks playback.
+  const ctx = getAudioContext();
+  void ctx.resume();
+
+  let src: AudioBufferSourceNode | null = null;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    void ctx.close();
+  };
+
+  let onStarted: () => void = () => {};
+  let onStartFail: (e: unknown) => void = () => {};
+  let onEnded: () => void = () => {};
+  const started = new Promise<void>((resolve, reject) => {
+    onStarted = resolve;
+    onStartFail = reject;
+  });
+  const ended = new Promise<void>((resolve) => {
+    onEnded = resolve;
+  });
+
+  void (async () => {
+    try {
+      const res = await fetch(url, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(await readError(res));
+      const bytes = await res.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(bytes);
+      if (closed) return; // stopped while it was still loading
+      src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        close();
+        onEnded();
+      };
+      src.start();
+      onStarted();
+    } catch (e) {
+      onStartFail(e);
+      close();
+      onEnded();
+    }
+  })();
+
+  return {
+    stop: () => {
+      if (src) {
+        try {
+          src.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+      close();
+      onStarted(); // no-op if already settled — unblocks a still-awaiting caller
+      onEnded();
+    },
+    started,
+    ended,
+  };
+}
+
+// Pull the API's `{ error }` message out of a failed response, falling back to a generic line.
+async function readError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body?.error) return body.error;
+  } catch {
+    /* not JSON */
+  }
+  return "Could not load the voice sample.";
+}
+
 // --- encoding helpers ---
 
 function mergeFloat32(chunks: Float32Array[]): Float32Array {

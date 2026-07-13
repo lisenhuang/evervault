@@ -165,6 +165,28 @@ public class StorageService : IStorageService
         });
     }
 
+    public async Task<byte[]?> GetObjectBytesAsync(string key, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync();
+        if (r is null) return null;
+        using var client = r.Value.Client;
+        try
+        {
+            using var resp = await client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = r.Value.Bucket,
+                Key = key,
+            }, ct);
+            using var ms = new MemoryStream();
+            await resp.ResponseStream.CopyToAsync(ms, ct);
+            return ms.ToArray();
+        }
+        catch (AmazonS3Exception)
+        {
+            return null; // missing or unreadable — caller falls back to (re)generating.
+        }
+    }
+
     public async Task<bool> ObjectExistsAsync(string key, CancellationToken ct = default)
     {
         var r = await ResolveClientAsync();

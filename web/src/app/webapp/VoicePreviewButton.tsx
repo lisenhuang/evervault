@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Square, Volume2 } from "lucide-react";
-import { playUrlHandle } from "./lib/audio";
+import { playAudioUrlHandle } from "./lib/audio";
 import { useT } from "@/i18n/LanguageProvider";
 
 type Status = "idle" | "loading" | "playing" | "error";
@@ -60,10 +60,13 @@ export default function VoicePreviewButton({ voice, model }: { voice: string; mo
     setError("");
     setStatus("loading");
     try {
+      // inline=1 makes the API stream the WAV bytes from its own origin instead of 302-redirecting to
+      // R2, so we can fetch + decode them via the Web Audio API — which plays reliably on iOS Safari,
+      // where a redirecting media element fails with "The operation is not supported".
       const url =
-        `/api/voice-samples/${encodeURIComponent(voice)}` +
-        (model ? `?model=${encodeURIComponent(model)}` : "");
-      const handle = playUrlHandle(url);
+        `/api/voice-samples/${encodeURIComponent(voice)}?inline=1` +
+        (model ? `&model=${encodeURIComponent(model)}` : "");
+      const handle = playAudioUrlHandle(url);
       handleRef.current = handle;
       await handle.started; // rejects on load/play error (e.g. 502 all-keys-failed)
       if (!mounted.current || id !== runId.current) return; // stale / cancelled
