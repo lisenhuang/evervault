@@ -61,8 +61,12 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         modelBuilder.Entity<ChatMemory>(e =>
         {
             // Dimensionless vector: the admin picks the dimension at runtime, so we can't fix it here.
-            // Searches are always scoped to one EndUserId (tiny candidate set), so exact cosine is fine.
+            // Legacy full-precision column, kept for rollout compatibility; searches use EmbeddingHalf.
             e.Property(m => m.Embedding).HasColumnType("vector");
+            // Half-precision embedding (~half the disk). Dimensionless at the model level; a runtime step
+            // (ChatMemoryVectorIndex) pins it to the locked dimension and builds the HNSW cosine index once
+            // the admin has chosen the dimension — an HNSW index needs a fixed dimension, unknown here.
+            e.Property(m => m.EmbeddingHalf).HasColumnType("halfvec");
             e.Property(m => m.Role).HasMaxLength(16);
             e.Property(m => m.Modality).HasMaxLength(16);
             e.Property(m => m.Kind).HasMaxLength(16).HasDefaultValue("turn");

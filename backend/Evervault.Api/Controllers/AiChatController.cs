@@ -129,6 +129,11 @@ public class AiChatController : ControllerBase
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.EmbeddingConfigs.Add(c);
         await _db.SaveChangesAsync();
+
+        // Dimension is now locked, so the halfvec column can be pinned and HNSW-indexed. Best-effort.
+        var logger = HttpContext.RequestServices.GetService(typeof(ILogger<AiChatController>)) as ILogger<AiChatController>;
+        await Evervault.Api.Data.ChatMemoryVectorIndex.EnsureAsync(_db, logger, HttpContext.RequestAborted);
+
         return Ok(new EmbeddingConfigDto(c.Provider, c.Model, c.Dimensions, true, c.LockedAt));
     }
 

@@ -32,6 +32,9 @@ public class ChatMemoriesController : ControllerBase
 
     private int Uid => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
+    /// <summary>Pack a client-sent float embedding into a half-precision vector for storage/search.</summary>
+    private static HalfVector ToHalf(float[] v) => new(Array.ConvertAll(v, f => (Half)f));
+
     public record EmbeddingPolicy(bool Enabled, string? Model, int Dimensions);
     public record TurnItem(string Role, string Modality, string? Text, string? AudioBase64, string? AudioMime, float[]? Embedding, string? ImageBase64 = null, string? ImageMime = null);
     public record RecordTurnRequest(string? ConversationId, List<TurnItem> Turns);
@@ -68,8 +71,8 @@ public class ChatMemoriesController : ControllerBase
             if (content.Length == 0 && string.IsNullOrEmpty(t.AudioBase64) && string.IsNullOrEmpty(t.ImageBase64)) continue;
 
             // Only accept the vector if its length matches the locked dimension (same vector space).
-            var vector = t.Embedding is { Length: > 0 } && (dim == 0 || t.Embedding.Length == dim)
-                ? new Vector(t.Embedding)
+            var emb = t.Embedding is { Length: > 0 } && (dim == 0 || t.Embedding.Length == dim)
+                ? t.Embedding
                 : null;
 
             var row = new ChatMemory
@@ -79,7 +82,10 @@ public class ChatMemoriesController : ControllerBase
                 Role = t.Role == "assistant" ? "assistant" : "user",
                 Modality = t.Modality is "voice" or "live" or "image" ? t.Modality : "text",
                 Content = content.Length > 16000 ? content[..16000] : content,
-                Embedding = vector,
+                // Dual-write: EmbeddingHalf is what recall searches; Embedding stays populated so the
+                // previously-deployed version keeps finding new rows during rollout. Drop it in a later release.
+                Embedding = emb is null ? null : new Vector(emb),
+                EmbeddingHalf = emb is null ? null : ToHalf(emb),
             };
             _db.ChatMemories.Add(row);
             await _db.SaveChangesAsync(); // need the id for the audio object key
@@ -155,15 +161,15 @@ public class ChatMemoriesController : ControllerBase
                 && (until == null || m.CreatedAt < until)
                 && (kind == null || m.Kind == kind));
 
-        // Pure vector (no query text): the original behavior, unchanged.
+        // Pure vector (no query text): the original behavior, now over the HNSW-indexed halfvec column.
         if (hasVector && !hasQuery)
         {
-            var qv = new Vector(req.Vector!);
+            var qv = ToHalf(req.Vector!);
             var hits = await Scoped()
-                .Where(m => m.Embedding != null)
-                .OrderBy(m => m.Embedding!.CosineDistance(qv))
+                .Where(m => m.EmbeddingHalf != null)
+                .OrderBy(m => m.EmbeddingHalf!.CosineDistance(qv))
                 .Take(k)
-                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, m.Embedding!.CosineDistance(qv)))
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, m.EmbeddingHalf!.CosineDistance(qv)))
                 .ToListAsync();
             return Ok(hits);
         }
@@ -194,12 +200,12 @@ public class ChatMemoriesController : ControllerBase
         // Lane 1 — vector cosine similarity (only when the browser sent an embedding).
         if (hasVector)
         {
-            var qv = new Vector(req.Vector!);
+            var qv = ToHalf(req.Vector!);
             var vec = await Scoped()
-                .Where(m => m.Embedding != null)
-                .OrderBy(m => m.Embedding!.CosineDistance(qv))
+                .Where(m => m.EmbeddingHalf != null)
+                .OrderBy(m => m.EmbeddingHalf!.CosineDistance(qv))
                 .Take(LaneTake)
-                .Select(m => new { m.Id, Dist = m.Embedding!.CosineDistance(qv) })
+                .Select(m => new { m.Id, Dist = m.EmbeddingHalf!.CosineDistance(qv) })
                 .ToListAsync();
             Accumulate(vec.Select(x => x.Id).ToList());
             foreach (var x in vec) vectorDistance[x.Id] = x.Dist;
@@ -293,8 +299,8 @@ public class ChatMemoriesController : ControllerBase
 
         var cfg = await _db.EmbeddingConfigs.AsNoTracking().FirstOrDefaultAsync();
         var dim = cfg?.Dimensions ?? 0;
-        var vector = req.Embedding is { Length: > 0 } && (dim == 0 || req.Embedding.Length == dim)
-            ? new Vector(req.Embedding)
+        var emb = req.Embedding is { Length: > 0 } && (dim == 0 || req.Embedding.Length == dim)
+            ? req.Embedding
             : null;
 
         _db.ChatMemories.Add(new ChatMemory
@@ -305,7 +311,8 @@ public class ChatMemoriesController : ControllerBase
             Modality = "text",
             Kind = "summary",
             Content = content.Length > 16000 ? content[..16000] : content,
-            Embedding = vector,
+            Embedding = emb is null ? null : new Vector(emb),
+            EmbeddingHalf = emb is null ? null : ToHalf(emb),
         });
         await _db.SaveChangesAsync();
         return NoContent();
