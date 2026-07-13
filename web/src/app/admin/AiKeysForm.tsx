@@ -224,7 +224,16 @@ function WebappModelsCard() {
             </Select>
           </div>
           <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
-            The starting voice for spoken replies and live calls; users can change it in webapp settings.
+            The starting voice for spoken replies and live calls; users can change it in webapp settings.{" "}
+            <a
+              href="https://ai.google.dev/gemini-api/docs/speech-generation#voices"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-black/80 dark:hover:text-white/80"
+            >
+              Preview all voices
+            </a>
+            .
           </span>
         </label>
 

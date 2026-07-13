@@ -30,10 +30,15 @@ public class VoiceSamplesController : ControllerBase
         _log = log;
     }
 
-    /// <summary>GET /api/voice-samples/{voice}?model=... → 302 to a presigned R2 URL (generating on
-    /// first miss). <paramref name="model"/> defaults to the standard sample model; must be a TTS model.</summary>
+    /// <summary>GET /api/voice-samples/{voice}?model=...&amp;inline=true → the WAV sample (generating on
+    /// first miss). By default 302-redirects to a presigned R2 URL; with <paramref name="inline"/> the
+    /// bytes are streamed back from this origin instead — some browsers' media loaders (notably iOS
+    /// Safari) fail with "The operation is not supported" when asked to follow a cross-origin media
+    /// redirect, so the webapp preview fetches the bytes inline and decodes them itself.
+    /// <paramref name="model"/> defaults to the standard sample model; must be a TTS model.</summary>
     [HttpGet("{voice}")]
-    public async Task<IActionResult> Get(string voice, [FromQuery] string? model, CancellationToken ct)
+    public async Task<IActionResult> Get(
+        string voice, [FromQuery] string? model, [FromQuery] bool inline, CancellationToken ct)
     {
         if (!VoiceSampleOptions.Voices.Contains(voice))
             return NotFound(new { error = "Unknown voice." });
@@ -46,11 +51,20 @@ public class VoiceSamplesController : ControllerBase
 
         try
         {
-            // 1) Cache hit → presign + redirect.
+            // 1) Cache hit → inline bytes, or presign + redirect.
             if (await _storage.ObjectExistsAsync(key, ct))
             {
-                var hit = await _storage.GetPresignedGetUrlAsync(key, TimeSpan.FromMinutes(5), ct);
-                if (hit is not null) return Redirect(hit);
+                if (inline)
+                {
+                    var cached = await _storage.GetObjectBytesAsync(key, ct);
+                    if (cached is not null) return File(cached, "audio/wav");
+                    // Vanished between HEAD and GET — fall through and regenerate below.
+                }
+                else
+                {
+                    var hit = await _storage.GetPresignedGetUrlAsync(key, TimeSpan.FromMinutes(5), ct);
+                    if (hit is not null) return Redirect(hit);
+                }
             }
 
             // 2) Miss → synthesize via key failover, WAV-encode, upload.
@@ -63,6 +77,7 @@ public class VoiceSamplesController : ControllerBase
             await _storage.PutObjectAsync(key, ms, "audio/wav", ct);
 
             // 3) Serve the freshly uploaded object.
+            if (inline) return File(wav, "audio/wav");
             var url = await _storage.GetPresignedGetUrlAsync(key, TimeSpan.FromMinutes(5), ct);
             return url is null ? StatusCode(503, new { error = "Storage is not configured." }) : Redirect(url);
         }

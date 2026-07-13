@@ -1,21 +1,20 @@
 "use client";
 
-import { AudioLines, Cpu, ShieldCheck, X } from "lucide-react";
+import { AudioLines, ShieldCheck, X } from "lucide-react";
 import VoicePreviewButton from "./VoicePreviewButton";
 import VoiceSelect from "./VoiceSelect";
 import { useT } from "@/i18n/LanguageProvider";
 
 /**
  * Settings drawer for the keyless /webapp. There's no API key to manage anymore — the backend supplies
- * the Gemini keys — so this holds the one setting the user still controls (the TTS voice) plus a
- * read-only view of the models the admin selected for text, voice, and the live call.
+ * the Gemini keys — so this holds the one setting the user still controls: the TTS voice. The model
+ * choices are an admin concern and aren't shown here. (textModel/liveModel are still accepted so the
+ * caller's props don't need to change, but only the voice model drives the preview.)
  */
 export default function KeyDrawer({
   open,
   onClose,
-  textModel,
   audioModel,
-  liveModel,
   voice,
   onChangeVoice,
 }: {
@@ -62,43 +61,10 @@ export default function KeyDrawer({
             <div className="mt-3">
               <VoiceSelect value={voice} onChange={onChangeVoice} />
               <VoicePreviewButton voice={voice} model={audioModel} />
-              <span className="mt-2 block text-xs text-black/45 dark:text-white/45">
-                {t.settings.voiceHintPrefix}
-                <a
-                  href="https://ai.google.dev/gemini-api/docs/speech-generation#voices"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2 hover:text-black/70 dark:hover:text-white/70"
-                >
-                  {t.settings.voiceHintLink}
-                </a>
-                {t.settings.voiceHintSuffix}
-              </span>
             </div>
-          </section>
-
-          {/* Models (read-only — chosen by the admin for everyone) */}
-          <section>
-            <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <Cpu size={15} aria-hidden="true" /> {t.settings.models}
-            </h3>
-            <dl className="mt-3 divide-y divide-black/5 overflow-hidden rounded-xl border border-black/10 dark:divide-white/5 dark:border-white/10">
-              <ModelRow label={t.settings.textModel} value={textModel} />
-              <ModelRow label={t.settings.voiceModel} value={audioModel} />
-              <ModelRow label={t.settings.liveModel} value={liveModel} />
-            </dl>
           </section>
         </div>
       </aside>
-    </div>
-  );
-}
-
-function ModelRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
-      <dt className="text-xs font-medium text-black/60 dark:text-white/60">{label}</dt>
-      <dd className="truncate font-mono text-xs text-black/80 dark:text-white/80" title={value}>{value}</dd>
     </div>
   );
 }
