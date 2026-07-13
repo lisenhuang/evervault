@@ -19,9 +19,7 @@ export default function Composer({
   onStartCall,
   voiceState,
   disabled,
-  hasKey,
   inCall,
-  onNeedKey,
   replyTo,
   onCancelReply,
 }: {
@@ -31,9 +29,7 @@ export default function Composer({
   onStartCall: () => void;
   voiceState: VoiceState;
   disabled: boolean;
-  hasKey: boolean;
   inCall: boolean;
-  onNeedKey: () => void;
   /** The message the next send will quote (from the message menu's "Reply"). */
   replyTo: ChatMessage | null;
   onCancelReply: () => void;
@@ -138,10 +134,6 @@ export default function Composer({
 
   async function attachFiles(incoming: File[]) {
     if (!incoming.length || disabled || voiceState === "recording") return;
-    if (!hasKey) {
-      onNeedKey();
-      return;
-    }
     const room = MAX_FILES - filesRef.current.length - inflightRef.current;
     if (incoming.length > room) flashError(t.composer.tooManyFiles(MAX_FILES));
     if (room <= 0) return;
@@ -222,10 +214,6 @@ export default function Composer({
   function send() {
     const trimmed = text.trim();
     if ((!trimmed && files.length === 0) || disabled || busyCount > 0) return;
-    if (!hasKey) {
-      onNeedKey();
-      return;
-    }
     onSendText(trimmed, files.length ? files : undefined);
     setText("");
     setFilesSync([]);
@@ -233,10 +221,6 @@ export default function Composer({
   }
 
   function attachClick() {
-    if (!hasKey) {
-      onNeedKey();
-      return;
-    }
     // The single combined picker accepts images and documents; on iOS the OS itself surfaces the
     // Photo Library / Take Photo / Choose Files choice, so no in-app menu is needed.
     fileInputRef.current?.click();
@@ -249,19 +233,11 @@ export default function Composer({
   }
 
   function micClick() {
-    if (!hasKey) {
-      onNeedKey();
-      return;
-    }
     if (voiceState === "recording") onStopVoice();
     else if (voiceState === "idle") onStartVoice();
   }
 
   function callClick() {
-    if (!hasKey) {
-      onNeedKey();
-      return;
-    }
     onStartCall();
   }
 

@@ -64,6 +64,19 @@ public class AuthController : ControllerBase
         user.Name = string.IsNullOrWhiteSpace(payload.Name) ? (payload.Email ?? "") : payload.Name;
         user.Picture = payload.Picture;
         user.LastLoginAt = DateTimeOffset.UtcNow;
+
+        // Record the visitor's IP + geo from Cloudflare edge headers (best-effort; nulls when absent).
+        var geo = CloudflareGeo.From(Request);
+        user.LastIp = geo.Ip;
+        user.LastCountry = geo.Country;
+        user.LastCity = geo.City;
+        user.LastRegion = geo.Region;
+        user.LastContinent = geo.Continent;
+        user.LastLatitude = geo.Latitude;
+        user.LastLongitude = geo.Longitude;
+        user.LastPostalCode = geo.PostalCode;
+        user.LastTimezone = geo.Timezone;
+
         await _db.SaveChangesAsync();
 
         await SignInAsync(user);

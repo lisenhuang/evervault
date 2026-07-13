@@ -34,6 +34,15 @@ export type ModelInfo = {
 
 export type ModelsResult = { provider: string; models: ModelInfo[]; warning: string | null };
 
+// Models the admin picks for the public /webapp (keyless): text, TTS (voice messages), and the
+// realtime live call, plus the default voice. Mirrors the backend WebappAiConfigDto.
+export type WebappAiConfigDto = {
+  textModel: string;
+  audioModel: string;
+  liveModel: string;
+  defaultVoice: string;
+};
+
 // One rolling quota window (e.g. ChatGPT's 5-hour and weekly limits). resetUnixMs is epoch ms.
 export type AiRateWindow = { label: string; usedPercent: number; resetUnixMs: number | null };
 

@@ -1,8 +1,12 @@
 // Realtime voice call backed by the Gemini Live API. Streams mic audio up and the model's spoken
 // reply down over a WebSocket — hands-free, with server-side voice-activity detection (no push-to-
-// talk) and barge-in (interrupt the model by speaking). Uses the user's own key, browser → Google.
+// talk) and barge-in (interrupt the model by speaking). Keyless: our backend mints a short-lived
+// ephemeral token from a pooled key and the browser connects DIRECTLY to Google with it — no audio
+// through our servers, and the real key never leaves the backend. On a quota/auth failure we re-mint
+// (the server rotates to the next key) and resume, so the call fails over across keys.
 
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServerMessage } from "@google/genai";
+import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { CAPABILITY_BOUNDS } from "./persona";
@@ -91,6 +95,12 @@ export class LiveSession {
    */
   private fatal = false;
   /**
+   * Which pooled key to mint the next ephemeral token from (0 = first). Advances on every (re)connect
+   * so a resume after a key's quota/auth failure gets a token on a DIFFERENT key — this is what makes
+   * the realtime call fail over across keys. Monotonic; the server wraps it modulo the key count.
+   */
+  private tokenAttempt = 0;
+  /**
    * Wall-clock of the last moment the conversation was audibly active — either party speaking. The
    * idle monitor closes the call once this is IDLE_TIMEOUT_MS in the past (see markVoiceActivity /
    * startIdleMonitor). 0 until the monitor starts.
@@ -99,7 +109,6 @@ export class LiveSession {
   private idleTimer?: ReturnType<typeof setInterval>;
 
   constructor(
-    private apiKey: string,
     private model: string,
     private voice: string,
     private memoryEnabled = false,
@@ -117,7 +126,7 @@ export class LiveSession {
       if (!this.stopped) cb.onState("listening");
     };
 
-    await this.connect();
+    await this.connectInitial();
 
     await this.mic.start((b64) => {
       // A resume is swapping the socket underneath us — the old session is closing and the new one
@@ -219,7 +228,10 @@ export class LiveSession {
    * the only reconnects left are the periodic connection resets, which resumption stitches over.
    */
   private async connect(): Promise<void> {
-    const ai = new GoogleGenAI({ apiKey: this.apiKey });
+    // Mint a fresh short-lived token from our backend (which injects a pooled key) and connect DIRECTLY
+    // to Google with it. tokenAttempt selects which key to mint from, so a resume after a bad key rotates.
+    const token = await this.fetchLiveToken(this.tokenAttempt);
+    const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
     this.session = await ai.live.connect({
       model: this.model,
       config: {
@@ -274,6 +286,47 @@ export class LiveSession {
   }
 
   /**
+   * Ask the backend for a short-lived Live ephemeral token. `attempt` rotates which pooled key it's
+   * minted from. A 502 means every key failed to mint — surface it as a usage/limit signal (so the
+   * quota path handles it) rather than a generic error.
+   */
+  private async fetchLiveToken(attempt: number): Promise<string> {
+    const res = await api(`/api/chat/ai/live-token?attempt=${attempt}`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(
+        res.status === 502
+          ? "resource_exhausted: the AI service is temporarily unavailable"
+          : `Could not start the call (HTTP ${res.status}).`,
+      );
+    }
+    const data = (await res.json()) as { token?: string };
+    if (!data.token) throw new Error("The server did not return a live token.");
+    return data.token;
+  }
+
+  /**
+   * First connect for the call. A quota/auth failure here isn't fatal: rotate to the next key (re-mint)
+   * and retry, up to the reconnect budget, before surfacing the error to the caller. Non-quota errors
+   * (mic, network) propagate immediately so startCall can show them.
+   */
+  private async connectInitial(): Promise<void> {
+    for (;;) {
+      try {
+        await this.connect();
+        return;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (this.isQuotaError(msg) && !this.stopped && this.tokenAttempt < MAX_RECONNECTS) {
+          this.tokenAttempt += 1; // next key, fresh token
+          await delay(300);
+          continue;
+        }
+        throw e;
+      }
+    }
+  }
+
+  /**
    * A quota / rate-limit signal from Google (RESOURCE_EXHAUSTED, HTTP 429, "quota exceeded"). These
    * commonly hit a free key, and unlike a plain connection drop they DON'T heal on reconnect — the
    * resumed socket would fail the same way — so we treat them as terminal instead of retrying.
@@ -298,11 +351,14 @@ export class LiveSession {
    */
   private onSocketError(e: ErrorEvent) {
     const msg = e?.message || "";
-    if (this.isQuotaError(msg)) return this.failFatally(msg);
+    // Resumable: let the onclose that follows reconnect. On a quota/auth error, advance to the next key
+    // first so the resume mints its token from a different key — that's what fails the call over.
     if (!this.stopped && !this.fatal && this.resumptionHandle && this.reconnectAttempts < MAX_RECONNECTS) {
+      if (this.isQuotaError(msg)) this.tokenAttempt += 1;
       console.warn("[live] socket error; will attempt resume", msg);
       return;
     }
+    if (this.isQuotaError(msg)) return this.failFatally(msg);
     this.cb.onError(msg || "Voice connection error.");
     this.cb.onState("error");
   }
@@ -316,11 +372,14 @@ export class LiveSession {
   private onSocketClose(e?: CloseEvent) {
     if (this.stopped || this.reconnecting || this.fatal) return;
     const reason = e?.reason || "";
-    if (this.isQuotaError(reason)) return this.failFatally(reason);
+    // Resume if we can. On a quota/auth close, advance to the next key first so the resume mints from a
+    // different key (failover); a plain connection cycle keeps the same key so resumption stays in-project.
     if (this.resumptionHandle && this.reconnectAttempts < MAX_RECONNECTS) {
+      if (this.isQuotaError(reason)) this.tokenAttempt += 1;
       void this.reconnect();
       return;
     }
+    if (this.isQuotaError(reason)) return this.failFatally(reason);
     this.cb.onState("closed");
   }
 
@@ -328,6 +387,9 @@ export class LiveSession {
   private async reconnect(): Promise<void> {
     this.reconnecting = true;
     this.reconnectAttempts += 1;
+    // Note: tokenAttempt is NOT bumped here — a routine ~10-min socket cycle should resume on the SAME
+    // key (so session resumption stays within one project). It's advanced only on a quota/auth failure
+    // (see onSocketError/onSocketClose and the catch below), which is when we actually want a new key.
     // Reset only the per-SOCKET turn state; the conversation itself is restored from the handle, so
     // history, memory, and the model's mid-thought context all survive the swap.
     this.modelTurnActive = false;
@@ -354,13 +416,16 @@ export class LiveSession {
     } catch (e) {
       this.reconnecting = false;
       const msg = e instanceof Error ? e.message : String(e);
-      // A quota/limit error means the key is spent — retrying can't help, so stop here.
-      if (this.isQuotaError(msg)) return this.failFatally(msg);
       console.warn(`[live] resume attempt ${this.reconnectAttempts} failed`, e);
       if (this.stopped) return;
       if (this.reconnectAttempts < MAX_RECONNECTS) {
+        // Retry. If the failure was a spent/blocked key, advance so the next mint rolls to another key.
+        if (this.isQuotaError(msg)) this.tokenAttempt += 1;
         await delay(400 * this.reconnectAttempts);
         if (!this.stopped && !this.reconnecting) void this.reconnect();
+      } else if (this.isQuotaError(msg)) {
+        // Out of retries and the keys are spent — a resume can't help, so stop with the limit message.
+        this.failFatally(msg);
       } else {
         this.cb.onError("Voice connection lost. Please start the call again.");
         this.cb.onState("error");

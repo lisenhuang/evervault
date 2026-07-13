@@ -179,6 +179,7 @@ const zh: Messages = {
   settings: {
     title: "设置",
     close: "关闭",
+    managedNote: "AI 由 EverVault 提供，无需 API 密钥。文字、语音消息和通话都开箱即用。",
     apiKeyTitle: "你的 Gemini API 密钥",
     apiKeyNotePrefix: "仅",
     apiKeyNoteBold: "保存在此浏览器中",

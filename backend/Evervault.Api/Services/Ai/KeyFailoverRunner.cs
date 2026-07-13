@@ -26,7 +26,11 @@ public class KeyFailoverRunner
         _openai = openai;
     }
 
-    public async Task<T> RunAsync<T>(string provider, Func<IAiProvider, string, Task<T>> op)
+    /// <param name="skip">Rotate the starting key by this many positions before looping (all keys are still
+    /// tried, in a rotated order). Lets a caller that already hit a bad key on a previous attempt begin at the
+    /// next one — e.g. the /webapp live-token endpoint advances this each time the browser reports the minted
+    /// token's key was exhausted. Ignored for the "openai" (OAuth) path.</param>
+    public async Task<T> RunAsync<T>(string provider, Func<IAiProvider, string, Task<T>> op, int skip = 0)
     {
         var p = _factory.Get(provider);
 
@@ -42,6 +46,11 @@ public class KeyFailoverRunner
         if (keys.Count == 0)
             throw new AiProviderException(AiErrorKind.Auth,
                 $"No {provider} API keys are configured. Add one in the AI keys section.");
+
+        // Start at position `skip` (wrapping) but still try every key, so callers can advance past a key
+        // that failed on an earlier request without losing failover coverage.
+        var offset = ((skip % keys.Count) + keys.Count) % keys.Count;
+        if (offset > 0) keys = keys.Skip(offset).Concat(keys.Take(offset)).ToList();
 
         var errors = new List<string>();
         foreach (var k in keys)

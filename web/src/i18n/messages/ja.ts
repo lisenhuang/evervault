@@ -178,6 +178,7 @@ const ja: Messages = {
   settings: {
     title: "設定",
     close: "閉じる",
+    managedNote: "AI は EverVault が提供します。API キーは不要です。テキスト・音声メッセージ・通話がそのまま使えます。",
     apiKeyTitle: "あなたのGemini APIキー",
     apiKeyNotePrefix: "キーは",
     apiKeyNoteBold: "このブラウザの中だけ",

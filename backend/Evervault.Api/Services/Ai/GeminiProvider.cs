@@ -40,10 +40,13 @@ public class GeminiProvider : IAiProvider
 
     public async Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, string kind, CancellationToken ct)
     {
-        // "embedding" → models that support embedContent; otherwise chat (generateContent).
-        var wantMethod = string.Equals(kind, "embedding", StringComparison.OrdinalIgnoreCase)
-            ? "embedContent"
-            : "generateContent";
+        // "embedding" → embedContent; "live" → bidiGenerateContent (realtime); otherwise chat (generateContent).
+        var wantMethod = kind?.ToLowerInvariant() switch
+        {
+            "embedding" => "embedContent",
+            "live" => "bidiGenerateContent",
+            _ => "generateContent",
+        };
 
         var client = _http.CreateClient();
         using var res = await client.SendAsync(Req(HttpMethod.Get, "/v1beta/models?pageSize=1000", rawKey), ct);
@@ -174,6 +177,79 @@ public class GeminiProvider : IAiProvider
         {
             return await SynthViaInteractionsAsync(rawKey, model, text, voiceName, ct);
         }
+    }
+
+    /// <summary>
+    /// Forward a raw REST call to the Gemini API with the given key, for the keyless /webapp reverse-proxy.
+    /// The response is returned with only headers read (body NOT buffered), so a streaming
+    /// <c>:streamGenerateContent</c> passes straight through; the caller owns disposal and streams
+    /// <see cref="HttpResponseMessage.Content"/> to the browser. On a non-success status the upstream
+    /// error is mapped and thrown so <see cref="KeyFailoverRunner"/> advances to the next key (before the
+    /// caller has written any bytes to the client). The raw key travels only in the <c>x-goog-api-key</c>
+    /// header — never the URL — so it can't leak into access logs.
+    /// </summary>
+    public async Task<HttpResponseMessage> ProxyRestAsync(
+        string rawKey, HttpMethod method, string pathAndQuery, byte[]? body, string? contentType, CancellationToken ct)
+    {
+        var client = _http.CreateClient();
+        // A streamed generation can hold the connection well past the default 100s; the browser's
+        // RequestAborted cancels early, so a generous ceiling just prevents a spurious timeout mid-stream.
+        client.Timeout = TimeSpan.FromMinutes(10);
+
+        var req = Req(method, pathAndQuery, rawKey);
+        if (body is { Length: > 0 })
+        {
+            var content = new ByteArrayContent(body);
+            if (!string.IsNullOrWhiteSpace(contentType))
+                content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            req.Content = content;
+        }
+
+        var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            var status = res.StatusCode;
+            var errBody = await res.Content.ReadAsStringAsync(ct);
+            res.Dispose();
+            throw MapError(status, errBody);   // Auth/Quota/Transient → failover advances to the next key
+        }
+        return res;
+    }
+
+    /// <summary>
+    /// Mint a short-lived, single-use ephemeral auth token for the Live API (<c>POST /v1alpha/auth_tokens</c>),
+    /// so the browser can open the realtime audio socket <b>directly to Google</b> without ever seeing a real
+    /// key. Wrapped by <see cref="KeyFailoverRunner"/>, so a mint that hits an exhausted/invalid key rolls to
+    /// the next. Returns the token resource name (used as the client's apiKey) and its expiry.
+    /// <paramref name="model"/> is the admin-configured live model; it is not locked into the token today, so
+    /// the client still supplies voice/persona/tools/resumption at connect (the webapp only ever connects with
+    /// this model) — locking via <c>bidiGenerateContentSetup</c> can be added later.
+    /// </summary>
+    public async Task<(string Token, string? ExpiresAt)> CreateLiveEphemeralTokenAsync(
+        string rawKey, string model, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        static string Rfc3339(DateTimeOffset t) => t.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+        var payload = new Dictionary<string, object?>
+        {
+            ["uses"] = 1,                                        // one Live session per token
+            ["expireTime"] = Rfc3339(now.AddMinutes(30)),       // token stops working after this
+            ["newSessionExpireTime"] = Rfc3339(now.AddMinutes(2)), // must start the session within 2 min
+        };
+
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, "/v1alpha/auth_tokens", rawKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var respBody = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, respBody);
+
+        using var doc = JsonDocument.Parse(respBody);
+        var name = doc.RootElement.TryGetProperty("name", out var n) ? n.GetString() : null;
+        if (string.IsNullOrEmpty(name))
+            throw new AiProviderException(AiErrorKind.Transient, "Gemini returned no ephemeral token.");
+        var expires = doc.RootElement.TryGetProperty("expireTime", out var e) ? e.GetString() : null;
+        return (name!, expires);
     }
 
     // Gemini 2.x TTS: v1beta generateContent with AUDIO modality (camelCase config).

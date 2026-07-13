@@ -178,6 +178,7 @@ const ko: Messages = {
   settings: {
     title: "설정",
     close: "닫기",
+    managedNote: "EverVault가 AI를 제공하므로 API 키가 필요 없습니다. 텍스트, 음성 메시지, 통화 모두 바로 사용할 수 있습니다.",
     apiKeyTitle: "내 Gemini API 키",
     apiKeyNotePrefix: "키는 ",
     apiKeyNoteBold: "이 브라우저에만 저장",

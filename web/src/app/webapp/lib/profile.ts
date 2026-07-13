@@ -1,13 +1,12 @@
 // Derived "the AI knows you" memory. Distils durable facts about the user from conversations and
 // injects them into every chat so the AI is always grounded in who the user is. Extraction runs in the
-// browser with the USER'S OWN Gemini key (like chat + embedding) — the server only stores facts and
-// never runs AI on user content. All of this is fire-and-forget and must never block the chat.
+// browser through our keyless Gemini proxy (like chat + embedding) — the server stores facts and, via
+// the proxy, supplies the key. All of this is fire-and-forget and must never block the chat.
 
 import { Type, type Schema } from "@google/genai";
 import { api } from "../authApi";
 import { upsertSummary } from "../recordApi";
 import { embedDocument } from "./embed";
-import { store } from "./store";
 import { generateJson } from "./gemini";
 import { syncTasks, type Task, type TaskDelta } from "./tasks";
 import { currentTimeContext } from "./time";
@@ -208,8 +207,6 @@ export async function extractAndSyncProfile(opts: {
   currentTasks: Task[];
   transcript: { role: "user" | "assistant"; text: string }[];
 }): Promise<ExtractionResult | null> {
-  const key = store.getKey();
-  if (!key) return null;
   const turns = opts.transcript.filter((t) => t.text.trim()).slice(-20);
   if (turns.length === 0) return null;
 
@@ -239,7 +236,6 @@ export async function extractAndSyncProfile(opts: {
 
   try {
     const result = await generateJson<ProfileDelta & { summary?: string; tasks?: TaskDelta }>(
-      key,
       opts.model,
       contents,
       EXTRACTION_SYSTEM,

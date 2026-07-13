@@ -13,6 +13,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<StorageConfig> StorageConfigs => Set<StorageConfig>();
     public DbSet<AiKey> AiKeys => Set<AiKey>();
     public DbSet<ChatConfig> ChatConfigs => Set<ChatConfig>();
+    public DbSet<WebappAiConfig> WebappAiConfigs => Set<WebappAiConfig>();
     public DbSet<GoogleAuthConfig> GoogleAuthConfigs => Set<GoogleAuthConfig>();
     public DbSet<OpenAiOAuthConfig> OpenAiOAuthConfigs => Set<OpenAiOAuthConfig>();
     public DbSet<EndUser> EndUsers => Set<EndUser>();
@@ -56,6 +57,14 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(u => u.GoogleSub).HasMaxLength(64);
             e.HasIndex(u => u.GoogleSub).IsUnique();
             e.Property(u => u.Email).HasMaxLength(256);
+            // Last-seen Cloudflare IP/geo (all nullable, additive).
+            e.Property(u => u.LastIp).HasMaxLength(64);
+            e.Property(u => u.LastCountry).HasMaxLength(8);
+            e.Property(u => u.LastCity).HasMaxLength(128);
+            e.Property(u => u.LastRegion).HasMaxLength(128);
+            e.Property(u => u.LastContinent).HasMaxLength(32);
+            e.Property(u => u.LastPostalCode).HasMaxLength(32);
+            e.Property(u => u.LastTimezone).HasMaxLength(64);
         });
 
         modelBuilder.Entity<ChatMemory>(e =>

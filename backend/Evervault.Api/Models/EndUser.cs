@@ -15,4 +15,17 @@ public class EndUser
     public string? Picture { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastLoginAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // Last-seen visitor IP + geolocation, read from Cloudflare edge headers at login (see CloudflareGeo).
+    // All nullable/best-effort: only CF-Connecting-IP + CF-IPCountry arrive by default; the finer fields
+    // need Cloudflare's "Add visitor location headers" managed transform enabled.
+    public string? LastIp { get; set; }
+    public string? LastCountry { get; set; }
+    public string? LastCity { get; set; }
+    public string? LastRegion { get; set; }
+    public string? LastContinent { get; set; }
+    public double? LastLatitude { get; set; }
+    public double? LastLongitude { get; set; }
+    public string? LastPostalCode { get; set; }
+    public string? LastTimezone { get; set; }
 }

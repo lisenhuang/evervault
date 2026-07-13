@@ -28,6 +28,8 @@ public class AiChatController : ControllerBase
     public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? OpenAiModel, string? ReasoningEffort, string? OpenAiReasoning);
     public record EmbeddingConfigDto(string Provider, string? Model, int Dimensions, bool Locked, DateTimeOffset? LockedAt);
     public record EmbeddingConfigInput(string? Model, int Dimensions);
+    public record WebappAiConfigDto(string TextModel, string AudioModel, string LiveModel, string DefaultVoice);
+    public record WebappAiConfigInput(string? TextModel, string? AudioModel, string? LiveModel, string? DefaultVoice);
 
     /// <summary>Live model list for a provider (free/paid + pricing where exposed). Goes through failover.
     /// <paramref name="kind"/> = "chat" (default) or "embedding".</summary>
@@ -135,6 +137,34 @@ public class AiChatController : ControllerBase
         await Evervault.Api.Data.ChatMemoryVectorIndex.EnsureAsync(_db, logger, HttpContext.RequestAborted);
 
         return Ok(new EmbeddingConfigDto(c.Provider, c.Model, c.Dimensions, true, c.LockedAt));
+    }
+
+    /// <summary>The models the keyless /webapp uses for text, TTS (voice messages), and the realtime
+    /// live-audio call, plus the default voice. Read by the webapp via GET /api/chat/ai/config.</summary>
+    [HttpGet("webapp-config")]
+    public async Task<ActionResult<WebappAiConfigDto>> GetWebappConfig()
+    {
+        var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
+        return Ok(new WebappAiConfigDto(
+            WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
+    }
+
+    /// <summary>Set the /webapp models + default voice. Merges (only overwrites fields the caller sent).</summary>
+    [HttpPut("webapp-config")]
+    public async Task<ActionResult<WebappAiConfigDto>> PutWebappConfig([FromBody] WebappAiConfigInput input)
+    {
+        var c = await _db.WebappAiConfigs.FirstOrDefaultAsync();
+        var existing = c is not null;
+        c ??= new WebappAiConfig();
+        if (input.TextModel is not null) c.TextModel = input.TextModel.Trim();
+        if (input.AudioModel is not null) c.AudioModel = input.AudioModel.Trim();
+        if (input.LiveModel is not null) c.LiveModel = input.LiveModel.Trim();
+        if (input.DefaultVoice is not null) c.DefaultVoice = input.DefaultVoice.Trim();
+        c.UpdatedAt = DateTimeOffset.UtcNow;
+        if (!existing) _db.WebappAiConfigs.Add(c);
+        await _db.SaveChangesAsync();
+        return Ok(new WebappAiConfigDto(
+            WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
     }
 
     /// <summary>One agent turn. Read tools auto-run; a write tool returns a confirmation proposal.</summary>

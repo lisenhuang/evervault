@@ -13,6 +13,7 @@ import type {
   ModelsResult,
   OpenAiStatus,
   Provider,
+  WebappAiConfigDto,
 } from "./aiTypes";
 import { Badge, Banner, Button, Card, Field, Select, TextArea } from "./ui";
 
@@ -57,8 +58,188 @@ export default function AiKeysForm() {
 
       <ReasoningEffortCard />
 
+      <WebappModelsCard />
+
       <EmbeddingConfigCard />
     </div>
+  );
+}
+
+// The 30 prebuilt Gemini TTS/Live voices (same set the webapp offers). Kept here so the admin can pick
+// the /webapp's default voice without loading the webapp bundle.
+const WEBAPP_VOICES = [
+  "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
+  "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi",
+  "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+  "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+];
+
+// Ensures the currently-saved model id always appears as an option, even if the live model list hasn't
+// loaded yet or no longer includes it — so the Select never renders blank or silently drops the value.
+function withCurrent(options: { id: string; name: string }[], current: string): { id: string; name: string }[] {
+  if (!current || options.some((o) => o.id === current)) return options;
+  return [{ id: current, name: current }, ...options];
+}
+
+function WebappModelsCard() {
+  const [cfg, setCfg] = useState<WebappAiConfigDto | null>(null);
+  const [chatModels, setChatModels] = useState<{ id: string; name: string }[]>([]);
+  const [liveModels, setLiveModels] = useState<{ id: string; name: string }[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [textModel, setTextModel] = useState("");
+  const [audioModel, setAudioModel] = useState("");
+  const [liveModel, setLiveModel] = useState("");
+  const [voice, setVoice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
+
+  const loadModels = useCallback(async () => {
+    setLoadingModels(true);
+    const [chatRes, liveRes] = await Promise.all([
+      api("/api/admin/ai/models?provider=gemini&kind=chat"),
+      api("/api/admin/ai/models?provider=gemini&kind=live"),
+    ]);
+    setLoadingModels(false);
+    if (chatRes.ok) {
+      const d: ModelsResult = await chatRes.json();
+      setChatModels(d.models.map((m) => ({ id: m.id, name: m.name })));
+    }
+    if (liveRes.ok) {
+      const d: ModelsResult = await liveRes.json();
+      setLiveModels(d.models.map((m) => ({ id: m.id, name: m.name })));
+    }
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await api("/api/admin/ai/webapp-config");
+      if (res.ok) {
+        const d: WebappAiConfigDto = await res.json();
+        setCfg(d);
+        setTextModel(d.textModel);
+        setAudioModel(d.audioModel);
+        setLiveModel(d.liveModel);
+        setVoice(d.defaultVoice);
+      }
+      await loadModels();
+    })();
+  }, [loadModels]);
+
+  async function save() {
+    setBusy(true);
+    setMsg(null);
+    const res = await api("/api/admin/ai/webapp-config", {
+      method: "PUT",
+      body: JSON.stringify({ textModel, audioModel, liveModel, defaultVoice: voice }),
+    });
+    setBusy(false);
+    if (res.ok) {
+      setCfg(await res.json());
+      setMsg({ kind: "success", text: "Saved. New /webapp sessions will use these." });
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setMsg({ kind: "error", text: d.error ?? "Could not save the webapp models." });
+    }
+  }
+
+  // Text = chat-capable models minus the specialized ones; Voice = the TTS models; Live = bidi models.
+  const textOptions = withCurrent(
+    chatModels.filter((m) => !/(tts|embedding|image|imagen|aqa)/i.test(m.id)),
+    textModel,
+  );
+  const audioOptions = withCurrent(chatModels.filter((m) => /tts/i.test(m.id)), audioModel);
+  const liveOptions = withCurrent(liveModels, liveModel);
+
+  const dirty =
+    !!cfg &&
+    (textModel !== cfg.textModel ||
+      audioModel !== cfg.audioModel ||
+      liveModel !== cfg.liveModel ||
+      voice !== cfg.defaultVoice);
+
+  return (
+    <Card
+      title="Webapp AI models"
+      subtitle="Which Gemini models power the public /webapp chat (it's keyless — users don't pick)."
+    >
+      <div className="space-y-4">
+        <Banner kind="info">
+          The <strong>/webapp</strong> uses your pooled Gemini keys, so these choices spend{" "}
+          <strong>your</strong> quota. Pick capable but cost-appropriate models. Lists load from your Gemini
+          keys; a saved value that isn&rsquo;t in the list still shows so it&rsquo;s never lost.
+        </Banner>
+
+        <label className="block">
+          <span className="text-sm font-medium">Text model</span>
+          <div className="mt-1">
+            <Select value={textModel} onChange={setTextModel} disabled={busy || loadingModels}>
+              {loadingModels && textOptions.length === 0 && <option value="">Loading…</option>}
+              {textOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </Select>
+          </div>
+          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+            Powers text chat, transcription, and memory extraction.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-medium">Voice (speech) model</span>
+          <div className="mt-1">
+            <Select value={audioModel} onChange={setAudioModel} disabled={busy || loadingModels}>
+              {loadingModels && audioOptions.length === 0 && <option value="">Loading…</option>}
+              {audioOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </Select>
+          </div>
+          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+            Speaks replies to voice messages. Must be a TTS model.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-medium">Live voice-call model</span>
+          <div className="mt-1">
+            <Select value={liveModel} onChange={setLiveModel} disabled={busy || loadingModels}>
+              {loadingModels && liveOptions.length === 0 && <option value="">Loading…</option>}
+              {liveOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </Select>
+          </div>
+          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+            Real-time hands-free calls (the call button). Needs a Live-API model.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-medium">Default voice</span>
+          <div className="mt-1">
+            <Select value={voice} onChange={setVoice} disabled={busy}>
+              {WEBAPP_VOICES.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </Select>
+          </div>
+          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+            The starting voice for spoken replies and live calls; users can change it in webapp settings.
+          </span>
+        </label>
+
+        {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
+
+        <div className="flex items-center gap-2">
+          <Button onClick={save} disabled={busy || !dirty || !textModel || !audioModel || !liveModel}>
+            Save
+          </Button>
+          <Button variant="ghost" size="sm" onClick={loadModels} disabled={busy || loadingModels}>
+            {loadingModels ? "Loading models…" : "Reload models"}
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

@@ -178,6 +178,7 @@ const en = {
   settings: {
     title: "Settings",
     close: "Close",
+    managedNote: "EverVault provides the AI — no API key needed. Text, voice messages, and calls all work out of the box.",
     apiKeyTitle: "Your Gemini API key",
     apiKeyNotePrefix: "Stored ",
     apiKeyNoteBold: "only in this browser",

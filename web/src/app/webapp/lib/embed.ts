@@ -1,10 +1,9 @@
-// Client-side embedding for memory. Runs in the browser with the USER'S OWN Gemini key (never ours),
-// using the admin-locked model + dimension (fetched once) so stored vectors and query vectors share one
-// space. Returns null when there's no key, no policy, or on error — recording still stores the raw text.
+// Client-side embedding for memory. Runs in the browser through our keyless Gemini proxy, using the
+// admin-locked model + dimension (fetched once) so stored vectors and query vectors share one space.
+// Returns null when there's no policy or on error — recording still stores the raw text.
 
-import { GoogleGenAI } from "@google/genai";
 import { api } from "../authApi";
-import { store } from "./store";
+import { client } from "./gemini";
 
 export type EmbeddingPolicy = { enabled: boolean; model: string | null; dimensions: number };
 
@@ -29,14 +28,12 @@ function l2normalize(v: number[]): number[] {
 }
 
 async function embed(text: string, taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY"): Promise<number[] | null> {
-  const key = store.getKey();
-  if (!key) return null;
   const policy = await getEmbeddingPolicy();
   if (!policy.enabled || !policy.model) return null;
   const clipped = text.trim().slice(0, 8000);
   if (!clipped) return null;
   try {
-    const ai = new GoogleGenAI({ apiKey: key });
+    const ai = client();
     const res = await ai.models.embedContent({
       model: policy.model,
       contents: clipped,

@@ -11,7 +11,7 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
-import { type Content, describeDocument, describeImage, listModels, type ModelInfo, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
+import { type Content, describeDocument, describeImage, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
@@ -63,18 +63,18 @@ function clipMemory(text: string): string {
  * appends whatever content we can recover: image description, audio transcript, extracted text, or a
  * PDF summary. Best-effort — a failed extraction still leaves the "user sent X" record.
  */
-async function fileMemoryLine(apiKey: string, model: string, f: PreparedFile): Promise<string> {
+async function fileMemoryLine(model: string, f: PreparedFile): Promise<string> {
   const header = `[The user sent ${FILE_KIND_LABEL[f.kind]} named "${f.name}"]`;
   if (f.kind === "image" && f.base64) {
-    const desc = await describeImage(apiKey, model, f.base64, f.mimeType).catch(() => "");
+    const desc = await describeImage(model, f.base64, f.mimeType).catch(() => "");
     return desc ? `${header} It shows: ${clipMemory(desc)}` : header;
   }
   if (f.kind === "audio" && f.base64) {
-    const tx = await transcribeAudio(apiKey, model, f.base64, f.mimeType).catch(() => "");
+    const tx = await transcribeAudio(model, f.base64, f.mimeType).catch(() => "");
     return tx ? `${header} Transcript of the audio: ${clipMemory(tx)}` : header;
   }
   if (f.kind === "pdf" && f.base64) {
-    const desc = await describeDocument(apiKey, model, f.base64, f.mimeType).catch(() => "");
+    const desc = await describeDocument(model, f.base64, f.mimeType).catch(() => "");
     return desc ? `${header} Document contents: ${clipMemory(desc)}` : header;
   }
   if (f.kind === "text" && f.text) {
@@ -115,14 +115,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const { t, lang } = useLang();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [apiKey, setApiKey] = useState("");
+  // Models are admin-configured for the /webapp and fetched from the server on mount; the store getters
+  // seed sensible defaults until that resolves. Voice is a user preference (persisted locally).
   const [textModel, setTextModel] = useState(store.getTextModel());
   const [audioModel, setAudioModel] = useState(store.getAudioModel());
   const [liveModel, setLiveModel] = useState(store.getLiveModel());
   const [voice, setVoice] = useState(store.getVoice());
-  const [models, setModels] = useState<ModelInfo[] | null>(null);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -202,19 +200,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }, [messages]);
 
   const refreshProfile = useCallback(async () => {
-    if (!store.getMemoryOn() || !store.getKey()) return;
+    if (!store.getMemoryOn()) return;
     profileFactsRef.current = await getProfile();
   }, []);
 
   const refreshTasks = useCallback(async () => {
-    if (!store.getMemoryOn() || !store.getKey()) return;
+    if (!store.getMemoryOn()) return;
     tasksRef.current = await getTasks("open");
   }, []);
 
   // Distil new turns into the profile (fire-and-forget; never blocks chat). `minNew` guards against
   // extracting tiny fragments — a closing conversation needs one exchange, an idle tick needs more.
   const runExtraction = useCallback(async (minNew = 2) => {
-    if (!store.getMemoryOn() || !store.getKey()) return;
+    if (!store.getMemoryOn()) return;
     const transcript = messagesRef.current
       .filter((m) => m.text && !m.error && !m.streaming)
       .map((m) => ({ role: m.role, text: m.text }));
@@ -236,29 +234,29 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     extractTimerRef.current = setTimeout(() => void runExtraction(4), 20000);
   }, [runExtraction]);
 
-  const loadModels = useCallback(async (key: string) => {
-    if (!key) return;
-    setModelsLoading(true);
-    setModelsError("");
+  // Load the admin-configured models + default voice for the /webapp (the app is keyless, so users no
+  // longer pick models). Cache them in the store so the next load has them immediately, and adopt the
+  // default voice only when the user hasn't chosen one yet.
+  const loadConfig = useCallback(async () => {
     try {
-      setModels(await listModels(key));
-    } catch (e) {
-      setModels(null);
-      setModelsError(errMsg(e));
-    } finally {
-      setModelsLoading(false);
+      const res = await api("/api/chat/ai/config");
+      if (!res.ok) return;
+      const cfg = (await res.json()) as { textModel: string; audioModel: string; liveModel: string; defaultVoice: string };
+      if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
+      if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
+      if (cfg.liveModel) { store.setLiveModel(cfg.liveModel); setLiveModel(cfg.liveModel); }
+      if (cfg.defaultVoice && !store.getVoiceChosen()) { store.setVoice(cfg.defaultVoice); setVoice(cfg.defaultVoice); }
+    } catch {
+      /* keep the defaults */
     }
   }, []);
 
   useEffect(() => {
-    const k = store.getKey();
-    setApiKey(k);
-    if (k) void loadModels(k);
-    else setDrawerOpen(true);
+    void loadConfig();
     store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
     void refreshProfile();
     void refreshTasks();
-  }, [loadModels, refreshProfile, refreshTasks]);
+  }, [loadConfig, refreshProfile, refreshTasks]);
 
   // Distil the conversation when the user backgrounds or leaves the tab — a natural "conversation end".
   useEffect(() => {
@@ -274,29 +272,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     };
   }, [runExtraction]);
 
-  function saveKey(k: string) {
-    store.setKey(k);
-    setApiKey(k);
-    if (k) void loadModels(k);
-  }
-  function clearKey() {
-    store.setKey("");
-    setApiKey("");
-    setModels(null);
-    setModelsError("");
-  }
-  function pickTextModel(v: string) {
-    store.setTextModel(v);
-    setTextModel(v);
-  }
-  function pickAudioModel(v: string) {
-    store.setAudioModel(v);
-    setAudioModel(v);
-  }
-  function pickLiveModel(v: string) {
-    store.setLiveModel(v);
-    setLiveModel(v);
-  }
   function pickVoice(v: string) {
     store.setVoice(v);
     setVoice(v);
@@ -330,12 +305,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }];
       const runTool = (name: string, args: Record<string, unknown>) =>
         isTaskTool(name) ? runTaskTool(name, args, () => void refreshTasks()) : runRecallTool(args);
-      for await (const delta of streamTextWithTools(apiKey, textModel, contents, sys, tools, runTool)) {
+      for await (const delta of streamTextWithTools(textModel, contents, sys, tools, runTool)) {
         onDelta(delta);
       }
     } else {
       const sys = [langDirective, CAPABILITY_BOUNDS, currentTimeContext()].filter(Boolean).join("\n\n");
-      for await (const delta of streamText(apiKey, textModel, contents, sys)) {
+      for await (const delta of streamText(textModel, contents, sys)) {
         onDelta(delta);
       }
     }
@@ -349,7 +324,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: finalText } : m)));
       void (async () => {
         try {
-          const audio = await synthesizeSpeech(apiKey, audioModel, acc, voice);
+          const audio = await synthesizeSpeech(audioModel, acc, voice);
           setMessages((cur) =>
             cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, audio } : m)),
           );
@@ -409,10 +384,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function sendText(text: string, files?: PreparedFile[]) {
-    if (!apiKey) {
-      setDrawerOpen(true);
-      return;
-    }
     const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
     // Snapshot the quoted message (bounded — the quote renders two lines and the model sees a
     // capped snippet) and clear the composer's reply bar right away.
@@ -444,7 +415,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // remembers a file was sent and what it contained, even if it can't produce the file back.
         // Best-effort — never blocks the chat.
         void (async () => {
-          const lines = await Promise.all(files.map((f) => fileMemoryLine(apiKey, textModel, f)));
+          const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
           const userContent =
             [replyRef ? replyContext(replyRef) : "", text.trim(), ...lines].filter(Boolean).join("\n") ||
             "(attachment)";
@@ -473,10 +444,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startVoice() {
-    if (!apiKey) {
-      setDrawerOpen(true);
-      return;
-    }
     try {
       recorderRef.current = await startRecording();
       setVoiceState("recording");
@@ -506,7 +473,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // Transcribe in parallel with the reply (a second, audio-capable generateContent call). Fills the
       // user's bubble in place when it lands; an empty/failed transcript degrades to the "Voice message"
       // label so the turn still reads sensibly and stays in toContents() history.
-      const transcriptPromise = transcribeAudio(apiKey, textModel, base64, mimeType)
+      const transcriptPromise = transcribeAudio(textModel, base64, mimeType)
         .then((t) => {
           setMessages((cur) => cur.map((m) => (m.id === userMsg.id ? { ...m, text: t || "Voice message" } : m)));
           return t;
@@ -597,10 +564,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startCall() {
-    if (!apiKey) {
-      setDrawerOpen(true);
-      return;
-    }
     setCallError("");
     setCallIdleClosed(false);
     setIdleEndedOpen(false); // a new/reconnected call supersedes any lingering idle-timeout modal
@@ -615,7 +578,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
     const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
-    const session = new LiveSession(apiKey, liveModel, voice, memoryOn, profileBlock, recentContext, lang, agendaBlock);
+    const session = new LiveSession(liveModel, voice, memoryOn, profileBlock, recentContext, lang, agendaBlock);
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
     setCallState("connecting");
@@ -734,6 +697,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }
 
+  // Block the composer (text + voice) until the assistant has FULLY responded. For a voice reply the
+  // spoken audio finishes AFTER the text (the bubble stays on `pendingAudio` while TTS runs), so this
+  // keeps the mic disabled until the whole reply — text and audio — is ready, preventing a second voice
+  // message from being sent mid-response.
+  const composerBusy = streaming || messages.some((m) => m.pendingAudio);
+
   return (
     <div className="app-shell flex flex-row bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <Sidebar
@@ -785,14 +754,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               <p className="mt-2 max-w-md text-sm text-black/55 dark:text-white/55">
                 {t.chat.emptyBody}
               </p>
-              {!apiKey && (
-                <button
-                  onClick={() => setDrawerOpen(true)}
-                  className="mt-6 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
-                >
-                  {t.chat.addKey}
-                </button>
-              )}
             </div>
           ) : (
             <MessageList
@@ -831,10 +792,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           onStopVoice={stopVoice}
           onStartCall={startCall}
           voiceState={voiceState}
-          disabled={streaming}
-          hasKey={!!apiKey}
+          disabled={composerBusy}
           inCall={!!callState}
-          onNeedKey={() => setDrawerOpen(true)}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
         />
@@ -843,20 +802,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       <KeyDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        apiKey={apiKey}
-        onSaveKey={saveKey}
-        onClearKey={clearKey}
-        models={models}
-        modelsLoading={modelsLoading}
-        modelsError={modelsError}
-        onReloadModels={() => loadModels(apiKey)}
         textModel={textModel}
         audioModel={audioModel}
         liveModel={liveModel}
         voice={voice}
-        onChangeTextModel={pickTextModel}
-        onChangeAudioModel={pickAudioModel}
-        onChangeLiveModel={pickLiveModel}
         onChangeVoice={pickVoice}
       />
 

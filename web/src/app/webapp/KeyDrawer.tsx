@@ -1,73 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ClipboardPaste, Eye, EyeOff, KeyRound, RefreshCw, Trash2, X } from "lucide-react";
-import { audioModels, liveModels, type ModelInfo, textModels } from "./lib/gemini";
-import { DEFAULT_AUDIO_MODEL, DEFAULT_LIVE_MODEL, DEFAULT_TEXT_MODEL } from "./lib/store";
-import ModelSelect from "./ModelSelect";
+import { AudioLines, Cpu, ShieldCheck, X } from "lucide-react";
 import VoicePreviewButton from "./VoicePreviewButton";
 import VoiceSelect from "./VoiceSelect";
-import ConfirmDialog from "@/components/ConfirmDialog";
 import { useT } from "@/i18n/LanguageProvider";
 
+/**
+ * Settings drawer for the keyless /webapp. There's no API key to manage anymore — the backend supplies
+ * the Gemini keys — so this holds the one setting the user still controls (the TTS voice) plus a
+ * read-only view of the models the admin selected for text, voice, and the live call.
+ */
 export default function KeyDrawer({
   open,
   onClose,
-  apiKey,
-  onSaveKey,
-  onClearKey,
-  models,
-  modelsLoading,
-  modelsError,
-  onReloadModels,
   textModel,
   audioModel,
   liveModel,
   voice,
-  onChangeTextModel,
-  onChangeAudioModel,
-  onChangeLiveModel,
   onChangeVoice,
 }: {
   open: boolean;
   onClose: () => void;
-  apiKey: string;
-  onSaveKey: (key: string) => void;
-  onClearKey: () => void;
-  models: ModelInfo[] | null;
-  modelsLoading: boolean;
-  modelsError: string;
-  onReloadModels: () => void;
   textModel: string;
   audioModel: string;
   liveModel: string;
   voice: string;
-  onChangeTextModel: (v: string) => void;
-  onChangeAudioModel: (v: string) => void;
-  onChangeLiveModel: (v: string) => void;
   onChangeVoice: (v: string) => void;
 }) {
   const t = useT();
-  const [draft, setDraft] = useState(apiKey);
-  const [show, setShow] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-
-  useEffect(() => {
-    if (open) setDraft(apiKey);
-  }, [open, apiKey]);
-
-  async function pasteKey() {
-    try {
-      const v = (await navigator.clipboard.readText()).trim();
-      if (v) setDraft(v);
-    } catch {
-      /* clipboard read blocked/denied — no-op */
-    }
-  }
-
-  const texts = models ? textModels(models) : [];
-  const audios = models ? audioModels(models) : [];
-  const lives = models ? liveModels(models) : [];
 
   return (
     <div className={`fixed inset-0 z-30 ${open ? "" : "pointer-events-none"}`} aria-hidden={!open}>
@@ -88,151 +48,57 @@ export default function KeyDrawer({
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
-          {/* API key */}
+          {/* Managed-by-us note: no key needed on this app. */}
+          <div className="flex items-start gap-2.5 rounded-xl border border-emerald-600/20 bg-emerald-50 px-3.5 py-3 text-xs text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-950/30 dark:text-emerald-200">
+            <ShieldCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <p>{t.settings.managedNote}</p>
+          </div>
+
+          {/* Voice */}
           <section>
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <KeyRound size={15} /> {t.settings.apiKeyTitle}
+              <AudioLines size={15} aria-hidden="true" /> {t.settings.voice}
             </h3>
-            <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
-              {t.settings.apiKeyNotePrefix}
-              <strong>{t.settings.apiKeyNoteBold}</strong>
-              {t.settings.apiKeyNoteMid}
-              <a
-                href="https://aistudio.google.com/apikey"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                aistudio.google.com/apikey
-              </a>
-              {t.settings.apiKeyNoteSuffix}
+            <div className="mt-3">
+              <VoiceSelect value={voice} onChange={onChangeVoice} />
+              <VoicePreviewButton voice={voice} model={audioModel} />
+              <span className="mt-2 block text-xs text-black/45 dark:text-white/45">
+                {t.settings.voiceHintPrefix}
+                <a
+                  href="https://ai.google.dev/gemini-api/docs/speech-generation#voices"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-black/70 dark:hover:text-white/70"
+                >
+                  {t.settings.voiceHintLink}
+                </a>
+                {t.settings.voiceHintSuffix}
+              </span>
             </div>
-            <div className="mt-3 flex items-stretch gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={show ? "text" : "password"}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder="AIza…"
-                  className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 pr-9 text-base outline-none transition focus:border-blue-500 md:text-sm dark:border-white/20"
-                />
-                {draft ? (
-                  <button
-                    type="button"
-                    onClick={() => setShow((s) => !s)}
-                    className="absolute top-1/2 right-2 -translate-y-1/2 text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70"
-                    aria-label={show ? t.settings.hideKey : t.settings.showKey}
-                  >
-                    {show ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={pasteKey}
-                    className="absolute top-1/2 right-2 -translate-y-1/2 text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70"
-                    aria-label={t.settings.pasteKey}
-                  >
-                    <ClipboardPaste size={16} />
-                  </button>
-                )}
-              </div>
-              <button
-                onClick={() => onSaveKey(draft.trim())}
-                disabled={!draft.trim() || draft.trim() === apiKey}
-                className="rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
-              >
-                {t.settings.save}
-              </button>
-            </div>
-            {apiKey && (
-              <button
-                onClick={() => setConfirmRemove(true)}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs text-black/50 transition hover:text-black/80 dark:text-white/50 dark:hover:text-white/80"
-              >
-                <Trash2 size={13} /> {t.settings.removeKey}
-              </button>
-            )}
           </section>
 
-          {/* Models */}
+          {/* Models (read-only — chosen by the admin for everyone) */}
           <section>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">{t.settings.models}</h3>
-              <button
-                onClick={onReloadModels}
-                disabled={!apiKey || modelsLoading}
-                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-black/60 hover:bg-black/5 disabled:opacity-50 dark:text-white/60 dark:hover:bg-white/10"
-              >
-                <RefreshCw size={13} className={modelsLoading ? "animate-spin" : ""} /> {t.settings.refresh}
-              </button>
-            </div>
-
-            {!apiKey ? (
-              <p className="mt-2 text-xs text-black/50 dark:text-white/50">{t.settings.addKeyToLoad}</p>
-            ) : modelsError ? (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{modelsError}</p>
-            ) : (
-              <div className="mt-3 space-y-4">
-                <ModelSelect
-                  label={t.settings.textModel}
-                  value={textModel}
-                  options={texts}
-                  recommendedId={DEFAULT_TEXT_MODEL}
-                  onChange={onChangeTextModel}
-                />
-
-                <ModelSelect
-                  label={t.settings.voiceModel}
-                  value={audioModel}
-                  options={audios}
-                  recommendedId={DEFAULT_AUDIO_MODEL}
-                  onChange={onChangeAudioModel}
-                  hint={t.settings.voiceModelHint}
-                />
-
-                <ModelSelect
-                  label={t.settings.liveModel}
-                  value={liveModel}
-                  options={lives}
-                  recommendedId={DEFAULT_LIVE_MODEL}
-                  onChange={onChangeLiveModel}
-                  hint={t.settings.liveModelHint}
-                />
-
-                <div className="block">
-                  <span className="text-xs font-medium text-black/70 dark:text-white/70">{t.settings.voice}</span>
-                  <VoiceSelect value={voice} onChange={onChangeVoice} />
-                  <VoicePreviewButton voice={voice} model={audioModel} />
-                  <span className="mt-1 block text-xs text-black/45 dark:text-white/45">
-                    {t.settings.voiceHintPrefix}
-                    <a
-                      href="https://ai.google.dev/gemini-api/docs/speech-generation#voices"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline underline-offset-2 hover:text-black/70 dark:hover:text-white/70"
-                    >
-                      {t.settings.voiceHintLink}
-                    </a>
-                    {t.settings.voiceHintSuffix}
-                  </span>
-                </div>
-              </div>
-            )}
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Cpu size={15} aria-hidden="true" /> {t.settings.models}
+            </h3>
+            <dl className="mt-3 divide-y divide-black/5 overflow-hidden rounded-xl border border-black/10 dark:divide-white/5 dark:border-white/10">
+              <ModelRow label={t.settings.textModel} value={textModel} />
+              <ModelRow label={t.settings.voiceModel} value={audioModel} />
+              <ModelRow label={t.settings.liveModel} value={liveModel} />
+            </dl>
           </section>
         </div>
       </aside>
-      <ConfirmDialog
-        open={confirmRemove}
-        title={t.settings.removeKeyConfirmTitle}
-        message={t.settings.removeKeyConfirmBody}
-        confirmLabel={t.settings.removeKeyConfirmButton}
-        cancelLabel={t.common.cancel}
-        onConfirm={() => {
-          setConfirmRemove(false);
-          onClearKey();
-        }}
-        onClose={() => setConfirmRemove(false)}
-      />
+    </div>
+  );
+}
+
+function ModelRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+      <dt className="text-xs font-medium text-black/60 dark:text-white/60">{label}</dt>
+      <dd className="truncate font-mono text-xs text-black/80 dark:text-white/80" title={value}>{value}</dd>
     </div>
   );
 }

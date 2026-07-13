@@ -1,6 +1,6 @@
-// Client-side Gemini access using the user's own API key. Every call here goes BROWSER → GOOGLE
-// directly; the key never touches our backend. Text generation + TTS use the official @google/genai
-// SDK; model listing uses the REST endpoint for a stable, version-independent response shape.
+// Keyless Gemini access for the /webapp. Every call routes through our backend reverse-proxy
+// (/api/chat/ai/gemini/*), which injects a pooled Gemini key server-side with failover — the browser
+// never holds a key. Uses the official @google/genai SDK pointed at the proxy via httpOptions.baseUrl.
 
 import { GoogleGenAI, Modality, type Content, type FunctionCall, type Part, type Schema, type Tool } from "@google/genai";
 
@@ -51,18 +51,26 @@ export const PREBUILT_VOICES = [
 
 export type ModelInfo = { id: string; displayName: string; methods: string[] };
 
-function client(apiKey: string) {
-  return new GoogleGenAI({ apiKey });
+/**
+ * A keyless Gemini client: routes every REST call through our backend reverse-proxy, which injects a
+ * pooled key server-side (with failover). `apiKey` is a placeholder the proxy strips; `baseUrl` is
+ * same-origin, so the SDK's fetch carries the ev_user session cookie automatically. Exported for the
+ * embedding path (embed.ts), which builds its own request off the same client.
+ */
+export function client() {
+  return new GoogleGenAI({
+    apiKey: "webapp",
+    httpOptions: { baseUrl: `${location.origin}/api/chat/ai/gemini` },
+  });
 }
 
 /** Stream a text reply token-by-token for the given conversation. */
 export async function* streamText(
-  apiKey: string,
   model: string,
   contents: Content[],
   systemInstruction?: string,
 ): AsyncGenerator<string> {
-  const ai = client(apiKey);
+  const ai = client();
   const stream = await ai.models.generateContentStream({
     model,
     contents,
@@ -80,14 +88,13 @@ export async function* streamText(
  * answers in plain text (capped to avoid loops). `contents` is mutated to append the tool exchange.
  */
 export async function* streamTextWithTools(
-  apiKey: string,
   model: string,
   contents: Content[],
   systemInstruction: string,
   tools: Tool[],
   executor: ToolExecutor,
 ): AsyncGenerator<string> {
-  const ai = client(apiKey);
+  const ai = client();
   const config = { systemInstruction, tools };
   const MaxRounds = 5;
 
@@ -125,13 +132,12 @@ export async function* streamTextWithTools(
  * `responseSchema` (build it with the `Type` enum). Used for memory extraction — not streamed.
  */
 export async function generateJson<T>(
-  apiKey: string,
   model: string,
   contents: Content[],
   systemInstruction: string,
   responseSchema: Schema,
 ): Promise<T> {
-  const ai = client(apiKey);
+  const ai = client();
   const res = await ai.models.generateContent({
     model,
     contents,
@@ -146,12 +152,11 @@ export async function generateJson<T>(
  * spoken reply from the same inline audio). Best-effort: callers treat "" as "no transcript".
  */
 export async function transcribeAudio(
-  apiKey: string,
   model: string,
   audioBase64: string,
   mimeType: string,
 ): Promise<string> {
-  const ai = client(apiKey);
+  const ai = client();
   const res = await ai.models.generateContent({
     model,
     contents: [
@@ -177,12 +182,11 @@ export async function transcribeAudio(
  * vector store so it can be recalled later. Best-effort: callers treat "" as "no description".
  */
 export async function describeImage(
-  apiKey: string,
   model: string,
   imageBase64: string,
   mimeType: string,
 ): Promise<string> {
-  const ai = client(apiKey);
+  const ai = client();
   const res = await ai.models.generateContent({
     model,
     contents: [
@@ -209,12 +213,11 @@ export async function describeImage(
  * store so it can be recalled later. Best-effort: callers treat "" as "no summary".
  */
 export async function describeDocument(
-  apiKey: string,
   model: string,
   base64: string,
   mimeType: string,
 ): Promise<string> {
-  const ai = client(apiKey);
+  const ai = client();
   const res = await ai.models.generateContent({
     model,
     contents: [
@@ -237,12 +240,11 @@ export async function describeDocument(
 
 /** Synthesize speech with a TTS model. Returns base64 PCM16 + its sample rate. */
 export async function synthesizeSpeech(
-  apiKey: string,
   model: string,
   text: string,
   voice: string,
 ): Promise<{ base64: string; sampleRate: number }> {
-  const ai = client(apiKey);
+  const ai = client();
   const res = await ai.models.generateContent({
     model,
     contents: [{ role: "user", parts: [{ text }] }],
@@ -262,38 +264,6 @@ function parseRate(mime?: string): number {
   const m = /rate=(\d+)/.exec(mime);
   return m ? parseInt(m[1], 10) : 24000;
 }
-
-/** List the models available to this key (REST — stable shape across SDK versions). */
-export async function listModels(apiKey: string): Promise<ModelInfo[]> {
-  const out: ModelInfo[] = [];
-  let pageToken = "";
-  do {
-    const url = new URL("https://generativelanguage.googleapis.com/v1beta/models");
-    url.searchParams.set("key", apiKey);
-    url.searchParams.set("pageSize", "200");
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const res = await fetch(url.toString());
-    if (!res.ok) {
-      throw new Error(
-        res.status === 400 || res.status === 403
-          ? "That Gemini API key was rejected. Double-check it at aistudio.google.com/apikey."
-          : `Could not load models (HTTP ${res.status}).`,
-      );
-    }
-    const data: { models?: RawModel[]; nextPageToken?: string } = await res.json();
-    for (const m of data.models ?? []) {
-      out.push({
-        id: m.name.replace(/^models\//, ""),
-        displayName: m.displayName ?? m.name,
-        methods: m.supportedGenerationMethods ?? [],
-      });
-    }
-    pageToken = data.nextPageToken ?? "";
-  } while (pageToken);
-  return out;
-}
-
-type RawModel = { name: string; displayName?: string; supportedGenerationMethods?: string[] };
 
 /** Models suitable for the text chat (chat-capable Gemini models, excluding TTS/embeddings/etc.). */
 export function textModels(models: ModelInfo[]): ModelInfo[] {

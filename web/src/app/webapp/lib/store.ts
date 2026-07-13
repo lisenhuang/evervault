@@ -1,7 +1,8 @@
-// Browser-only storage for the user's Bring-Your-Own-Key Gemini key and model choices.
-// The API key lives ONLY here (localStorage) and is sent only to Google — never to our server.
+// Browser-only cache of the /webapp's model choices + voice preference. The app is keyless: Gemini
+// calls go through our backend proxy (which holds the pooled keys), so no API key is stored here.
+// Models are chosen by the admin and fetched from the server on load; these getters just cache the
+// last-known values (and safe defaults) so the UI has something before that fetch resolves.
 
-const KEY = "ev:geminiKey";
 const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
 const LIVE_MODEL = "ev:liveModel";
@@ -25,8 +26,6 @@ function set(key: string, value: string) {
 }
 
 export const store = {
-  getKey: () => get(KEY),
-  setKey: (v: string) => set(KEY, v.trim()),
   getTextModel: () => get(TEXT_MODEL) || DEFAULT_TEXT_MODEL,
   setTextModel: (v: string) => set(TEXT_MODEL, v),
   getAudioModel: () => get(AUDIO_MODEL) || DEFAULT_AUDIO_MODEL,
@@ -35,6 +34,8 @@ export const store = {
   setLiveModel: (v: string) => set(LIVE_MODEL, v),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
+  // Whether the user has explicitly picked a voice — so the admin's default only applies before they do.
+  getVoiceChosen: () => !!get(VOICE),
   // Memory recall is on by default; users can turn it off.
   getMemoryOn: () => get(MEMORY_ON) !== "0",
   setMemoryOn: (on: boolean) => set(MEMORY_ON, on ? "1" : "0"),
