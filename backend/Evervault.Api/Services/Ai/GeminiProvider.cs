@@ -269,11 +269,10 @@ public class GeminiProvider : IAiProvider
         var client = _http.CreateClient();
         var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var res = await client.SendAsync(req, ct);
-        var body = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body); // Auth/Quota/Transient → failover advances
+        var (status, body) = await SendTtsAsync(client, req, ct);
+        if (!IsSuccess(status)) throw MapError(status, body); // Auth/Quota/Transient → failover advances
 
-        using var doc = JsonDocument.Parse(body);
+        using var doc = ParseTts(body);
         var root = doc.RootElement;
         if (root.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0
             && candidates[0].TryGetProperty("content", out var content)
@@ -311,16 +310,55 @@ public class GeminiProvider : IAiProvider
         var client = _http.CreateClient();
         var req = Req(HttpMethod.Post, "/v1beta/interactions", rawKey);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var res = await client.SendAsync(req, ct);
-        var body = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+        var (status, body) = await SendTtsAsync(client, req, ct);
+        if (!IsSuccess(status)) throw MapError(status, body);
 
-        using var doc = JsonDocument.Parse(body);
+        using var doc = ParseTts(body);
         if (TryFindAudioData(doc.RootElement, out var b64, out var mime))
             return (Convert.FromBase64String(b64), mime ?? "audio/L16;codec=pcm;rate=24000");
 
         throw new AiProviderException(AiErrorKind.Transient, "Gemini returned no audio for the TTS request.");
     }
+
+    // Send a TTS request and read its (buffered) body, translating transport-level failures — a network
+    // blip or the HttpClient timeout — into a Transient AiProviderException. Without this, such an error
+    // is a raw HttpRequestException/TaskCanceledException that KeyFailoverRunner does NOT catch (its filter
+    // matches only AiProviderException), so it bubbles out as an unhandled 500 with no JSON body — which
+    // the webapp preview can only render as the generic "Could not load the voice sample." fallback.
+    // As a Transient error it instead advances failover to the next key, and if all keys fail the caller
+    // returns a real {error} message.
+    private static async Task<(HttpStatusCode Status, string Body)> SendTtsAsync(
+        HttpClient client, HttpRequestMessage req, CancellationToken ct)
+    {
+        try
+        {
+            using var res = await client.SendAsync(req, ct);
+            var body = await res.Content.ReadAsStringAsync(ct);
+            return (res.StatusCode, body);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // the caller/client cancelled — not a key failure, let it propagate
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
+        {
+            // OperationCanceledException with ct NOT cancelled == the HttpClient timeout elapsed.
+            throw new AiProviderException(AiErrorKind.Transient, $"Gemini TTS request failed: {ex.Message}");
+        }
+    }
+
+    // Parse a TTS response body, mapping a malformed (non-JSON) 200 to a Transient error so failover retries
+    // rather than throwing a raw JsonException that would escape as an unhandled 500.
+    private static JsonDocument ParseTts(string body)
+    {
+        try { return JsonDocument.Parse(body); }
+        catch (JsonException ex)
+        {
+            throw new AiProviderException(AiErrorKind.Transient, $"Gemini returned an unreadable TTS response: {ex.Message}");
+        }
+    }
+
+    private static bool IsSuccess(HttpStatusCode status) => (int)status is >= 200 and < 300;
 
     /// <summary>Tolerantly locate base64 audio in a response of uncertain shape (the Interactions API
     /// response envelope isn't fully documented): the first object with a long "data" string, capturing
