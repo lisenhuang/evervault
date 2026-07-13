@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, ShieldCheck, X } from "lucide-react";
+import { AudioLines, X } from "lucide-react";
 import VoicePreviewButton from "./VoicePreviewButton";
 import VoiceSelect from "./VoiceSelect";
 import { useT } from "@/i18n/LanguageProvider";
@@ -47,12 +47,6 @@ export default function KeyDrawer({
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
-          {/* Managed-by-us note: no key needed on this app. */}
-          <div className="flex items-start gap-2.5 rounded-xl border border-emerald-600/20 bg-emerald-50 px-3.5 py-3 text-xs text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-950/30 dark:text-emerald-200">
-            <ShieldCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-            <p>{t.settings.managedNote}</p>
-          </div>
-
           {/* Voice */}
           <section>
             <h3 className="flex items-center gap-2 text-sm font-semibold">
