@@ -29,6 +29,13 @@ Guidance for Claude Code when working in this repository.
   response shapes, persisted data formats, or client expectations. Add new fields/
   endpoints rather than changing or removing existing ones; make new parameters optional
   with safe defaults.
+  - **Backend changes must stay compatible with the old frontend.** A deploy can land while
+    users have an old page still open and *haven't refreshed* — their stale `web`/`app`
+    client keeps calling the newly deployed backend. So the new backend must keep serving the
+    previously shipped frontend: don't remove or rename endpoints, tighten validation, or
+    change request/response shapes the old client still sends and expects. If the frontend
+    needs a breaking change, roll it out backend-first — deploy a backend that supports both
+    the old and new shapes, then ship the frontend, and only later retire the old shape.
   - **DB migrations must be backward compatible (expand → migrate → contract).** A
     migration has to be safe for the *currently deployed* code to run against. Ship only
     additive/widening changes alongside the code that needs them. Do **not**
