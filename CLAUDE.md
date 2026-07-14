@@ -21,9 +21,11 @@ Guidance for Claude Code when working in this repository.
   switching, or deleting branches is a human action unless explicitly requested.
 
 - **Production is live — keep every change deploy-compatible.** Prod is published and
-  serving real users. A deploy rolls a new app version onto the already-running database
-  while the previous version may still be handling requests, so each change must work
-  against both the old and new state. Don't break existing API contracts, request/
+  serving real users. **Pushing to `main` publishes to production** — there is no staging
+  gate, so a commit that lands on `main` deploys straight to live users. Treat every change
+  headed for `main` as an immediate prod release. A deploy rolls a new app version onto the
+  already-running database while the previous version may still be handling requests, so each
+  change must work against both the old and new state. Don't break existing API contracts, request/
   response shapes, persisted data formats, or client expectations. Add new fields/
   endpoints rather than changing or removing existing ones; make new parameters optional
   with safe defaults.
