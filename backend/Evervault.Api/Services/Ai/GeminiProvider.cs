@@ -166,9 +166,31 @@ public class GeminiProvider : IAiProvider
     public async Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(
         string rawKey, string model, string text, string voiceName, CancellationToken ct)
     {
-        // generateContent is the proven path (the web client uses it and works). Only some models
-        // (e.g. Gemini 3.x TTS) reject it — those return a non-retryable "Other" error, in which case
-        // fall back to the Interactions API. Auth/Quota/Transient still bubble to the key-failover.
+        // Gemini TTS occasionally emits *text* tokens instead of audio — a known classifier flake that
+        // surfaces either as an outright "Model tried to generate text… should only be used for TTS"
+        // rejection or as a 200 with no audio part. Google's TTS docs recommend automated retry for
+        // exactly this, so make a few attempts before giving up. A genuine Auth/Quota error is not
+        // matched here, so it still bubbles up to KeyFailoverRunner to advance to the next key.
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await SynthOnceAsync(rawKey, model, text, voiceName, ct);
+            }
+            catch (AiProviderException ex) when (IsTextInsteadOfAudio(ex) && attempt < maxAttempts)
+            {
+                // The model returned text, not audio — retry the same key.
+            }
+        }
+    }
+
+    // One synthesis attempt: generateContent is the path the web client uses; some models/keys reject
+    // it (e.g. Gemini 3.x TTS previews return a non-retryable "Other"), in which case fall back to the
+    // Interactions API. Auth/Quota/Transient still bubble to the key-failover.
+    private async Task<(byte[] Pcm, string Mime)> SynthOnceAsync(
+        string rawKey, string model, string text, string voiceName, CancellationToken ct)
+    {
         try
         {
             return await SynthViaGenerateContentAsync(rawKey, model, text, voiceName, ct);
@@ -178,6 +200,14 @@ public class GeminiProvider : IAiProvider
             return await SynthViaInteractionsAsync(rawKey, model, text, voiceName, ct);
         }
     }
+
+    // The model produced text instead of audio — a retryable flake per Google's TTS guidance. Covers
+    // both the explicit "tried to generate text / should only be used for TTS" rejection and the
+    // "no audio in a 200 response" case (thrown as Transient by the synth methods below).
+    private static bool IsTextInsteadOfAudio(AiProviderException ex) =>
+        ex.Kind == AiErrorKind.Transient
+        || ex.Message.Contains("generate text", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("only be used for TTS", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Forward a raw REST call to the Gemini API with the given key, for the keyless /webapp reverse-proxy.
