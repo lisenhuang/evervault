@@ -62,11 +62,12 @@ export default function VoicePreviewButton({ voice, model }: { voice: string; mo
     setError("");
     setStatus("loading");
     try {
-      // inline=1 makes the API stream the WAV bytes from its own origin instead of 302-redirecting to
-      // R2, so we can fetch + decode them via the Web Audio API — which plays reliably on iOS Safari,
-      // where a redirecting media element fails with "The operation is not supported".
+      // inline=true makes the API stream the WAV bytes from its own origin instead of 302-redirecting
+      // to R2, so we can fetch + decode them via the Web Audio API — which plays reliably on iOS
+      // Safari, where a redirecting media element fails with "The operation is not supported".
+      // (Must be "true"/"false": the backend binds this to a bool, which rejects "1" with a 400.)
       const url =
-        `/api/voice-samples/${encodeURIComponent(voice)}?inline=1` +
+        `/api/voice-samples/${encodeURIComponent(voice)}?inline=true` +
         (model ? `&model=${encodeURIComponent(model)}` : "");
       const handle = playAudioUrlHandle(url);
       handleRef.current = handle;
