@@ -9,7 +9,7 @@ import SetupForm from "./SetupForm";
 import { Button } from "./ui";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ThemeToggle from "@/components/theme/ThemeToggle";
-import { MessageCircle, KeyRound, Database, Table2, LockOpen, Shield, Bug, type LucideIcon } from "lucide-react";
+import { MessageCircle, KeyRound, Database, Table2, LockOpen, Shield, Bug, ScrollText, type LucideIcon } from "lucide-react";
 
 type View = "loading" | "setup" | "login" | "dashboard";
 
@@ -19,6 +19,7 @@ const NAV: { href: string; label: string; icon: LucideIcon; desc: string }[] = [
   { href: "/admin/storage", label: "Storage", icon: Database, desc: "Cloudflare R2" },
   { href: "/admin/database", label: "Database", icon: Table2, desc: "Browse tables (read-only)" },
   { href: "/admin/errors", label: "Error Reports", icon: Bug, desc: "Look up reference codes" },
+  { href: "/admin/logs", label: "AI Logs", icon: ScrollText, desc: "Per-call usage & tokens" },
   { href: "/admin/google", label: "Google Login", icon: LockOpen, desc: "Sign-in & binding" },
 ];
 

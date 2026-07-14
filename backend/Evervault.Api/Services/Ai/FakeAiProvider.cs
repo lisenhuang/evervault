@@ -90,7 +90,10 @@ public class FakeAiProvider : IAiProvider
         // If the previous turn was a tool result, answer with a summary instead of looping.
         var last = messages.LastOrDefault();
         if (last?.Role == "tool")
-            return Task.FromResult(new AiCompletion($"Done{effortNote}. Tool '{last.Name}' returned: {Trim(last.Content)}", new List<AiToolCall>()));
+        {
+            var summary = $"Done{effortNote}. Tool '{last.Name}' returned: {Trim(last.Content)}";
+            return Task.FromResult(new AiCompletion(summary, new List<AiToolCall>(), Usage: FakeUsage(messages, summary)));
+        }
 
         var text = (messages.LastOrDefault(m => m.Role == "user")?.Content ?? "").ToLowerInvariant();
 
@@ -108,9 +111,17 @@ public class FakeAiProvider : IAiProvider
         if (text.Contains("run sql") || text.Contains("select"))
             return Single(Call("sql_query", new { sql = "SELECT count(*) AS memories FROM \"Memories\"" })!);
 
-        return Task.FromResult(new AiCompletion(
-            $"This is the fake AI provider (AI_FAKE=1){effortNote}. Try: 'list memories', 'search <text>', 'create memory', 'delete memory', or 'run sql'.",
-            new List<AiToolCall>()));
+        var help = $"This is the fake AI provider (AI_FAKE=1){effortNote}. Try: 'list memories', 'search <text>', 'create memory', 'delete memory', or 'run sql'.";
+        return Task.FromResult(new AiCompletion(help, new List<AiToolCall>(), Usage: FakeUsage(messages, help)));
+    }
+
+    // Deterministic ~token counts (roughly chars/4) so AI_FAKE=1 exercises the usage-logging path and the
+    // /admin/logs token columns aren't empty offline.
+    private static AiUsage FakeUsage(IReadOnlyList<AiChatMessage> messages, string reply)
+    {
+        var prompt = Math.Max(1, messages.Sum(m => m.Content?.Length ?? 0) / 4);
+        var completion = Math.Max(1, reply.Length / 4);
+        return new AiUsage(prompt, completion, prompt + completion);
     }
 
     public Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(

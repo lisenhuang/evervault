@@ -506,7 +506,21 @@ public class OpenAiProvider : IAiProvider
             ? JsonSerializer.Serialize(reasoning)
             : null;
 
-        return (new AiCompletion(finalText, calls, providerState), rateWindows);
+        return (new AiCompletion(finalText, calls, providerState, ParseUsage(completed)), rateWindows);
+    }
+
+    /// <summary>Lift token counts out of the Responses <c>usage</c> block on the completed frame
+    /// (input_tokens / output_tokens / total_tokens). Best-effort — null if absent.</summary>
+    private static AiUsage? ParseUsage(JsonElement? completed)
+    {
+        if (completed is not { } resp || !resp.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object)
+            return null;
+        int? Get(string name) => u.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
+            && v.TryGetInt32(out var n) ? n : null;
+        var prompt = Get("input_tokens");
+        var completion = Get("output_tokens");
+        var total = Get("total_tokens");
+        return prompt is null && completion is null && total is null ? null : new AiUsage(prompt, completion, total);
     }
 
     /// <summary>Map a mid-stream failure payload (arrives after the 200 OK, so <see cref="MapError"/> can't

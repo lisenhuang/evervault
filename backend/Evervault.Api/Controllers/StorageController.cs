@@ -57,7 +57,8 @@ public class StorageController : ControllerBase
 
                 var (pcm, mime) = await _failover.RunAsync("gemini",
                     (prov, rawKey) => prov.SynthesizeSpeechAsync(
-                        rawKey, VoiceSampleOptions.Model, VoiceSampleOptions.SampleText, voice, ct));
+                        rawKey, VoiceSampleOptions.Model, VoiceSampleOptions.SampleText, voice, ct),
+                    log: new AiCallContext { Area = "voice-sample", Model = VoiceSampleOptions.Model });
 
                 var wav = WavWriter.FromPcm16Mono(pcm, WavWriter.SampleRateFromMime(mime));
                 using var ms = new MemoryStream(wav);
@@ -125,7 +126,8 @@ public class StorageController : ControllerBase
 
             var (pcm, mime) = await _failover.RunAsync("gemini",
                 (prov, rawKey) => prov.SynthesizeSpeechAsync(
-                    rawKey, m, VoiceSampleOptions.SampleText, voice, ct));
+                    rawKey, m, VoiceSampleOptions.SampleText, voice, ct),
+                log: new AiCallContext { Area = "voice-sample", Model = m });
 
             var wav = WavWriter.FromPcm16Mono(pcm, WavWriter.SampleRateFromMime(mime));
             using var ms = new MemoryStream(wav);

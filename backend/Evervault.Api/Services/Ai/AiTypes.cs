@@ -14,9 +14,14 @@ public record AiChatMessage(
 /// <summary>A tool/function call the model wants to make. Arguments stay as a raw JSON string.</summary>
 public record AiToolCall(string Id, string Name, string ArgumentsJson);
 
+/// <summary>Token usage for one model round-trip, where the provider reports it (all nullable — some
+/// providers/paths don't expose every field). Used only for logging/observability.</summary>
+public record AiUsage(int? PromptTokens, int? CompletionTokens, int? TotalTokens);
+
 /// <summary>One model round-trip result: either assistant text, tool calls, or both. <see cref="ProviderState"/>
-/// is optional opaque data the provider needs echoed on the next turn (see <see cref="AiChatMessage"/>).</summary>
-public record AiCompletion(string? Text, List<AiToolCall> ToolCalls, string? ProviderState = null);
+/// is optional opaque data the provider needs echoed on the next turn (see <see cref="AiChatMessage"/>).
+/// <see cref="Usage"/> carries token counts when the provider reported them (best-effort, for logging).</summary>
+public record AiCompletion(string? Text, List<AiToolCall> ToolCalls, string? ProviderState = null, AiUsage? Usage = null);
 
 /// <summary>A provider-agnostic model entry for the switcher. <see cref="ReasoningLevels"/> (when the
 /// provider advertises them, e.g. ChatGPT) lets the UI offer only the effort levels this model supports.</summary>

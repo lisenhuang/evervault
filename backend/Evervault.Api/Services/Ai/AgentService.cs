@@ -95,7 +95,9 @@ public class AgentService
             try
             {
                 completion = await _failover.RunAsync(provider,
-                    (p, key) => p.CompleteAsync(key, model, messages, _tools.Schemas(), options, ct));
+                    (p, key) => p.CompleteAsync(key, model, messages, _tools.Schemas(), options, ct),
+                    log: new AiCallContext { Area = "admin-chat", Model = model },
+                    usageOf: c => c.Usage);
             }
             catch (AllKeysFailedException ex)
             {

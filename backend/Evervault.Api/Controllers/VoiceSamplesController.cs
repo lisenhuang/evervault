@@ -74,7 +74,8 @@ public class VoiceSamplesController : ControllerBase
             // 2) Miss → synthesize via key failover, WAV-encode, upload.
             var (pcm, mime) = await _failover.RunAsync("gemini",
                 (prov, rawKey) => prov.SynthesizeSpeechAsync(
-                    rawKey, m, VoiceSampleOptions.SampleText, voice, ct));
+                    rawKey, m, VoiceSampleOptions.SampleText, voice, ct),
+                log: new AiCallContext { Area = "voice-sample", Model = m });
 
             var wav = WavWriter.FromPcm16Mono(pcm, WavWriter.SampleRateFromMime(mime));
             using var ms = new MemoryStream(wav);

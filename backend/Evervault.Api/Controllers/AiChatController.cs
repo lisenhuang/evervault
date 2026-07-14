@@ -1,5 +1,6 @@
 using Evervault.Api.Data;
 using Evervault.Api.Models;
+using Evervault.Api.Services;
 using Evervault.Api.Services.Ai;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -43,7 +44,8 @@ public class AiChatController : ControllerBase
             : null;
         try
         {
-            var models = await _failover.RunAsync(p, (prov, key) => prov.ListModelsAsync(key, k, HttpContext.RequestAborted));
+            var models = await _failover.RunAsync(p, (prov, key) => prov.ListModelsAsync(key, k, HttpContext.RequestAborted),
+                log: new AiCallContext { Area = "models" });
             return Ok(new ModelsResult(p, models, warning));
         }
         catch (AllKeysFailedException ex)
@@ -64,7 +66,8 @@ public class AiChatController : ControllerBase
         var p = (provider ?? "").Trim().ToLowerInvariant();
         try
         {
-            var usage = await _failover.RunAsync(p, (prov, key) => prov.GetUsageAsync(key, HttpContext.RequestAborted));
+            var usage = await _failover.RunAsync(p, (prov, key) => prov.GetUsageAsync(key, HttpContext.RequestAborted),
+                log: new AiCallContext { Area = "usage" });
             return Ok(usage);
         }
         catch (Exception)

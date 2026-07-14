@@ -162,8 +162,21 @@ public class OpenRouterProvider : IAiProvider
                     calls.Add(new AiToolCall(id, fname, string.IsNullOrWhiteSpace(args) ? "{}" : args));
                 }
             }
-            return new AiCompletion(text, calls);
+            return new AiCompletion(text, calls, Usage: ParseUsage(root));
         }
+    }
+
+    /// <summary>Lift token counts out of the OpenAI-compatible <c>usage</c> block
+    /// (prompt_tokens / completion_tokens / total_tokens). Best-effort — null if absent.</summary>
+    private static AiUsage? ParseUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object) return null;
+        int? Get(string name) => u.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
+            && v.TryGetInt32(out var n) ? n : null;
+        var prompt = Get("prompt_tokens");
+        var completion = Get("completion_tokens");
+        var total = Get("total_tokens");
+        return prompt is null && completion is null && total is null ? null : new AiUsage(prompt, completion, total);
     }
 
     // --- wire mapping ---

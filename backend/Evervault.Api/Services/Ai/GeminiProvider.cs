@@ -140,8 +140,9 @@ public class GeminiProvider : IAiProvider
 
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
+        var usage = ParseUsage(root);
         if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-            return new AiCompletion("", new List<AiToolCall>());
+            return new AiCompletion("", new List<AiToolCall>(), Usage: usage);
 
         var textSb = new StringBuilder();
         var calls = new List<AiToolCall>();
@@ -160,7 +161,20 @@ public class GeminiProvider : IAiProvider
                 }
             }
         }
-        return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls);
+        return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls, Usage: usage);
+    }
+
+    /// <summary>Lift token counts out of Gemini's <c>usageMetadata</c> (promptTokenCount /
+    /// candidatesTokenCount / totalTokenCount). Best-effort — returns null if absent.</summary>
+    private static AiUsage? ParseUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usageMetadata", out var u) || u.ValueKind != JsonValueKind.Object) return null;
+        int? Get(string name) => u.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
+            && v.TryGetInt32(out var n) ? n : null;
+        var prompt = Get("promptTokenCount");
+        var completion = Get("candidatesTokenCount");
+        var total = Get("totalTokenCount");
+        return prompt is null && completion is null && total is null ? null : new AiUsage(prompt, completion, total);
     }
 
     public async Task<(byte[] Pcm, string Mime)> SynthesizeSpeechAsync(

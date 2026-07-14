@@ -27,6 +27,8 @@ Desktop.ini
 # Logs
 *.log
 logs/
+# …but keep the admin "AI Logs" route source (a source dir that happens to be named logs/)
+!web/src/app/admin/logs/
 
 # Root-level local env files (project-level env is ignored by app/web/backend)
 /.env

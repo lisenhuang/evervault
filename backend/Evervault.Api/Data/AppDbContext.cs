@@ -22,6 +22,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
     public DbSet<UserTask> UserTasks => Set<UserTask>();
     public DbSet<ErrorReport> ErrorReports => Set<ErrorReport>();
+    public DbSet<AiCallLog> AiCallLogs => Set<AiCallLog>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -127,6 +128,20 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(r => r.Detail).HasMaxLength(8000);
             e.Property(r => r.UserAgent).HasMaxLength(400);
             // Admin listing (newest first) + the opportunistic retention sweep.
+            e.HasIndex(r => r.CreatedAt);
+        });
+
+        modelBuilder.Entity<AiCallLog>(e =>
+        {
+            e.Property(r => r.Provider).HasMaxLength(32);
+            e.Property(r => r.Area).HasMaxLength(32);
+            e.Property(r => r.Model).HasMaxLength(128);
+            e.Property(r => r.KeyHint).HasMaxLength(64);
+            e.Property(r => r.Outcome).HasMaxLength(16);
+            e.Property(r => r.ErrorKind).HasMaxLength(16);
+            e.Property(r => r.ErrorMessage).HasMaxLength(2000);
+            e.Property(r => r.Detail).HasMaxLength(4000);
+            // Admin listing (newest first) + stats rollups + the opportunistic retention sweep.
             e.HasIndex(r => r.CreatedAt);
         });
     }

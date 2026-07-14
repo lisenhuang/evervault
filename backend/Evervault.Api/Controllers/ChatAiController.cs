@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.RegularExpressions;
 using Evervault.Api.Data;
 using Evervault.Api.Models;
@@ -33,14 +34,17 @@ public class ChatAiController : ControllerBase
     private readonly GeminiProvider _gemini;
     private readonly AppDbContext _db;
     private readonly IErrorReportService _errors;
+    private readonly IAiCallLogService _callLog;
 
     public ChatAiController(
-        KeyFailoverRunner failover, GeminiProvider gemini, AppDbContext db, IErrorReportService errors)
+        KeyFailoverRunner failover, GeminiProvider gemini, AppDbContext db,
+        IErrorReportService errors, IAiCallLogService callLog)
     {
         _failover = failover;
         _gemini = gemini;
         _db = db;
         _errors = errors;
+        _callLog = callLog;
     }
 
     private int? Uid =>
@@ -79,7 +83,8 @@ public class ChatAiController : ControllerBase
         {
             var (token, expiresAt) = await _failover.RunAsync("gemini",
                 (_, rawKey) => _gemini.CreateLiveEphemeralTokenAsync(rawKey, liveModel, HttpContext.RequestAborted),
-                skip: attempt < 0 ? 0 : attempt);
+                skip: attempt < 0 ? 0 : attempt,
+                log: new AiCallContext { Area = "live-token", Model = liveModel, EndUserId = Uid });
             return Ok(new LiveTokenDto(token, expiresAt));
         }
         catch (AllKeysFailedException ex)
@@ -135,15 +140,26 @@ public class ChatAiController : ControllerBase
         var pathAndQuery = "/" + path + (qs.Length > 0 ? "?" + qs : "");
         var method = new HttpMethod(Request.Method);
 
+        // Log the call at the failover choke point; token counts (in the streamed body) are patched on
+        // once streaming completes. Only the chat methods carry a meaningful usageMetadata worth sniffing.
+        var (area, model) = DescribeProxy(path);
+        var ctx = new AiCallContext { Area = area, Model = model, EndUserId = Uid };
+
         try
         {
             using var upstream = await _failover.RunAsync("gemini",
-                (_, rawKey) => _gemini.ProxyRestAsync(rawKey, method, pathAndQuery, body, contentType, ct));
+                (_, rawKey) => _gemini.ProxyRestAsync(rawKey, method, pathAndQuery, body, contentType, ct),
+                log: ctx);
 
             Response.StatusCode = (int)upstream.StatusCode;
             Response.ContentType = upstream.Content.Headers.ContentType?.ToString() ?? "application/json";
             // Stream token-by-token: disable output buffering and flush each chunk so SSE reaches the client live.
             HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+
+            // Keep only a bounded tail of the (chat) response so the final usageMetadata can be read back
+            // without holding the whole stream in memory. The bytes still go to the browser unchanged.
+            var captureUsage = area == "webapp-chat" && ctx.LogId is not null;
+            var tail = new UsageTail(captureUsage);
 
             await using var src = await upstream.Content.ReadAsStreamAsync(ct);
             var buf = new byte[16 * 1024];
@@ -152,7 +168,11 @@ public class ChatAiController : ControllerBase
             {
                 await Response.Body.WriteAsync(buf.AsMemory(0, n), ct);
                 await Response.Body.FlushAsync(ct);
+                tail.Append(buf, n);
             }
+
+            if (captureUsage && ctx.LogId is int logId && tail.Sniff() is { } usage)
+                await _callLog.UpdateTokensAsync(logId, usage);
         }
         catch (AllKeysFailedException ex)
         {
@@ -179,5 +199,62 @@ public class ChatAiController : ControllerBase
         Response.StatusCode = StatusCodes.Status502BadGateway;
         await Response.WriteAsJsonAsync(
             new { error = "The AI service is temporarily unavailable. Please try again.", referenceCode = code }, ct);
+    }
+
+    // Classify a proxied path ("v1beta/models/{model}:{method}") into a log area + model: the chat methods
+    // (generate/streamGenerateContent) are "webapp-chat"; embed{Content,BatchEmbedContents} are "embed".
+    private static readonly Regex ProxyPathRe = new(@"models/([^/:]+):(\w+)", RegexOptions.Compiled);
+
+    private static (string Area, string? Model) DescribeProxy(string path)
+    {
+        var m = ProxyPathRe.Match(path ?? "");
+        var model = m.Success ? m.Groups[1].Value : null;
+        var method = m.Success ? m.Groups[2].Value : "";
+        var area = method.Contains("embed", StringComparison.OrdinalIgnoreCase) ? "embed" : "webapp-chat";
+        return (area, model);
+    }
+
+    /// <summary>Keeps a bounded rolling tail of a streamed Gemini response so the final
+    /// <c>usageMetadata</c> token counts can be recovered <b>after</b> the bytes have been forwarded to the
+    /// browser unchanged. Best-effort and no-op when capture is off (non-chat calls, or no row to patch).</summary>
+    private sealed class UsageTail
+    {
+        private const int Cap = 96 * 1024;   // usageMetadata is in the final frame; the tail is plenty.
+        private readonly bool _on;
+        private readonly Queue<byte[]> _chunks = new();
+        private int _bytes;
+
+        public UsageTail(bool on) => _on = on;
+
+        public void Append(byte[] buf, int n)
+        {
+            if (!_on || n <= 0) return;
+            var chunk = buf.AsSpan(0, n).ToArray();
+            _chunks.Enqueue(chunk);
+            _bytes += chunk.Length;
+            while (_bytes > Cap && _chunks.Count > 1) _bytes -= _chunks.Dequeue().Length;
+        }
+
+        public AiUsage? Sniff()
+        {
+            if (!_on || _bytes == 0) return null;
+            var all = new byte[_bytes];
+            var off = 0;
+            foreach (var c in _chunks) { Buffer.BlockCopy(c, 0, all, off, c.Length); off += c.Length; }
+            var text = Encoding.UTF8.GetString(all);
+
+            // Take the LAST occurrence of each field — a streamed response repeats usageMetadata as it grows;
+            // the final frame carries the authoritative totals.
+            int? Last(string field)
+            {
+                var ms = Regex.Matches(text, "\"" + field + "\"\\s*:\\s*(\\d+)");
+                return ms.Count > 0 && int.TryParse(ms[^1].Groups[1].Value, out var v) ? v : null;
+            }
+
+            var prompt = Last("promptTokenCount");
+            var completion = Last("candidatesTokenCount");
+            var total = Last("totalTokenCount");
+            return prompt is null && completion is null && total is null ? null : new AiUsage(prompt, completion, total);
+        }
     }
 }
