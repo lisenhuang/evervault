@@ -293,11 +293,13 @@ export class LiveSession {
   private async fetchLiveToken(attempt: number): Promise<string> {
     const res = await api(`/api/chat/ai/live-token?attempt=${attempt}`, { method: "POST" });
     if (!res.ok) {
-      throw new Error(
-        res.status === 502
-          ? "resource_exhausted: the AI service is temporarily unavailable"
-          : `Could not start the call (HTTP ${res.status}).`,
-      );
+      // Propagate the backend body verbatim (it carries { error, referenceCode }) and the status, so
+      // friendlyAiError can show the backend's reference code and classify it — instead of fabricating
+      // a string that discards the code and double-reports. Status 502 stays retryable in connectInitial.
+      const body = await res.text().catch(() => "");
+      throw Object.assign(new Error(body || `Could not start the call (HTTP ${res.status}).`), {
+        status: res.status,
+      });
     }
     const data = (await res.json()) as { token?: string };
     if (!data.token) throw new Error("The server did not return a live token.");
@@ -316,7 +318,12 @@ export class LiveSession {
         return;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (this.isQuotaError(msg) && !this.stopped && this.tokenAttempt < MAX_RECONNECTS) {
+        // A 502 from live-token means all pooled keys failed to mint on this attempt; rotating to the
+        // next key can still succeed, so retry it like a quota signal (the body no longer contains the
+        // old "resource_exhausted" text now that we propagate the real backend response).
+        const status = (e as { status?: number } | null)?.status;
+        const retryable = this.isQuotaError(msg) || status === 502;
+        if (retryable && !this.stopped && this.tokenAttempt < MAX_RECONNECTS) {
           this.tokenAttempt += 1; // next key, fresh token
           await delay(300);
           continue;

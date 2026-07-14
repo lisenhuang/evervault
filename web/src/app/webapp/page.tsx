@@ -5,6 +5,7 @@ import { Lock } from "lucide-react";
 import Chat from "./Chat";
 import SignInGate from "./SignInGate";
 import { api, type AuthConfig, type Me } from "./authApi";
+import { clearErrorReportQueue } from "./lib/errorReport";
 import { useT } from "@/i18n/LanguageProvider";
 
 type View = "loading" | "disabled" | "signin" | "chat";
@@ -38,6 +39,9 @@ export default function WebappPage() {
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
+    // Drop any queued error reports so the next account signed in on this tab can't flush them under
+    // its own identity (the queue is per-browser; logout is SPA-only, no reload to clear it).
+    clearErrorReportQueue();
     setMe(null);
     setView("signin");
   }

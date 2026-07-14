@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using System.Text.RegularExpressions;
 using Evervault.Api.Data;
 using Evervault.Api.Models;
+using Evervault.Api.Services;
 using Evervault.Api.Services.Ai;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
@@ -30,16 +32,21 @@ public class ChatAiController : ControllerBase
     private readonly KeyFailoverRunner _failover;
     private readonly GeminiProvider _gemini;
     private readonly AppDbContext _db;
-    private readonly ILogger<ChatAiController> _log;
+    private readonly IErrorReportService _errors;
 
     public ChatAiController(
-        KeyFailoverRunner failover, GeminiProvider gemini, AppDbContext db, ILogger<ChatAiController> log)
+        KeyFailoverRunner failover, GeminiProvider gemini, AppDbContext db, IErrorReportService errors)
     {
         _failover = failover;
         _gemini = gemini;
         _db = db;
-        _log = log;
+        _errors = errors;
     }
+
+    private int? Uid =>
+        int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+
+    private string UserAgent => Request.Headers.UserAgent.ToString();
 
     // Only the Gemini methods the webapp client actually calls may be proxied, so this can never be an
     // open relay for arbitrary endpoints. Model listing is intentionally excluded — models come from config.
@@ -77,13 +84,16 @@ public class ChatAiController : ControllerBase
         }
         catch (AllKeysFailedException ex)
         {
-            _log.LogWarning("Webapp live-token: all gemini keys failed: {Errors}", string.Join("; ", ex.Errors));
-            return StatusCode(502, new { error = "Live audio is temporarily unavailable. Please try again shortly." });
+            // Capture logs the masked per-key hints (never a raw key) alongside the reference code.
+            var code = await _errors.CaptureAsync("backend", "live-token", Uid, 502,
+                "All Gemini keys failed while minting a live token.", string.Join("; ", ex.Errors), UserAgent);
+            return StatusCode(502, new { error = "Live audio is temporarily unavailable. Please try again shortly.", referenceCode = code });
         }
         catch (AiProviderException ex)
         {
-            _log.LogWarning("Webapp live-token: {Message}", ex.Message);
-            return StatusCode(502, new { error = "Live audio is temporarily unavailable." });
+            var code = await _errors.CaptureAsync("backend", "live-token", Uid, 502,
+                "Gemini provider error while minting a live token.", ex.Message, UserAgent);
+            return StatusCode(502, new { error = "Live audio is temporarily unavailable.", referenceCode = code });
         }
     }
 
@@ -146,14 +156,13 @@ public class ChatAiController : ControllerBase
         }
         catch (AllKeysFailedException ex)
         {
-            // Log the masked per-key hints (never a raw key); return a generic message to the client.
-            _log.LogWarning("Webapp AI proxy: all gemini keys failed: {Errors}", string.Join("; ", ex.Errors));
-            await FailAsync(ct);
+            // Capture logs the masked per-key hints (never a raw key); the client gets a generic
+            // message plus the reference code an admin can search in /admin/errors.
+            await FailAsync(ct, "All Gemini keys failed on the AI proxy.", string.Join("; ", ex.Errors));
         }
         catch (AiProviderException ex)
         {
-            _log.LogWarning("Webapp AI proxy: {Message}", ex.Message);
-            await FailAsync(ct);
+            await FailAsync(ct, "Gemini provider error on the AI proxy.", ex.Message);
         }
         catch (OperationCanceledException)
         {
@@ -161,11 +170,14 @@ public class ChatAiController : ControllerBase
         }
     }
 
-    private async Task FailAsync(CancellationToken ct)
+    private async Task FailAsync(CancellationToken ct, string message, string detail)
     {
-        // Only send an error body if we haven't already started streaming a (200) response.
+        // Always record the report (the code stays greppable in logs even mid-stream), but only send
+        // an error body if we haven't already started streaming a (200) response.
+        var code = await _errors.CaptureAsync("backend", "ai-proxy", Uid, 502, message, detail, UserAgent);
         if (Response.HasStarted) return;
         Response.StatusCode = StatusCodes.Status502BadGateway;
-        await Response.WriteAsJsonAsync(new { error = "The AI service is temporarily unavailable. Please try again." }, ct);
+        await Response.WriteAsJsonAsync(
+            new { error = "The AI service is temporarily unavailable. Please try again.", referenceCode = code }, ct);
     }
 }

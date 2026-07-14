@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Square, Volume2 } from "lucide-react";
 import { playAudioUrlHandle } from "./lib/audio";
+import { friendlyAiError } from "./lib/aiError";
+import { reportAiError } from "./lib/errorReport";
 import { useT } from "@/i18n/LanguageProvider";
 
 type Status = "idle" | "loading" | "playing" | "error";
@@ -80,7 +82,11 @@ export default function VoicePreviewButton({ voice, model }: { voice: string; mo
       if (!mounted.current || id !== runId.current) return;
       handleRef.current = null;
       setStatus("error");
-      setError(e instanceof Error ? e.message : t.voicePreview.error);
+      // Localized message + reference code, and log the raw detail for admin lookup — never show the
+      // backend's raw error text here.
+      const fe = friendlyAiError(e, t);
+      reportAiError(fe, "voice-sample");
+      setError(fe.text);
     }
   }
 

@@ -201,7 +201,12 @@ export function playAudioUrlHandle(url: string): {
   void (async () => {
     try {
       const res = await fetch(url, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) {
+        // Throw the raw body (it carries { error, referenceCode }) + status so the caller's
+        // friendlyAiError can localize the message and surface the backend's reference code.
+        const body = await res.text().catch(() => "");
+        throw Object.assign(new Error(body || `HTTP ${res.status}`), { status: res.status });
+      }
       const bytes = await res.arrayBuffer();
       const buffer = await ctx.decodeAudioData(bytes);
       if (closed) return; // stopped while it was still loading
@@ -237,17 +242,6 @@ export function playAudioUrlHandle(url: string): {
     started,
     ended,
   };
-}
-
-// Pull the API's `{ error }` message out of a failed response, falling back to a generic line.
-async function readError(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (body?.error) return body.error;
-  } catch {
-    /* not JSON */
-  }
-  return "Could not load the voice sample.";
 }
 
 // --- encoding helpers ---

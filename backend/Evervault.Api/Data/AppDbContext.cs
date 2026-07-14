@@ -21,6 +21,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
     public DbSet<UserTask> UserTasks => Set<UserTask>();
+    public DbSet<ErrorReport> ErrorReports => Set<ErrorReport>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -113,6 +114,20 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(k => k.Provider).HasMaxLength(32);
             // Failover query path: enabled keys for a provider, in order.
             e.HasIndex(k => new { k.Provider, k.Enabled, k.SortOrder });
+        });
+
+        modelBuilder.Entity<ErrorReport>(e =>
+        {
+            e.Property(r => r.Code).HasMaxLength(20);
+            // The user-visible handle; unique so a client queue retry is an idempotent no-op.
+            e.HasIndex(r => r.Code).IsUnique();
+            e.Property(r => r.Source).HasMaxLength(16);
+            e.Property(r => r.Area).HasMaxLength(40);
+            e.Property(r => r.Message).HasMaxLength(2000);
+            e.Property(r => r.Detail).HasMaxLength(8000);
+            e.Property(r => r.UserAgent).HasMaxLength(400);
+            // Admin listing (newest first) + the opportunistic retention sweep.
+            e.HasIndex(r => r.CreatedAt);
         });
     }
 }

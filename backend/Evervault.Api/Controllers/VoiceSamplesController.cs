@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Amazon.S3;
 using Evervault.Api.Services;
 using Evervault.Api.Services.Ai;
@@ -20,15 +21,18 @@ public class VoiceSamplesController : ControllerBase
 {
     private readonly KeyFailoverRunner _failover;
     private readonly IStorageService _storage;
-    private readonly ILogger<VoiceSamplesController> _log;
+    private readonly IErrorReportService _errors;
 
     public VoiceSamplesController(
-        KeyFailoverRunner failover, IStorageService storage, ILogger<VoiceSamplesController> log)
+        KeyFailoverRunner failover, IStorageService storage, IErrorReportService errors)
     {
         _failover = failover;
         _storage = storage;
-        _log = log;
+        _errors = errors;
     }
+
+    private int? Uid =>
+        int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
 
     /// <summary>GET /api/voice-samples/{voice}?model=...&amp;inline=true → the WAV sample (generating on
     /// first miss). By default 302-redirects to a presigned R2 URL; with <paramref name="inline"/> the
@@ -83,22 +87,27 @@ public class VoiceSamplesController : ControllerBase
         }
         catch (AllKeysFailedException ex)
         {
-            _log.LogWarning("Voice sample {Voice}: all keys failed: {Errors}", voice, string.Join("; ", ex.Errors));
-            return StatusCode(502, new { error = "Could not synthesize the voice sample. " + string.Join("; ", ex.Errors) });
+            // Generic message + reference code only — the masked per-key errors stay server-side
+            // (they used to be echoed to the client, which leaked provider detail to end users).
+            var code = await _errors.CaptureAsync("backend", "voice-sample", Uid, 502,
+                $"All Gemini keys failed synthesizing the '{voice}' sample.", string.Join("; ", ex.Errors), Request.Headers.UserAgent.ToString());
+            return StatusCode(502, new { error = "Could not prepare the voice sample. Please try again shortly.", referenceCode = code });
         }
         catch (AiProviderException ex)
         {
-            _log.LogWarning("Voice sample {Voice}: {Message}", voice, ex.Message);
-            return StatusCode(502, new { error = ex.Message });
+            var code = await _errors.CaptureAsync("backend", "voice-sample", Uid, 502,
+                $"Gemini provider error synthesizing the '{voice}' sample.", ex.Message, Request.Headers.UserAgent.ToString());
+            return StatusCode(502, new { error = "Could not prepare the voice sample. Please try again shortly.", referenceCode = code });
         }
-        catch (InvalidOperationException ex) // storage not configured
+        catch (InvalidOperationException ex) // storage not configured (our own message — safe to show)
         {
             return StatusCode(503, new { error = ex.Message });
         }
         catch (AmazonS3Exception ex) // R2 hiccup on exists / upload / presign
         {
-            _log.LogWarning("Voice sample {Voice}: storage error: {Message}", voice, ex.Message);
-            return StatusCode(502, new { error = "Storage error while preparing the voice sample." });
+            var code = await _errors.CaptureAsync("backend", "voice-sample", Uid, 502,
+                $"Storage error while preparing the '{voice}' sample.", ex.Message, Request.Headers.UserAgent.ToString());
+            return StatusCode(502, new { error = "Storage error while preparing the voice sample.", referenceCode = code });
         }
     }
 }

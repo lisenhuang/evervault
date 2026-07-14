@@ -61,6 +61,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<IErrorReportService, ErrorReportService>();
 
 // --- AI: keys, providers, failover, agent chat ---
 builder.Services.AddHttpClient();

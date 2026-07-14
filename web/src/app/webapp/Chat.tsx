@@ -25,12 +25,13 @@ import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
+import { friendlyAiError } from "./lib/aiError";
+import { reportAiError } from "./lib/errorReport";
 import type { ChatMessage, ReplyRef } from "./types";
 import { useLang } from "@/i18n/LanguageProvider";
 import { aiReplyDirective } from "@/i18n/config";
 
 const uid = () => crypto.randomUUID();
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong.");
 
 // One attachment as a Gemini part: images/PDFs go inline; extracted documents go as delimited text.
 function fileToPart(f: PreparedFile) {
@@ -435,8 +436,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         ]);
       }
     } catch (e) {
+      const fe = friendlyAiError(e, t);
+      reportAiError(fe, "chat.send");
       setMessages((cur) =>
-        cur.map((m) => (m.id === asstId ? { ...m, streaming: false, error: true, text: errMsg(e) } : m)),
+        cur.map((m) => (m.id === asstId ? { ...m, streaming: false, error: true, text: fe.text } : m)),
       );
     } finally {
       setStreaming(false);
@@ -499,8 +502,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         { audioBase64: base64 },
       );
     } catch (e) {
+      const fe = friendlyAiError(e, t);
+      reportAiError(fe, "chat.voice");
       setMessages((cur) => {
-        const errored: ChatMessage = { id: asstId, role: "assistant", text: errMsg(e), streaming: false, error: true };
+        const errored: ChatMessage = { id: asstId, role: "assistant", text: fe.text, streaming: false, error: true };
         return cur.some((m) => m.id === asstId) ? cur.map((m) => (m.id === asstId ? errored : m)) : [...cur, errored];
       });
     } finally {
@@ -616,7 +621,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       setCallEchoProne(session.echoProne);
       setCallHalfDuplex(session.halfDuplex);
     } catch (e) {
-      setCallError(errMsg(e));
+      const fe = friendlyAiError(e, t);
+      reportAiError(fe, "call.start");
+      // The CallBar status line is single-line, so collapse the bubble format's blank line.
+      setCallError(fe.text.replace(/\n+/g, " "));
       setCallState("error");
     }
   }

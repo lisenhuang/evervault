@@ -162,7 +162,9 @@ export default function CallBar({
               </span>
             )}
           </p>
-          <p className="truncate text-xs text-black/50 dark:text-white/50">
+          {/* Errors carry a reference code at the end, so they must wrap rather than truncate (which
+              would clip the code on narrow screens); non-error hints stay single-line. */}
+          <p className={`text-xs text-black/50 dark:text-white/50 ${error ? "" : "truncate"}`}>
             {error
               ? error
               : ended && idleClosed
