@@ -9,45 +9,9 @@ export type { Content };
 /** Executes a tool the model called: receives (name, args), returns a string result for the model. */
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>;
 
-/**
- * Gemini's 30 prebuilt TTS/Live voices. `name` is the value sent to the API;
- * `mood` is the characteristic documented at
- * https://ai.google.dev/gemini-api/docs/speech-generation#voices.
- * `gender` is a community classification (Google's table doesn't list it) shown
- * only to help users choose.
- */
-export const PREBUILT_VOICES = [
-  { name: "Zephyr", mood: "Bright", gender: "Female" },
-  { name: "Puck", mood: "Upbeat", gender: "Male" },
-  { name: "Charon", mood: "Informative", gender: "Male" },
-  { name: "Kore", mood: "Firm", gender: "Female" },
-  { name: "Fenrir", mood: "Excitable", gender: "Male" },
-  { name: "Leda", mood: "Youthful", gender: "Female" },
-  { name: "Orus", mood: "Firm", gender: "Male" },
-  { name: "Aoede", mood: "Breezy", gender: "Female" },
-  { name: "Callirrhoe", mood: "Easy-going", gender: "Female" },
-  { name: "Autonoe", mood: "Bright", gender: "Female" },
-  { name: "Enceladus", mood: "Breathy", gender: "Male" },
-  { name: "Iapetus", mood: "Clear", gender: "Male" },
-  { name: "Umbriel", mood: "Easy-going", gender: "Male" },
-  { name: "Algieba", mood: "Smooth", gender: "Male" },
-  { name: "Despina", mood: "Smooth", gender: "Female" },
-  { name: "Erinome", mood: "Clear", gender: "Female" },
-  { name: "Algenib", mood: "Gravelly", gender: "Male" },
-  { name: "Rasalgethi", mood: "Informative", gender: "Male" },
-  { name: "Laomedeia", mood: "Upbeat", gender: "Female" },
-  { name: "Achernar", mood: "Soft", gender: "Female" },
-  { name: "Alnilam", mood: "Firm", gender: "Male" },
-  { name: "Schedar", mood: "Even", gender: "Male" },
-  { name: "Gacrux", mood: "Mature", gender: "Female" },
-  { name: "Pulcherrima", mood: "Forward", gender: "Female" },
-  { name: "Achird", mood: "Friendly", gender: "Male" },
-  { name: "Zubenelgenubi", mood: "Casual", gender: "Male" },
-  { name: "Vindemiatrix", mood: "Gentle", gender: "Female" },
-  { name: "Sadachbia", mood: "Lively", gender: "Male" },
-  { name: "Sadaltager", mood: "Knowledgeable", gender: "Male" },
-  { name: "Sulafat", mood: "Warm", gender: "Female" },
-] as const;
+// The 30 prebuilt voice list + metadata now lives in the dependency-light ./voices module (so the
+// admin can reuse it without pulling this Gemini SDK bundle). Re-exported here for existing importers.
+export { PREBUILT_VOICES } from "./voices";
 
 export type ModelInfo = { id: string; displayName: string; methods: string[] };
 

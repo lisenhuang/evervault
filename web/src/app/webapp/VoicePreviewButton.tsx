@@ -10,12 +10,15 @@ import { useT } from "@/i18n/LanguageProvider";
 type Status = "idle" | "loading" | "playing" | "error";
 
 /**
- * Plays a PREMADE per-voice preview sample served by the backend from R2
+ * Plays the pre-generated per-voice preview sample served by the backend from R2
  * (GET /api/voice-samples/{voice}). No user API key is needed — the backend synthesizes once
- * (server keys, with failover) and caches it in R2, so later plays are instant. Keeps a stoppable
- * handle so it can cancel on re-click, on a voice change, or on unmount.
+ * (server keys, with failover) and caches it in R2, so later plays are instant. Deliberately sends
+ * NO model param: the preview always uses the fixed default-model samples (VoiceSampleOptions.Model,
+ * pre-generated in /admin/storage), independent of the chat's selected TTS model — so it's always an
+ * instant cache hit. Keeps a stoppable handle so it can cancel on re-click, on a voice change, or on
+ * unmount.
  */
-export default function VoicePreviewButton({ voice, model }: { voice: string; model?: string }) {
+export default function VoicePreviewButton({ voice }: { voice: string }) {
   const t = useT();
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
@@ -45,11 +48,11 @@ export default function VoicePreviewButton({ voice, model }: { voice: string; mo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stop stale audio when the voice or model changes — it no longer matches the selection.
+  // Stop stale audio when the voice changes — it no longer matches the selection.
   useEffect(() => {
     stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voice, model]);
+  }, [voice]);
 
   async function handleClick() {
     if (status === "playing") {
@@ -66,9 +69,8 @@ export default function VoicePreviewButton({ voice, model }: { voice: string; mo
       // to R2, so we can fetch + decode them via the Web Audio API — which plays reliably on iOS
       // Safari, where a redirecting media element fails with "The operation is not supported".
       // (Must be "true"/"false": the backend binds this to a bool, which rejects "1" with a 400.)
-      const url =
-        `/api/voice-samples/${encodeURIComponent(voice)}?inline=true` +
-        (model ? `&model=${encodeURIComponent(model)}` : "");
+      // No model param: the backend falls back to the default-model sample (the pre-generated one).
+      const url = `/api/voice-samples/${encodeURIComponent(voice)}?inline=true`;
       const handle = playAudioUrlHandle(url);
       handleRef.current = handle;
       await handle.started; // rejects on load/play error (e.g. 502 all-keys-failed)

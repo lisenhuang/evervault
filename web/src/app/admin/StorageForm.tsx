@@ -5,6 +5,7 @@ import { Check, Circle, Loader2, Square, Volume2, X } from "lucide-react";
 import { api } from "./adminApi";
 import { Banner, Button, Card, Field, Select } from "./ui";
 import { playUrlHandle } from "../webapp/lib/audio";
+import { GenderIcon, voiceMeta } from "../webapp/lib/voices";
 
 type Dto = {
   accountId: string;
@@ -335,7 +336,9 @@ export default function StorageForm() {
                 </div>
 
                 <ul className="mb-4 grid grid-cols-2 gap-x-3 gap-y-0.5 sm:grid-cols-3">
-                  {voices.map((v) => (
+                  {voices.map((v) => {
+                    const meta = voiceMeta(v.name);
+                    return (
                     <li key={v.name} className="flex items-center gap-0.5">
                       <button
                         type="button"
@@ -345,9 +348,11 @@ export default function StorageForm() {
                         className="flex flex-1 items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm transition hover:bg-black/5 disabled:opacity-60 dark:hover:bg-white/10"
                       >
                         <VoiceIcon status={v.status} />
-                        <span className={v.status === "failed" ? "text-red-600 dark:text-red-400" : ""}>
+                        <span className={`min-w-0 truncate ${v.status === "failed" ? "text-red-600 dark:text-red-400" : ""}`}>
                           {v.name}
+                          {meta && <span className="text-black/45 dark:text-white/45"> — {meta.mood}</span>}
                         </span>
+                        {meta && <GenderIcon gender={meta.gender} size={13} />}
                       </button>
                       {v.status === "generated" && (
                         <button
@@ -361,7 +366,8 @@ export default function StorageForm() {
                         </button>
                       )}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
 
                 {samplesMsg && <Banner kind={samplesMsg.kind}>{samplesMsg.text}</Banner>}

@@ -2,22 +2,12 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Mars, Venus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { computeDropdownPlacement } from "./lib/dropdownPlacement";
-import { PREBUILT_VOICES } from "./lib/gemini";
+import { GenderIcon, PREBUILT_VOICES, type Voice } from "./lib/voices";
 import { useT } from "@/i18n/LanguageProvider";
 
-type Voice = (typeof PREBUILT_VOICES)[number];
-
 const VOICES = [...PREBUILT_VOICES].sort((a, b) => a.name.localeCompare(b.name));
-
-function GenderIcon({ gender, size }: { gender: Voice["gender"]; size: number }) {
-  return gender === "Male" ? (
-    <Mars size={size} className="shrink-0 text-blue-500 dark:text-blue-400" aria-hidden="true" />
-  ) : (
-    <Venus size={size} className="shrink-0 text-pink-500 dark:text-pink-400" aria-hidden="true" />
-  );
-}
 
 /**
  * Custom voice dropdown (a native <select> can't render an icon inside an

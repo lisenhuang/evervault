@@ -16,6 +16,7 @@ import type {
   WebappAiConfigDto,
 } from "./aiTypes";
 import { Badge, Banner, Button, Card, Field, Select, TextArea } from "./ui";
+import { PREBUILT_VOICES } from "../webapp/lib/voices";
 
 export default function AiKeysForm() {
   const [data, setData] = useState<AiKeysDto>({ gemini: [], openRouter: [] });
@@ -64,15 +65,6 @@ export default function AiKeysForm() {
     </div>
   );
 }
-
-// The 30 prebuilt Gemini TTS/Live voices (same set the webapp offers). Kept here so the admin can pick
-// the /webapp's default voice without loading the webapp bundle.
-const WEBAPP_VOICES = [
-  "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
-  "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi",
-  "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
-  "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
-];
 
 // Ensures the currently-saved model id always appears as an option, even if the live model list hasn't
 // loaded yet or no longer includes it — so the Select never renders blank or silently drops the value.
@@ -218,8 +210,10 @@ function WebappModelsCard() {
           <span className="text-sm font-medium">Default voice</span>
           <div className="mt-1">
             <Select value={voice} onChange={setVoice} disabled={busy}>
-              {WEBAPP_VOICES.map((v) => (
-                <option key={v} value={v}>{v}</option>
+              {PREBUILT_VOICES.map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.name} — {v.mood} ({v.gender})
+                </option>
               ))}
             </Select>
           </div>
