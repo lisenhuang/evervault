@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronUp, Languages, LogOut, MessageCircle, Settings2, SquarePen, SunMoon, Trash2 } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import LanguageMenu from "@/i18n/LanguageMenu";
@@ -43,13 +43,15 @@ export default function Sidebar({
 
   // Account menu opened by clicking the user's name (holds Delete account + Sign out).
   const [menuOpen, setMenuOpen] = useState(false);
-  const accountRef = useRef<HTMLDivElement>(null);
 
-  // Close the menu on outside click or Escape, only while it's open.
+  // Close the menu on outside click or Escape, only while it's open. `body` is rendered in BOTH the
+  // desktop rail and the mobile overlay, so we can't rely on a single ref (it would bind to only one
+  // copy — clicks on the other copy would read as "outside" and close the menu on mousedown, before
+  // the menu item's click fires). Match either copy's container via a data attribute instead.
   useEffect(() => {
     if (!menuOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (!accountRef.current?.contains(e.target as Node)) setMenuOpen(false);
+      if (!(e.target as Element | null)?.closest?.("[data-account-menu]")) setMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMenuOpen(false);
@@ -112,7 +114,7 @@ export default function Sidebar({
 
       <div className="my-1 border-t border-black/10 dark:border-white/10" />
 
-      <div ref={accountRef} className="relative">
+      <div data-account-menu className="relative">
         {menuOpen && (
           <div
             role="menu"
