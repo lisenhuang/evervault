@@ -26,6 +26,50 @@ One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
 | [`backend/`](backend/) | .NET 10 (LTS) Web API | ⚙️ api |
 | [`web/`](web/) | Next.js 16 · App Router | 🖥️ website |
 
+## 🧠 Text model — primary → fallback (webapp)
+
+Both are picked in `/admin` → AI keys. The route depends on the **primary's provider**:
+
+```
+                 ┌─ Gemini ──▶ 🖥️ browser ─▶ /api/chat/ai/gemini proxy ─▶ Gemini
+                 │             (pooled keys 🔑🔑 — failover is key-by-key; all fail → EV-code)
+ 💬 text turn ──▶│  primary?
+                 │
+                 └─ ChatGPT ─▶ ⚙️ /api/chat/ai/text ─▶ ChatGPT (admin's connected account —
+                                   │                    token never reaches the browser)
+                                   │ ❌ primary fails (quota / auth / transient)
+                                   ▼
+                              Text model — fallback  (e.g. Gemini on pooled keys 🔑🔑)
+                                   │ ❌ fallback fails too
+                                   ▼
+                              502 + error code EV-XXXXXXXX
+```
+
+> The browser-side utilities — 🎙️ transcription · 🔊 TTS · 🧮 embeddings · 📝 memory extraction ·
+> 🖼️ turns with images/files — always run on the **first Gemini choice** (primary if it's Gemini,
+> otherwise the Gemini fallback), via the pooled-key proxy.
+
+## 🎙️ Voice message → AI (webapp)
+
+The admin picks a **primary** text model (Gemini or ChatGPT) + a Gemini **fallback**. Transcription
+and TTS always run on the pooled Gemini keys; only the *answer* follows the primary.
+
+```
+ user 🎤 ─ audio ─▶ 🖥️ browser ──────▶ Gemini (transcribe) ──▶ 📝 transcript fills the bubble
+                       │
+                       │  answer, by primary text model:
+                       │
+        ┌─ Gemini ─────┴───────────── ChatGPT ─┐
+        ▼                                      ▼
+  raw audio ─▶ /api/…/gemini proxy      wait 📝 ─▶ /api/chat/ai/text ─▶ ChatGPT (admin account)
+  (model hears the voice itself)               (⛑️ falls back to Gemini · no transcript? → Gemini)
+        │                                      │
+        └────────────── 💬 reply text ─────────┘
+                              │
+                              ▼
+                 Gemini TTS ─▶ 🔊 spoken reply + 💬 text
+```
+
 ## 🔌 Ports
 
 | Port | Service | Exposed |

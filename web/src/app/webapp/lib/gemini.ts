@@ -4,7 +4,7 @@
 
 import { GoogleGenAI, Modality, type Content, type FunctionCall, type Part, type Schema, type Tool } from "@google/genai";
 
-export type { Content };
+export type { Content, Tool };
 
 /** Executes a tool the model called: receives (name, args), returns a string result for the model. */
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>;

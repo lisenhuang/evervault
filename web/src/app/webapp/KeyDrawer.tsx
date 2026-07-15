@@ -10,9 +10,7 @@ import { useT } from "@/i18n/LanguageProvider";
 /**
  * Settings drawer for the keyless /webapp. There's no API key to manage anymore — the backend supplies
  * the Gemini keys — so this holds the one setting the user still controls: the TTS voice. The model
- * choices are an admin concern and aren't shown here. (textModel/audioModel/liveModel are still
- * accepted so the caller's props don't need to change; none of them affect the voice preview, which
- * always plays the pre-generated default-model sample.)
+ * choices are an admin concern and are deliberately never shown to end users.
  */
 export default function KeyDrawer({
   open,
@@ -28,9 +26,6 @@ export default function KeyDrawer({
 }: {
   open: boolean;
   onClose: () => void;
-  textModel: string;
-  audioModel: string;
-  liveModel: string;
   voice: string;
   onChangeVoice: (v: string) => void;
   textStyle: ResponseStyle;

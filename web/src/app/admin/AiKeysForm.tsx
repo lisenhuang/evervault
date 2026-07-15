@@ -381,9 +381,11 @@ function WebappModelsCard() {
             disabled={busy || loadingModels}
           />
           <span className="block text-xs text-black/55 dark:text-white/55">
-            Powers text chat, transcription, and memory extraction. Each can be Gemini or ChatGPT; the fallback
-            is used if the primary is unavailable. The keyless webapp calls Gemini directly, so it uses your
-            first Gemini choice (primary if it&rsquo;s Gemini, otherwise the Gemini fallback).
+            Each can be Gemini or ChatGPT; the fallback takes over when the primary is unavailable. Text chat
+            follows the primary — a ChatGPT primary runs through the backend on your connected account (voice
+            messages are then answered from their transcript). Transcription, speech, memory extraction, and
+            messages with images/files always use your first Gemini choice (primary if it&rsquo;s Gemini,
+            otherwise the Gemini fallback).
           </span>
         </div>
 

@@ -72,6 +72,12 @@ public class GeminiProvider : IAiProvider
         return list.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>Google's documented dummy thoughtSignature: Gemini 3.x strictly validates that replayed
+    /// functionCall parts carry their signature, and this sentinel tells it to skip that check — the
+    /// escape hatch for history whose tool calls came from another provider (docs: "Thought signatures",
+    /// ai.google.dev/gemini-api/docs/gemini-3). Models that don't validate ignore the field.</summary>
+    private const string SkipThoughtSignatureValidation = "context_engineering_is_the_way_to_go";
+
     public async Task<AiCompletion> CompleteAsync(
         string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
         IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options, CancellationToken ct)
@@ -92,9 +98,17 @@ public class GeminiProvider : IAiProvider
                 case "assistant":
                     if (m.ToolCalls is { Count: > 0 })
                     {
+                        // Gemini 3.x demands the part-level thoughtSignature captured at parse time be
+                        // echoed verbatim next to the replayed functionCall, or the request 400s. Calls
+                        // that never had one (another provider produced them — e.g. a ChatGPT primary
+                        // whose turn falls back to Gemini mid tool-loop) get Google's documented dummy
+                        // value that skips the validation instead of failing the whole turn.
                         var parts = m.ToolCalls.Select(tc => (object)new
                         {
                             functionCall = new { name = tc.Name, args = ParseArgsObject(tc.ArgumentsJson) },
+                            thoughtSignature = string.IsNullOrEmpty(tc.ThoughtSignature)
+                                ? SkipThoughtSignatureValidation
+                                : tc.ThoughtSignature,
                         }).ToList();
                         if (!string.IsNullOrEmpty(m.Content)) parts.Insert(0, new { text = m.Content });
                         contents.Add(new { role = "model", parts });
@@ -132,6 +146,9 @@ public class GeminiProvider : IAiProvider
         if (thinking is not null) payload["generationConfig"] = new { thinkingConfig = thinking };
 
         var client = _http.CreateClient();
+        // Long thinking generations can exceed the factory default (100s); match ProxyRestAsync and
+        // the OpenAI client so a slow-but-fine completion isn't killed and misread as a cancellation.
+        client.Timeout = TimeSpan.FromMinutes(10);
         var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var res = await client.SendAsync(req, ct);
@@ -157,7 +174,10 @@ public class GeminiProvider : IAiProvider
                 {
                     var fname = fc.GetProperty("name").GetString() ?? "";
                     var args = fc.TryGetProperty("args", out var a) ? a.GetRawText() : "{}";
-                    calls.Add(new AiToolCall("call_" + Guid.NewGuid().ToString("N"), fname, args));
+                    // Part-level signature (sibling of functionCall) — Gemini 3.x requires it echoed on replay.
+                    var sig = part.TryGetProperty("thoughtSignature", out var ts) && ts.ValueKind == JsonValueKind.String
+                        ? ts.GetString() : null;
+                    calls.Add(new AiToolCall("call_" + Guid.NewGuid().ToString("N"), fname, args, sig));
                 }
             }
         }

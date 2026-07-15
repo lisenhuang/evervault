@@ -20,6 +20,8 @@ namespace Evervault.Api.Controllers;
 ///   realtime call <b>directly to Google</b> (no audio through us), key stays server-side.</item>
 /// <item><c>* gemini/{**path}</c> — a thin reverse-proxy for the non-Live REST calls (text streaming,
 ///   TTS, embeddings): forwards to the Gemini API injecting a pooled key with failover.</item>
+/// <item><c>POST text</c> — server-side text chat honoring the admin's primary text model even when it
+///   isn't Gemini (ChatGPT runs on the admin's connected account), with fallback-leg failover.</item>
 /// </list>
 /// The real keys live only in the backend (encrypted <see cref="AiKey"/> pool) and are selected by
 /// <see cref="KeyFailoverRunner"/>; they never reach the client and only the masked hint is ever logged.
@@ -58,19 +60,171 @@ public class ChatAiController : ControllerBase
         @"^v1beta/models/[^/:]+:(generateContent|streamGenerateContent|embedContent|batchEmbedContents)$",
         RegexOptions.Compiled);
 
-    public record WebappConfigDto(string TextModel, string AudioModel, string LiveModel, string DefaultVoice);
+    public record WebappConfigDto(string TextModel, string AudioModel, string LiveModel, string DefaultVoice, bool ServerChat);
     public record LiveTokenDto(string Token, string? ExpiresAt);
 
-    /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks). The text
-    /// model is projected to a Gemini model via <see cref="WebappAiDefaults.BrowserText"/> because the keyless
-    /// browser can only call Gemini through the pooled-key proxy — a ChatGPT primary would otherwise be
-    /// unusable here. (Gemini-primary/legacy rows are unaffected.)</summary>
+    /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks).
+    /// <c>TextModel</c> is always a Gemini model (projected via <see cref="WebappAiDefaults.BrowserText"/>) —
+    /// it's what the browser calls directly through the pooled-key proxy for transcription, TTS, embeddings,
+    /// and memory extraction. <c>ServerChat</c> tells the client that the admin's primary text model is NOT
+    /// Gemini (e.g. ChatGPT), so text turns should go through <c>POST text</c>, where the server holds the
+    /// credentials and runs primary→fallback. The model id itself is deliberately not exposed.</summary>
     [HttpGet("config")]
     public async Task<ActionResult<WebappConfigDto>> Config()
     {
         var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
         return Ok(new WebappConfigDto(
-            WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
+            WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
+            WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider));
+    }
+
+    // --- Server-side text chat (used when the primary text model isn't Gemini) ---
+
+    public record WebappChatToolDto(string? Name, string? Description, string? ParametersJson);
+    public record WebappChatRequest(List<AiChatMessage>? Messages, string? System, List<WebappChatToolDto>? Tools);
+
+    // NDJSON frames are serialized camelCase so the record-typed fields (tool calls) match the
+    // anonymous lowercase ones — the same convention the JSON endpoints use.
+    private static readonly System.Text.Json.JsonSerializerOptions FrameJson =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private const string ChatUnavailable = "The AI service is temporarily unavailable. Please try again.";
+
+    /// <summary>One text-chat round for the /webapp, run server-side so a ChatGPT primary (admin's
+    /// connected account — its token must never reach a browser) is usable from the keyless client.
+    /// Tries the admin's primary leg, then the fallback leg, switching only while nothing has been
+    /// streamed yet. Streams NDJSON frames: <c>{type:"delta",text}</c> per token, then either
+    /// <c>{type:"toolCalls",text,calls,providerState}</c> (the client executes the tools and re-POSTs
+    /// with the results appended — the tool loop is client-driven) or <c>{type:"done",text}</c>;
+    /// failures after first byte end with <c>{type:"error",error,referenceCode}</c>. Failures before
+    /// first byte return a plain 502 <c>{error, referenceCode}</c> like the Gemini proxy.</summary>
+    [HttpPost("text")]
+    public async Task Text([FromBody] WebappChatRequest req)
+    {
+        var ct = HttpContext.RequestAborted;
+        var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync(ct);
+
+        // The client owns the transcript, but the system slot is a dedicated field: drop any
+        // system rows smuggled into the transcript itself.
+        var messages = (req.Messages ?? new()).Where(m => m.Role is "user" or "assistant" or "tool").ToList();
+        if (!string.IsNullOrWhiteSpace(req.System)) messages.Insert(0, new AiChatMessage("system", req.System));
+
+        // ParametersJson is parsed unguarded inside the providers' wire translation — sanitize here so a
+        // malformed schema from a client can't turn into an unhandled 500 instead of the 502 contract.
+        var tools = (req.Tools ?? new())
+            .Where(t => !string.IsNullOrWhiteSpace(t.Name))
+            .Select(t => new AiToolSchema(t.Name!.Trim(), t.Description ?? "", SafeJsonObject(t.ParametersJson)))
+            .ToList();
+
+        // Primary leg, then the configured fallback leg (skipping an exact duplicate).
+        var legs = new List<(string Provider, string Model, string? Reasoning)>
+        {
+            (WebappAiDefaults.TextProviderOf(c), WebappAiDefaults.Text(c), c?.TextReasoning),
+        };
+        if (WebappAiDefaults.TextFallback(c) is { } fb && (fb.Provider != legs[0].Provider || fb.Model != legs[0].Model))
+            legs.Add(fb);
+
+        // Once any frame reaches the client the turn is committed: retries (next key, refreshed
+        // token, the other leg) would replay already-shown text, so they're cut off past this point.
+        var flushed = false;
+        async Task WriteFrameAsync(object frame)
+        {
+            if (!Response.HasStarted)
+            {
+                Response.StatusCode = StatusCodes.Status200OK;
+                Response.ContentType = "application/x-ndjson";
+                Response.Headers["X-Accel-Buffering"] = "no"; // nginx: pass chunks through unbuffered
+                HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+            }
+            flushed = true;
+            await Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(frame, FrameJson) + "\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+
+        var failures = new List<string>();
+        foreach (var (provider, model, reasoning) in legs)
+        {
+            var options = new AiGenerationOptions(reasoning);
+            var ctx = new AiCallContext { Area = "webapp-chat", Model = model, EndUserId = Uid };
+            // First real provider failure of this leg. A retry after first byte trips the flushed
+            // guard below, and that sentinel would otherwise replace the diagnosable error in the report.
+            Exception? legError = null;
+            try
+            {
+                var completion = await _failover.RunAsync(provider, async (p, key) =>
+                {
+                    if (flushed)
+                        throw new AiProviderException(AiErrorKind.Other,
+                            "The response already started streaming; this turn cannot be retried.");
+                    try
+                    {
+                        return await p.CompleteStreamingAsync(key, model, messages, tools, options,
+                            delta => WriteFrameAsync(new { type = "delta", text = delta }), ct);
+                    }
+                    catch (AiProviderException ex)
+                    {
+                        legError ??= ex;
+                        throw;
+                    }
+                }, log: ctx, usageOf: r => r.Usage);
+
+                if (completion.ToolCalls.Count > 0)
+                {
+                    await WriteFrameAsync(new
+                    {
+                        type = "toolCalls",
+                        text = completion.Text,
+                        calls = completion.ToolCalls,
+                        providerState = completion.ProviderState,
+                    });
+                }
+                else
+                {
+                    // `text` is the authoritative full reply — non-streaming legs (Gemini fallback)
+                    // deliver everything here; streamed legs let the client fill any missed tail.
+                    await WriteFrameAsync(new { type = "done", text = completion.Text });
+                }
+                return;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return; // client navigated away / aborted mid-stream
+            }
+            catch (Exception ex) when (ex is AllKeysFailedException or AiProviderException
+                or OperationCanceledException or HttpRequestException or IOException)
+            {
+                // OperationCanceledException with the client still connected is a provider-side
+                // timeout; HttpRequestException/IOException are transport failures below the
+                // providers' error mapping. All are leg failures, not client aborts — keep the
+                // 502-with-reference-code contract and let the next leg try.
+                var cause = flushed && legError is not null && ex is AiProviderException { Kind: AiErrorKind.Other }
+                    ? legError // the flushed-guard sentinel — the real failure came just before it
+                    : ex;
+                failures.Add($"{provider}/{model}: " +
+                    (cause is AllKeysFailedException all ? string.Join("; ", all.Errors) : cause.Message));
+                if (flushed)
+                {
+                    var midCode = await _errors.CaptureAsync("backend", "ai-chat", Uid, 502,
+                        "AI text turn failed mid-stream.", string.Join(" | ", failures), UserAgent);
+                    try
+                    {
+                        await WriteFrameAsync(new { type = "error", error = ChatUnavailable, referenceCode = midCode });
+                    }
+                    catch (OperationCanceledException) { /* client gone — the report is already captured */ }
+                    return;
+                }
+                // Nothing sent yet — fall through to the next leg (typically ChatGPT → Gemini).
+            }
+        }
+
+        var code = await _errors.CaptureAsync("backend", "ai-chat", Uid, 502,
+            "All text-chat legs failed.", string.Join(" | ", failures), UserAgent);
+        try
+        {
+            Response.StatusCode = StatusCodes.Status502BadGateway;
+            await Response.WriteAsJsonAsync(new { error = ChatUnavailable, referenceCode = code }, ct);
+        }
+        catch (OperationCanceledException) { /* client gone — the report is already captured */ }
     }
 
     /// <summary>Mint a short-lived, single-use Live ephemeral token for the realtime call. The browser
@@ -190,6 +344,22 @@ public class ChatAiController : ControllerBase
         catch (OperationCanceledException)
         {
             // Client navigated away / aborted mid-stream — nothing to return.
+        }
+    }
+
+    /// <summary>Client-supplied JSON that must be a valid object on the provider wire; anything else
+    /// (malformed, non-object) becomes the empty schema.</summary>
+    private static string SafeJsonObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "{}";
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object ? json : "{}";
+        }
+        catch
+        {
+            return "{}";
         }
     }
 

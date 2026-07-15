@@ -18,7 +18,6 @@ const ROW =
  */
 export default function Sidebar({
   user,
-  textModel,
   onNewChat,
   onOpenSettings,
   onSignOut,
@@ -27,7 +26,6 @@ export default function Sidebar({
   onClose,
 }: {
   user: Me;
-  textModel: string;
   onNewChat: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
@@ -77,9 +75,9 @@ export default function Sidebar({
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
           <MessageCircle size={18} className="text-white" aria-hidden="true" />
         </div>
+        {/* Just the wordmark — which model powers the chat is intentionally not shown to end users. */}
         <div className="min-w-0">
           <div className="font-semibold leading-tight">EverVault</div>
-          <div className="truncate text-xs text-black/40 dark:text-white/40">{textModel}</div>
         </div>
       </div>
 

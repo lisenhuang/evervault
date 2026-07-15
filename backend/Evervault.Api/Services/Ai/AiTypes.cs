@@ -11,8 +11,10 @@ public record AiChatMessage(
     string? ProviderState = null);        // opaque provider-only state round-tripped via the client
                                           // transcript (OpenAI: reasoning items to re-send under store:false)
 
-/// <summary>A tool/function call the model wants to make. Arguments stay as a raw JSON string.</summary>
-public record AiToolCall(string Id, string Name, string ArgumentsJson);
+/// <summary>A tool/function call the model wants to make. Arguments stay as a raw JSON string.
+/// <see cref="ThoughtSignature"/> is Gemini 3.x's part-level signature — it must be echoed verbatim
+/// when the call is replayed on the next turn or the request 400s (other providers leave it null).</summary>
+public record AiToolCall(string Id, string Name, string ArgumentsJson, string? ThoughtSignature = null);
 
 /// <summary>Token usage for one model round-trip, where the provider reports it (all nullable — some
 /// providers/paths don't expose every field). Used only for logging/observability.</summary>
@@ -104,6 +106,20 @@ public interface IAiProvider
         IReadOnlyList<AiToolSchema> tools,
         AiGenerationOptions? options,
         CancellationToken ct);
+
+    /// <summary>Like <see cref="CompleteAsync"/> but reports assistant text incrementally through
+    /// <paramref name="onTextDelta"/> while the provider streams; the returned completion is still the
+    /// full aggregate (text, tool calls, provider state, usage). Default: no incremental support — the
+    /// callback is never invoked and the caller must fall back to <see cref="AiCompletion.Text"/>.</summary>
+    Task<AiCompletion> CompleteStreamingAsync(
+        string rawKey,
+        string model,
+        IReadOnlyList<AiChatMessage> messages,
+        IReadOnlyList<AiToolSchema> tools,
+        AiGenerationOptions? options,
+        Func<string, Task>? onTextDelta,
+        CancellationToken ct)
+        => CompleteAsync(rawKey, model, messages, tools, options, ct);
 
     /// <summary>Synthesize speech for the given text+voice. Returns raw PCM bytes and the audio mime
     /// (e.g. "audio/L16;codec=pcm;rate=24000"). Default: the provider has no TTS — throws Other so

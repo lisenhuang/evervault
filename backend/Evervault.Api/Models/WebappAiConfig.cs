@@ -55,12 +55,21 @@ public static class WebappAiDefaults
     /// <summary>Provider of the primary text model, normalized. Legacy rows (null) are Gemini.</summary>
     public static string TextProviderOf(WebappAiConfig? c) => Norm(c?.TextProvider) ?? GeminiProvider;
 
-    /// <summary>The Gemini text model the <b>keyless browser</b> should call. The /webapp talks only to
-    /// Gemini (via the pooled-key proxy), so when the admin's primary choice is a ChatGPT model we hand the
-    /// browser the first Gemini choice in primary→fallback order, else the Gemini default. This keeps the
-    /// keyless client working no matter what the admin picks (a ChatGPT primary is still stored as the
-    /// admin's preference for surfaces that can honor it). For legacy/Gemini-primary rows this returns the
-    /// primary model exactly as before — no behavior change.</summary>
+    /// <summary>The fallback text leg (provider, model, reasoning), or null when no usable fallback
+    /// is configured (a provider without a model is treated as none).</summary>
+    public static (string Provider, string Model, string? Reasoning)? TextFallback(WebappAiConfig? c)
+    {
+        var provider = Norm(c?.TextFallbackProvider);
+        if (provider is null || string.IsNullOrWhiteSpace(c?.TextFallbackModel)) return null;
+        return (provider, c!.TextFallbackModel!.Trim(), c.TextFallbackReasoning);
+    }
+
+    /// <summary>The Gemini text model the <b>keyless browser</b> calls directly (via the pooled-key
+    /// proxy) for transcription, file description, TTS, embeddings, and memory extraction. When the
+    /// admin's primary choice is a ChatGPT model we hand the browser the first Gemini choice in
+    /// primary→fallback order, else the Gemini default — text chat itself then runs server-side
+    /// through <c>POST chat/ai/text</c>, which honors the ChatGPT primary. For legacy/Gemini-primary
+    /// rows this returns the primary model exactly as before — no behavior change.</summary>
     public static string BrowserText(WebappAiConfig? c)
     {
         if (TextProviderOf(c) == GeminiProvider) return Or(c?.TextModel, TextModel);

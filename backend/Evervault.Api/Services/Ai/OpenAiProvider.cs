@@ -197,9 +197,24 @@ public class OpenAiProvider : IAiProvider
         }
     }
 
-    public async Task<AiCompletion> CompleteAsync(
+    public Task<AiCompletion> CompleteAsync(
         string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
         IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options, CancellationToken ct)
+        => CompleteCoreAsync(rawKey, model, messages, tools, options, onTextDelta: null, ct);
+
+    /// <summary>The request is already SSE (stream:true) — this variant surfaces the
+    /// <c>response.output_text.delta</c> frames to the caller as they arrive instead of only
+    /// aggregating them, so the webapp can relay tokens live. The final completion is unchanged.</summary>
+    public Task<AiCompletion> CompleteStreamingAsync(
+        string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
+        IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options,
+        Func<string, Task>? onTextDelta, CancellationToken ct)
+        => CompleteCoreAsync(rawKey, model, messages, tools, options, onTextDelta, ct);
+
+    private async Task<AiCompletion> CompleteCoreAsync(
+        string rawKey, string model, IReadOnlyList<AiChatMessage> messages,
+        IReadOnlyList<AiToolSchema> tools, AiGenerationOptions? options,
+        Func<string, Task>? onTextDelta, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(rawKey))
             throw new AiProviderException(AiErrorKind.Auth,
@@ -251,7 +266,7 @@ public class OpenAiProvider : IAiProvider
 
         var headerWindows = WindowsFromHeaders(res);
         await using var stream = await res.Content.ReadAsStreamAsync(ct);
-        var (completion, sseWindows) = await ParseSseAsync(stream, ct);
+        var (completion, sseWindows) = await ParseSseAsync(stream, onTextDelta, ct);
 
         // Prefer the in-stream codex.rate_limits event; fall back to the response headers.
         var windows = sseWindows ?? headerWindows;
@@ -378,9 +393,11 @@ public class OpenAiProvider : IAiProvider
     // --- SSE response parsing ---
 
     /// <summary>Consume the SSE stream and aggregate into one <see cref="AiCompletion"/> (plus any
-    /// rate-limit snapshot). Prefers the terminal <c>response.completed</c> frame; falls back to deltas.</summary>
+    /// rate-limit snapshot). Prefers the terminal <c>response.completed</c> frame; falls back to deltas.
+    /// <paramref name="onTextDelta"/> (optional) is awaited per <c>response.output_text.delta</c> so a
+    /// caller can relay tokens live while the aggregation still runs to completion.</summary>
     private static async Task<(AiCompletion Completion, IReadOnlyList<AiRateWindow>? Windows)> ParseSseAsync(
-        Stream stream, CancellationToken ct)
+        Stream stream, Func<string, Task>? onTextDelta, CancellationToken ct)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8);
         var deltaText = new StringBuilder();
@@ -396,7 +413,7 @@ public class OpenAiProvider : IAiProvider
         string? eventName = null;
         var dataBuf = new StringBuilder();
 
-        void Flush()
+        async Task FlushAsync()
         {
             var name = eventName;
             eventName = null;
@@ -414,8 +431,12 @@ public class OpenAiProvider : IAiProvider
             switch (type)
             {
                 case "response.output_text.delta":
-                    if (root.TryGetProperty("delta", out var del) && del.ValueKind == JsonValueKind.String)
-                        deltaText.Append(del.GetString());
+                    if (root.TryGetProperty("delta", out var del) && del.ValueKind == JsonValueKind.String
+                        && del.GetString() is { Length: > 0 } chunk)
+                    {
+                        deltaText.Append(chunk);
+                        if (onTextDelta is not null) await onTextDelta(chunk);
+                    }
                     break;
                 case "response.output_item.done":
                     if (root.TryGetProperty("item", out var item))
@@ -447,7 +468,7 @@ public class OpenAiProvider : IAiProvider
         string? line;
         while ((line = await reader.ReadLineAsync(ct)) is not null)
         {
-            if (line.Length == 0) { Flush(); continue; }                   // blank line = event boundary
+            if (line.Length == 0) { await FlushAsync(); continue; }        // blank line = event boundary
             if (line.StartsWith(":", StringComparison.Ordinal)) continue;  // comment / heartbeat
             if (line.StartsWith("event:", StringComparison.Ordinal))
                 eventName = line["event:".Length..].Trim();
@@ -457,7 +478,7 @@ public class OpenAiProvider : IAiProvider
                 dataBuf.Append(line["data:".Length..].TrimStart());
             }
         }
-        Flush(); // a trailing event with no closing blank line
+        await FlushAsync(); // a trailing event with no closing blank line
 
         if (failure is not null)
             throw new AiProviderException(failureKind, "ChatGPT backend error: " + failure);

@@ -11,7 +11,8 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
-import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
+import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
+import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
@@ -144,6 +145,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [textModel, setTextModel] = useState(store.getTextModel());
   const [audioModel, setAudioModel] = useState(store.getAudioModel());
   const [liveModel, setLiveModel] = useState(store.getLiveModel());
+  // The admin's primary text model isn't Gemini (e.g. ChatGPT): text turns go through the backend's
+  // /api/chat/ai/text instead of the direct Gemini proxy. Session-only (re-read on every mount) and
+  // defaults to false, so an old backend or a failed config fetch keeps the plain Gemini path.
+  const [serverChat, setServerChat] = useState(false);
   const [voice, setVoice] = useState(store.getVoice());
   // Response-style presets, chosen separately per surface (text / spoken voice reply / live call).
   // Default ("default") injects no directive, so an untouched preference keeps the built-in tone.
@@ -276,11 +281,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     try {
       const res = await api("/api/chat/ai/config");
       if (!res.ok) return;
-      const cfg = (await res.json()) as { textModel: string; audioModel: string; liveModel: string; defaultVoice: string };
+      const cfg = (await res.json()) as {
+        textModel: string; audioModel: string; liveModel: string; defaultVoice: string; serverChat?: boolean;
+      };
       if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
       if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
       if (cfg.liveModel) { store.setLiveModel(cfg.liveModel); setLiveModel(cfg.liveModel); }
       if (cfg.defaultVoice && !store.getVoiceChosen()) { store.setVoice(cfg.defaultVoice); setVoice(cfg.defaultVoice); }
+      setServerChat(!!cfg.serverChat);
     } catch {
       /* keep the defaults */
     }
@@ -391,6 +399,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // developers doesn't depend on memory. It attaches whatever screenshots the user just shared.
     const runSuggestion = (args: Record<string, unknown>) =>
       runSuggestionTool(args, () => sharedSuggestionImages(messagesRef.current));
+    // When the admin's primary text model isn't Gemini, run the turn server-side — but only for
+    // all-text conversations: inline media (images / PDFs / voice clips, replayed in history) needs
+    // Gemini's multimodal input, so those turns stay on the direct proxy path.
+    const stream = (sys: string, tools: Tool[], runTool: ToolExecutor) =>
+      serverChat && contentsAreTextOnly(contents)
+        ? streamServerChatWithTools(toNeutralMessages(contents), sys, tools, runTool)
+        : streamTextWithTools(textModel, contents, sys, tools, runTool);
     if (memoryOn) {
       // Ground the reply in the durable profile (who the user is) + today's task agenda + persona +
       // current time. The agenda is re-rendered every turn, so task tool calls show up mid-conversation.
@@ -416,7 +431,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           : isTaskTool(name)
             ? runTaskTool(name, args, () => void refreshTasks())
             : runRecallTool(args);
-      for await (const delta of streamTextWithTools(textModel, contents, sys, tools, runTool)) {
+      for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
     } else {
@@ -425,7 +440,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         .join("\n\n");
       const tools = [{ functionDeclarations: [RECORD_SUGGESTION_DECLARATION] }];
       const runTool = (name: string, args: Record<string, unknown>) => runSuggestion(args);
-      for await (const delta of streamTextWithTools(textModel, contents, sys, tools, runTool)) {
+      for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
     }
@@ -596,21 +611,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           return t;
         })
         .catch(() => "");
-      const contents: Content[] = [
-        ...toContents(messages),
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType, data: base64 } },
-            {
-              text:
-                "Respond conversationally to this spoken message. Act on what they say the same as if " +
-                "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
-                "share feedback with the team, call record_suggestion).",
-            },
-          ],
-        },
-      ];
+      const voiceInstruction =
+        "Respond conversationally to this spoken message. Act on what they say the same as if " +
+        "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
+        "share feedback with the team, call record_suggestion).";
+      // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript:
+      // wait for it (transcription stays a Gemini call), then send it as text. An empty transcript
+      // (no speech recognized / transcription down) degrades to the raw-audio Gemini path so the
+      // user still gets an answer. Gemini-primary keeps hearing the audio itself, tone and all.
+      const serverTranscript = serverChat ? await transcriptPromise : "";
+      const lastTurn: Content =
+        serverChat && serverTranscript
+          ? { role: "user", parts: [{ text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
+          : { role: "user", parts: [{ inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
+      const contents: Content[] = [...toContents(messages), lastTurn];
       // Speak the reply too. TTS runs in the background (see runAssistant), so it doesn't hold the
       // composer's busy state — the voice button stays usable while the audio is being generated.
       const reply = await runAssistant(asstId, contents, true);
@@ -846,7 +860,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     <div className="app-shell flex flex-row bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <Sidebar
         user={user}
-        textModel={textModel}
         onNewChat={() => {
           if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
           setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're clearing
@@ -941,9 +954,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       <KeyDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        textModel={textModel}
-        audioModel={audioModel}
-        liveModel={liveModel}
         voice={voice}
         onChangeVoice={pickVoice}
         textStyle={textStyle}
