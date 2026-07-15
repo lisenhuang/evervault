@@ -69,6 +69,11 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(u => u.LastContinent).HasMaxLength(32);
             e.Property(u => u.LastPostalCode).HasMaxLength(32);
             e.Property(u => u.LastTimezone).HasMaxLength(64);
+            // Per-surface /webapp response-style prefs (nullable; null = "default"). Short enum-ish
+            // strings, sized like the other 16-char enum columns (Role/Modality/Kind/Status).
+            e.Property(u => u.TextStyle).HasMaxLength(16);
+            e.Property(u => u.VoiceStyle).HasMaxLength(16);
+            e.Property(u => u.LiveStyle).HasMaxLength(16);
         });
 
         modelBuilder.Entity<ChatMemory>(e =>

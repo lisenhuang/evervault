@@ -28,4 +28,15 @@ public class EndUser
     public double? LastLongitude { get; set; }
     public string? LastPostalCode { get; set; }
     public string? LastTimezone { get; set; }
+
+    // Per-surface response-style preference for the /webapp chat, so a signed-in user's choice follows
+    // their account across devices/browsers (served/updated via chat/settings). Each is one of
+    // concise|friendly|detailed|professional|playful, or null = "default" (keep the surface's built-in
+    // tone — the zero-config baseline). A literal "default" or any unknown value is stored as null, so
+    // null is the single source of "use the built-in tone" — mirroring the client's "empty = default".
+    // Additive & nullable: future scalar prefs (voice, memory toggle) should join here under the same
+    // chat/settings endpoint rather than a new table, until prefs genuinely balloon.
+    public string? TextStyle { get; set; }
+    public string? VoiceStyle { get; set; }
+    public string? LiveStyle { get; set; }
 }

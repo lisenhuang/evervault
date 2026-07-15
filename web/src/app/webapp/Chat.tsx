@@ -22,7 +22,8 @@ import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUG
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
-import { styleDirective, type ResponseStyle } from "./lib/responseStyle";
+import { styleDirective, type ResponseStyle, type StyleSurface } from "./lib/responseStyle";
+import { getSettings, putSettings } from "./lib/settings";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
@@ -149,6 +150,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [textStyle, setTextStyle] = useState<ResponseStyle>(store.getTextStyle());
   const [voiceStyle, setVoiceStyle] = useState<ResponseStyle>(store.getVoiceStyle());
   const [liveStyle, setLiveStyle] = useState<ResponseStyle>(store.getLiveStyle());
+  // Surfaces the user has changed this session. The mount-time settings fetch (loadSettings) is async, so
+  // it must never overwrite a fresh in-session pick with the value it read before the click landed.
+  const styleTouched = useRef<Set<StyleSurface>>(new Set());
+  // False once Chat has unmounted (e.g. logout). loadSettings checks it after its async read so an
+  // in-flight fetch can't re-seed the localStorage cache for an account that has since signed out.
+  const settingsActiveRef = useRef(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -279,12 +286,57 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }, []);
 
+  // Reconcile the per-surface response styles with the server (cross-device source of truth). State is
+  // seeded synchronously from localStorage for an instant paint; this adopts the stored server value once
+  // it arrives. Precedence, per surface: (1) if the user already changed it this session, leave it alone;
+  // (2) if there's an unsynced local pick (pending), keep local and re-push it; (3) otherwise the server
+  // wins when it holds a non-default value; (4) on a browser that had a pre-feature local choice, migrate
+  // that up once. A failed read (offline / older backend mid-rollout) is a no-op: keep local, don't migrate.
+  const loadSettings = useCallback(async () => {
+    const s = await getSettings();
+    // Bail on a failed read (never mistake failure for "server is all-default"), or if Chat unmounted
+    // while the fetch was in flight (logout) — applying now would re-seed a signed-out account's cache.
+    if (!s || !settingsActiveRef.current) return;
+    const surfaces: { surface: StyleSurface; server: ResponseStyle; local: ResponseStyle; apply: (v: ResponseStyle) => void }[] = [
+      { surface: "text", server: s.text, local: store.getTextStyle(), apply: (v) => { store.setTextStyle(v); setTextStyle(v); } },
+      { surface: "voice", server: s.voice, local: store.getVoiceStyle(), apply: (v) => { store.setVoiceStyle(v); setVoiceStyle(v); } },
+      { surface: "live", server: s.live, local: store.getLiveStyle(), apply: (v) => { store.setLiveStyle(v); setLiveStyle(v); } },
+    ];
+    const migrated = store.getStyleMigrated();
+    const pushUp: Partial<Record<StyleSurface, ResponseStyle>> = {};
+    for (const { surface, server, local, apply } of surfaces) {
+      if (styleTouched.current.has(surface)) continue; // changed this session — the pick + its PUT win
+      if (store.getStylePending(surface)) {
+        // An earlier pick whose PUT never confirmed: keep the local value and re-push it (incl. "default",
+        // which resets the surface). If it already matches the server, clear the stale flag.
+        if (local !== server) pushUp[surface] = local;
+        else store.setStylePending(surface, false);
+        continue;
+      }
+      // One-time legacy migration: a browser that had a pre-feature local choice we've never synced up.
+      // Mark it pending so a failed push retries next load instead of being lost to the migrated flag.
+      if (!migrated && server === "default" && local !== "default") {
+        store.setStylePending(surface, true);
+        pushUp[surface] = local;
+        continue;
+      }
+      // Otherwise the server is authoritative: adopt it, including "default" — which resets a stale local
+      // cache when the pref was turned off on another device.
+      if (server !== local) apply(server);
+    }
+    if (Object.keys(pushUp).length) putSettings(pushUp);
+    store.setStyleMigrated(); // only reached after a successful read — the legacy migration is now done
+  }, []);
+
   useEffect(() => {
+    settingsActiveRef.current = true;
     void loadConfig();
+    void loadSettings();
     store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
     void refreshProfile();
     void refreshTasks();
-  }, [loadConfig, refreshProfile, refreshTasks]);
+    return () => { settingsActiveRef.current = false; };
+  }, [loadConfig, loadSettings, refreshProfile, refreshTasks]);
 
   // Distil the conversation when the user backgrounds or leaves the tab — a natural "conversation end".
   useEffect(() => {
@@ -305,20 +357,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setVoice(v);
   }
 
-  // Persist + apply a response-style choice. Each surface is independent (the model reads its own
-  // style on the next turn / next call), so these just save and update local state.
-  function pickTextStyle(v: ResponseStyle) {
-    store.setTextStyle(v);
-    setTextStyle(v);
+  // Persist + apply a response-style choice. Each surface is independent (the model reads its own style
+  // on the next turn / next call). We write the localStorage cache for an instant, offline-safe value,
+  // mark the surface touched (so an in-flight mount fetch can't clobber it) and pending (so an unsynced
+  // pick survives a reload), then push it to the server fire-and-forget for cross-device persistence.
+  function pickStyle(surface: StyleSurface, v: ResponseStyle, cache: (v: ResponseStyle) => void, apply: (v: ResponseStyle) => void) {
+    styleTouched.current.add(surface);
+    store.setStylePending(surface, true);
+    cache(v);
+    apply(v);
+    putSettings({ [surface]: v });
   }
-  function pickVoiceStyle(v: ResponseStyle) {
-    store.setVoiceStyle(v);
-    setVoiceStyle(v);
-  }
-  function pickLiveStyle(v: ResponseStyle) {
-    store.setLiveStyle(v);
-    setLiveStyle(v);
-  }
+  const pickTextStyle = (v: ResponseStyle) => pickStyle("text", v, store.setTextStyle, setTextStyle);
+  const pickVoiceStyle = (v: ResponseStyle) => pickStyle("voice", v, store.setVoiceStyle, setVoiceStyle);
+  const pickLiveStyle = (v: ResponseStyle) => pickStyle("live", v, store.setLiveStyle, setLiveStyle);
 
   async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";

@@ -6,6 +6,7 @@ import Chat from "./Chat";
 import SignInGate from "./SignInGate";
 import { api, type AuthConfig, type Me } from "./authApi";
 import { clearErrorReportQueue } from "./lib/errorReport";
+import { store } from "./lib/store";
 import { useT } from "@/i18n/LanguageProvider";
 
 type View = "loading" | "disabled" | "signin" | "chat";
@@ -26,7 +27,16 @@ export default function WebappPage() {
     setClientId(cfg.clientId);
     const meRes = await api("/api/auth/me");
     if (meRes.ok) {
-      setMe(await meRes.json());
+      const meData: Me = await meRes.json();
+      // The per-browser style cache belongs to one account. If a *different* user is now signed in on this
+      // browser (a session can change without an explicit logout — cookie expiry, then someone else signs
+      // in), drop the previous user's cached prefs so they neither show nor get pushed into the new
+      // account. An empty owner (first sign-in, or a pre-feature local choice) is preserved on purpose, so
+      // an existing local style still migrates up to the server. Runs before <Chat/> mounts and reads it.
+      const owner = store.getStyleCacheOwner();
+      if (owner && owner !== meData.email) store.clearStyleCache();
+      store.setStyleCacheOwner(meData.email);
+      setMe(meData);
       setView("chat");
       return;
     }
@@ -42,6 +52,9 @@ export default function WebappPage() {
     // Drop any queued error reports so the next account signed in on this tab can't flush them under
     // its own identity (the queue is per-browser; logout is SPA-only, no reload to clear it).
     clearErrorReportQueue();
+    // Wipe the per-browser response-style cache too, so the next account signed in on this tab doesn't
+    // inherit (or push up) the previous user's styles. Prefs are per-user; localStorage is per-browser.
+    store.clearStyleCache();
     setMe(null);
     setView("signin");
   }

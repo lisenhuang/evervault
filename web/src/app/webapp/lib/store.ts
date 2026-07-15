@@ -3,7 +3,7 @@
 // Models are chosen by the admin and fetched from the server on load; these getters just cache the
 // last-known values (and safe defaults) so the UI has something before that fetch resolves.
 
-import { normalizeStyle, type ResponseStyle } from "./responseStyle";
+import { normalizeStyle, type ResponseStyle, type StyleSurface } from "./responseStyle";
 
 const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
@@ -12,9 +12,27 @@ const VOICE = "ev:voice";
 const MEMORY_ON = "ev:memoryOn";
 const NOTICE_SEEN = "ev:memoryNoticeSeen";
 // Response-style presets, chosen separately per surface. Default ("default") leaves the built-in tone.
+// These are the browser-local cache; the server (chat/settings) is the cross-device source of truth.
 const STYLE_TEXT = "ev:styleText";
 const STYLE_VOICE = "ev:styleVoice";
 const STYLE_LIVE = "ev:styleLive";
+// Has this browser's pre-existing local style choices been pushed up to the server yet? Set once, after
+// the first SUCCESSFUL settings read, so the local->server migration runs exactly once per browser and a
+// stale local value can never resurrect over the server on later loads.
+const STYLE_MIGRATED = "ev:styleMigrated";
+// Per-surface "unsynced local edit" flags: set when the user picks a style, cleared when its PUT lands.
+// On load, a pending surface keeps its local value (and re-pushes) instead of adopting the server's — so a
+// pick made while offline isn't silently reverted by a stale server value on the next reload.
+const STYLE_PENDING: Record<StyleSurface, string> = {
+  text: "ev:stylePendingText",
+  voice: "ev:stylePendingVoice",
+  live: "ev:stylePendingLive",
+};
+// The account (email) the style cache currently belongs to. localStorage is per-browser but these prefs
+// are per-user, and a session can change without an explicit logout (cookie expiry, then a different user
+// signs in). Comparing this to the signed-in user lets us clear the cache on a real account change while
+// preserving it across a same-user reload or a transient auth blip.
+const STYLE_OWNER = "ev:styleCacheOwner";
 
 export const DEFAULT_TEXT_MODEL = "gemini-flash-lite-latest";
 export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
@@ -55,4 +73,19 @@ export const store = {
   setVoiceStyle: (v: ResponseStyle) => set(STYLE_VOICE, v === "default" ? "" : v),
   getLiveStyle: (): ResponseStyle => normalizeStyle(get(STYLE_LIVE)),
   setLiveStyle: (v: ResponseStyle) => set(STYLE_LIVE, v === "default" ? "" : v),
+  // Cross-device style sync bookkeeping (see lib/settings.ts).
+  getStyleMigrated: () => get(STYLE_MIGRATED) === "1",
+  setStyleMigrated: () => set(STYLE_MIGRATED, "1"),
+  getStylePending: (s: StyleSurface) => get(STYLE_PENDING[s]) === "1",
+  setStylePending: (s: StyleSurface, on: boolean) => set(STYLE_PENDING[s], on ? "1" : ""),
+  // Which account (email) the style cache belongs to. Empty until the first sign-in tags it — an empty
+  // owner is left alone so a pre-feature local choice survives to be migrated up (see loadSettings).
+  getStyleCacheOwner: () => get(STYLE_OWNER),
+  setStyleCacheOwner: (email: string) => set(STYLE_OWNER, email),
+  // Wipe every per-browser style key + sync flag. Called on logout so the next account signed in on this
+  // browser starts clean — localStorage is per-browser but these prefs are per-user, and logout is
+  // SPA-only (no reload), so without this one user's cached style could migrate up into another's account.
+  clearStyleCache: () => {
+    for (const k of [STYLE_TEXT, STYLE_VOICE, STYLE_LIVE, STYLE_MIGRATED, STYLE_PENDING.text, STYLE_PENDING.voice, STYLE_PENDING.live]) set(k, "");
+  },
 };
