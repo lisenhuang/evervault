@@ -24,12 +24,18 @@ export function isIOS(): boolean {
 }
 
 /**
- * Best-effort Audio Session hint (Safari-only draft API; no-op elsewhere). Pinning
- * "play-and-record" before capture keeps iOS on the speaker-friendly call category for the whole
- * call; restoring "auto" when capture stops releases it, so later media playback isn't stuck at
- * call volume/routing (WebKit keeps a non-"auto" type as a hard override for the page's lifetime).
+ * Best-effort Audio Session hint (Safari-only draft API; no-op elsewhere). The type picks the iOS
+ * audio session category WebKit routes the page's audio through:
+ *  - "play-and-record": pinned before mic capture to keep iOS on the speaker-friendly call category
+ *    for the whole call.
+ *  - "playback": media playback (like a music/podcast app) that plays through the hardware Silent
+ *    switch — used so a spoken AI reply is still audible when the phone is on silent.
+ *  - "auto": lets WebKit decide; for Web Audio output that lands on an ambient-style category the
+ *    Silent switch mutes. Restoring "auto" after a call/clip releases the override, so later media
+ *    playback isn't stuck at call volume/routing (WebKit keeps a non-"auto" type as a hard override
+ *    for the page's lifetime).
  */
-function setAudioSessionType(type: "play-and-record" | "auto") {
+export function setAudioSessionType(type: "play-and-record" | "playback" | "auto") {
   if (!isIOS()) return;
   try {
     const nav = navigator as Navigator & { audioSession?: { type: string } };

@@ -15,6 +15,7 @@ import { type Content, describeDocument, describeImage, streamTextWithTools, syn
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
+import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
@@ -180,6 +181,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [audioPlaying, setAudioPlaying] = useState<{ id: string; paused: boolean } | null>(null);
   const playAudioClip = useCallback((id: string, base64: string, sampleRate: number) => {
     playingAudioRef.current?.stop();
+    // iOS: route this clip to the "playback" audio session so it plays through the hardware Silent
+    // switch (like a music/podcast app). No-op off iOS. Released back to "auto" when the clip ends
+    // — and only by the handle that's still current, so replacing one clip with another (which
+    // re-pins "playback" just below) doesn't get reset out from under the new clip.
+    setAudioSessionType("playback");
     const handle = playPcm16Handle(base64, sampleRate);
     playingAudioRef.current = handle;
     setAudioPlaying({ id, paused: false });
@@ -187,6 +193,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (playingAudioRef.current === handle) {
         playingAudioRef.current = null;
         setAudioPlaying(null);
+        setAudioSessionType("auto");
       }
     });
   }, []);
