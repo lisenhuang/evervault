@@ -21,6 +21,7 @@ import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
+import { styleDirective, type ResponseStyle } from "./lib/responseStyle";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
@@ -122,6 +123,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [audioModel, setAudioModel] = useState(store.getAudioModel());
   const [liveModel, setLiveModel] = useState(store.getLiveModel());
   const [voice, setVoice] = useState(store.getVoice());
+  // Response-style presets, chosen separately per surface (text / spoken voice reply / live call).
+  // Default ("default") injects no directive, so an untouched preference keeps the built-in tone.
+  const [textStyle, setTextStyle] = useState<ResponseStyle>(store.getTextStyle());
+  const [voiceStyle, setVoiceStyle] = useState<ResponseStyle>(store.getVoiceStyle());
+  const [liveStyle, setLiveStyle] = useState<ResponseStyle>(store.getLiveStyle());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -278,6 +284,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setVoice(v);
   }
 
+  // Persist + apply a response-style choice. Each surface is independent (the model reads its own
+  // style on the next turn / next call), so these just save and update local state.
+  function pickTextStyle(v: ResponseStyle) {
+    store.setTextStyle(v);
+    setTextStyle(v);
+  }
+  function pickVoiceStyle(v: ResponseStyle) {
+    store.setVoiceStyle(v);
+    setVoiceStyle(v);
+  }
+  function pickLiveStyle(v: ResponseStyle) {
+    store.setLiveStyle(v);
+    setLiveStyle(v);
+  }
+
   async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";
     const onDelta = (delta: string) => {
@@ -289,6 +310,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // memory persona + the recall_memory tool so it can search past chats on demand (covers text +
     // push-to-talk) instead of denying it has any memory.
     const langDirective = aiReplyDirective(lang);
+    // Response style is set separately for typed replies and spoken (voice-message) replies, so a
+    // reply that will be read aloud uses the voice style; everything else uses the text style. Empty
+    // for "default", in which case filter(Boolean) drops it and the built-in tone stands.
+    const styleDir = styleDirective(speak ? voiceStyle : textStyle);
     if (memoryOn) {
       // Ground the reply in the durable profile (who the user is) + today's task agenda + persona +
       // current time. The agenda is re-rendered every turn, so task tool calls show up mid-conversation.
@@ -296,6 +321,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         renderProfileBlock(profileFactsRef.current),
         renderAgendaBlock(tasksRef.current),
         langDirective,
+        styleDir,
         CAPABILITY_BOUNDS,
         MEMORY_PERSONA,
         TASKS_PERSONA,
@@ -310,7 +336,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onDelta(delta);
       }
     } else {
-      const sys = [langDirective, CAPABILITY_BOUNDS, currentTimeContext()].filter(Boolean).join("\n\n");
+      const sys = [langDirective, styleDir, CAPABILITY_BOUNDS, currentTimeContext()]
+        .filter(Boolean)
+        .join("\n\n");
       for await (const delta of streamText(textModel, contents, sys)) {
         onDelta(delta);
       }
@@ -583,7 +611,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
     const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
-    const session = new LiveSession(liveModel, voice, memoryOn, profileBlock, recentContext, lang, agendaBlock);
+    const session = new LiveSession(
+      liveModel,
+      voice,
+      memoryOn,
+      profileBlock,
+      recentContext,
+      lang,
+      agendaBlock,
+      styleDirective(liveStyle),
+    );
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
     setCallState("connecting");
@@ -815,6 +852,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         liveModel={liveModel}
         voice={voice}
         onChangeVoice={pickVoice}
+        textStyle={textStyle}
+        voiceStyle={voiceStyle}
+        liveStyle={liveStyle}
+        onChangeTextStyle={pickTextStyle}
+        onChangeVoiceStyle={pickVoiceStyle}
+        onChangeLiveStyle={pickLiveStyle}
       />
 
       <ConfirmDialog

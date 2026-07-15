@@ -116,6 +116,8 @@ export class LiveSession {
     private recentContext?: string,
     private language: Lang = "en",
     private agendaBlock?: string,
+    // The user's chosen response-style directive for live calls ("" when they left it on default).
+    private styleInstruction?: string,
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -258,6 +260,9 @@ export class LiveSession {
           this.memoryEnabled ? MEMORY_PERSONA : "",
           this.memoryEnabled ? TASKS_PERSONA : "",
           SYSTEM_INSTRUCTION,
+          // The user's chosen response style for calls (empty on default) — layered after the base
+          // voice persona so it refines tone without dropping the "short and spoken" baseline.
+          this.styleInstruction || "",
           CAPABILITY_BOUNDS,
           // Steer the spoken reply into the selected UI language (empty for English).
           aiReplyDirective(this.language),
