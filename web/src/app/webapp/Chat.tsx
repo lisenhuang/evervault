@@ -11,13 +11,14 @@ import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
-import { type Content, describeDocument, describeImage, streamText, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
+import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, transcribeAudio } from "./lib/gemini";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { CAPABILITY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
+import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA, type SuggestionImage } from "./lib/suggestionTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
@@ -109,6 +110,26 @@ function toContents(msgs: ChatMessage[]): Content[] {
         ...(m.text ? [{ text: m.text }] : []),
       ],
     }));
+}
+
+// The screenshot(s) the user shared for a suggestion. The model never handles image bytes — it just
+// calls record_suggestion with includeImage — so we attach the images from the SINGLE most-recent
+// image-bearing user message, and only if it's within a short lookback. Taking just that one turn (not a
+// sweep of the whole window) keeps an unrelated image the user shared earlier from riding along; the
+// model's includeImage flag is the primary gate, this scoping is the backstop.
+const SUGGESTION_IMAGE_LOOKBACK = 8;
+const SUGGESTION_IMAGE_MAX = 6;
+function sharedSuggestionImages(msgs: ChatMessage[]): SuggestionImage[] {
+  const start = Math.max(0, msgs.length - SUGGESTION_IMAGE_LOOKBACK);
+  for (let i = msgs.length - 1; i >= start; i--) {
+    const m = msgs[i];
+    if (m.role !== "user" || !m.files) continue;
+    const imgs = m.files.filter((f) => f.kind === "image" && f.base64);
+    if (imgs.length === 0) continue;
+    // Most recent image-bearing turn — attach its images and stop (don't reach further back).
+    return imgs.slice(0, SUGGESTION_IMAGE_MAX).map((f) => ({ base64: f.base64!, mime: f.mimeType }));
+  }
+  return [];
 }
 
 export default function Chat({ user, onLogout }: { user: Me; onLogout: () => void }) {
@@ -314,6 +335,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // reply that will be read aloud uses the voice style; everything else uses the text style. Empty
     // for "default", in which case filter(Boolean) drops it and the built-in tone stands.
     const styleDir = styleDirective(speak ? voiceStyle : textStyle);
+    // The feedback tool is available whether or not memory is on: forwarding a suggestion to the
+    // developers doesn't depend on memory. It attaches whatever screenshots the user just shared.
+    const runSuggestion = (args: Record<string, unknown>) =>
+      runSuggestionTool(args, () => sharedSuggestionImages(messagesRef.current));
     if (memoryOn) {
       // Ground the reply in the durable profile (who the user is) + today's task agenda + persona +
       // current time. The agenda is re-rendered every turn, so task tool calls show up mid-conversation.
@@ -325,21 +350,30 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         CAPABILITY_BOUNDS,
         MEMORY_PERSONA,
         TASKS_PERSONA,
+        SUGGESTION_PERSONA,
         currentTimeContext(),
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }];
+      const tools = [
+        { functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS, RECORD_SUGGESTION_DECLARATION] },
+      ];
       const runTool = (name: string, args: Record<string, unknown>) =>
-        isTaskTool(name) ? runTaskTool(name, args, () => void refreshTasks()) : runRecallTool(args);
+        isSuggestionTool(name)
+          ? runSuggestion(args)
+          : isTaskTool(name)
+            ? runTaskTool(name, args, () => void refreshTasks())
+            : runRecallTool(args);
       for await (const delta of streamTextWithTools(textModel, contents, sys, tools, runTool)) {
         onDelta(delta);
       }
     } else {
-      const sys = [langDirective, styleDir, CAPABILITY_BOUNDS, currentTimeContext()]
+      const sys = [langDirective, styleDir, CAPABILITY_BOUNDS, SUGGESTION_PERSONA, currentTimeContext()]
         .filter(Boolean)
         .join("\n\n");
-      for await (const delta of streamText(textModel, contents, sys)) {
+      const tools = [{ functionDeclarations: [RECORD_SUGGESTION_DECLARATION] }];
+      const runTool = (name: string, args: Record<string, unknown>) => runSuggestion(args);
+      for await (const delta of streamTextWithTools(textModel, contents, sys, tools, runTool)) {
         onDelta(delta);
       }
     }

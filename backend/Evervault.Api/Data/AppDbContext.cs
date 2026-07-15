@@ -23,6 +23,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<UserTask> UserTasks => Set<UserTask>();
     public DbSet<ErrorReport> ErrorReports => Set<ErrorReport>();
     public DbSet<AiCallLog> AiCallLogs => Set<AiCallLog>();
+    public DbSet<Suggestion> Suggestions => Set<Suggestion>();
+    public DbSet<SuggestionImage> SuggestionImages => Set<SuggestionImage>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -143,6 +145,30 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(r => r.Detail).HasMaxLength(4000);
             // Admin listing (newest first) + stats rollups + the opportunistic retention sweep.
             e.HasIndex(r => r.CreatedAt);
+        });
+
+        modelBuilder.Entity<Suggestion>(e =>
+        {
+            e.Property(s => s.UserEmail).HasMaxLength(320);
+            e.Property(s => s.Category).HasMaxLength(24);
+            e.Property(s => s.Summary).HasMaxLength(300);
+            e.Property(s => s.Details).HasMaxLength(8000);
+            e.Property(s => s.Status).HasMaxLength(16);
+            e.Property(s => s.UserAgent).HasMaxLength(400);
+            // Admin listing (newest first) + the per-status filter.
+            e.HasIndex(s => s.CreatedAt);
+            e.HasIndex(s => s.Status);
+            // Images are cascade-deleted with their suggestion.
+            e.HasMany(s => s.Images)
+                .WithOne(i => i.Suggestion!)
+                .HasForeignKey(i => i.SuggestionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SuggestionImage>(e =>
+        {
+            e.Property(i => i.ObjectKey).HasMaxLength(400);
+            e.Property(i => i.Mime).HasMaxLength(64);
         });
     }
 }

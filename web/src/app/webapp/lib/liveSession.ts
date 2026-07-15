@@ -12,6 +12,7 @@ import { EchoLoopback } from "./echoLoopback";
 import { CAPABILITY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
+import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
@@ -246,11 +247,17 @@ export class LiveSession {
         // so an hours-long call never terminates from hitting the model's context ceiling.
         sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
         contextWindowCompression: { slidingWindow: {} },
-        // When memory is on, give the model the recall_memory + task tools and a persona that knows it
-        // has memory + a task list, so it can search past chats and manage tasks mid-call.
-        ...(this.memoryEnabled
-          ? { tools: [{ functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] }] }
-          : {}),
+        // The record_suggestion tool is always available (forwarding feedback doesn't need memory);
+        // when memory is on, also give the model recall_memory + the task tools and a persona that knows
+        // it has memory + a task list, so it can search past chats and manage tasks mid-call.
+        tools: [
+          {
+            functionDeclarations: [
+              ...(this.memoryEnabled ? [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] : []),
+              RECORD_SUGGESTION_DECLARATION,
+            ],
+          },
+        ],
         // Time + agenda are captured at connect; a multi-hour call won't refresh them (acceptable — the
         // list_tasks tool gives freshness mid-call). The profile block grounds the call from the first word.
         systemInstruction: [
@@ -259,6 +266,7 @@ export class LiveSession {
           this.memoryEnabled && this.recentContext ? this.recentContext : "",
           this.memoryEnabled ? MEMORY_PERSONA : "",
           this.memoryEnabled ? TASKS_PERSONA : "",
+          SUGGESTION_PERSONA,
           SYSTEM_INSTRUCTION,
           // The user's chosen response style for calls (empty on default) — layered after the base
           // voice persona so it refines tone without dropping the "short and spoken" baseline.
@@ -470,7 +478,12 @@ export class LiveSession {
         calls.map((c) => {
           const name = c.name ?? "";
           const args = c.args ?? {};
-          return isTaskTool(name) ? runTaskTool(name, args) : runRecallTool(args);
+          // No image attachments during a voice call, so record_suggestion runs without screenshots.
+          return isSuggestionTool(name)
+            ? runSuggestionTool(args)
+            : isTaskTool(name)
+              ? runTaskTool(name, args)
+              : runRecallTool(args);
         }),
       );
       this.session?.sendToolResponse({
