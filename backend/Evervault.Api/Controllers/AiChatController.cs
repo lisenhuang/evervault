@@ -29,8 +29,14 @@ public class AiChatController : ControllerBase
     public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? OpenAiModel, string? ReasoningEffort, string? OpenAiReasoning);
     public record EmbeddingConfigDto(string Provider, string? Model, int Dimensions, bool Locked, DateTimeOffset? LockedAt);
     public record EmbeddingConfigInput(string? Model, int Dimensions);
-    public record WebappAiConfigDto(string TextModel, string AudioModel, string LiveModel, string DefaultVoice);
-    public record WebappAiConfigInput(string? TextModel, string? AudioModel, string? LiveModel, string? DefaultVoice);
+    public record WebappAiConfigDto(
+        string TextModel, string AudioModel, string LiveModel, string DefaultVoice,
+        string TextProvider, string? TextReasoning,
+        string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning);
+    public record WebappAiConfigInput(
+        string? TextModel, string? AudioModel, string? LiveModel, string? DefaultVoice,
+        string? TextProvider, string? TextReasoning,
+        string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning);
 
     /// <summary>Live model list for a provider (free/paid + pricing where exposed). Goes through failover.
     /// <paramref name="kind"/> = "chat" (default) or "embedding".</summary>
@@ -148,11 +154,13 @@ public class AiChatController : ControllerBase
     public async Task<ActionResult<WebappAiConfigDto>> GetWebappConfig()
     {
         var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
-        return Ok(new WebappAiConfigDto(
-            WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
+        return Ok(WebappDto(c));
     }
 
-    /// <summary>Set the /webapp models + default voice. Merges (only overwrites fields the caller sent).</summary>
+    /// <summary>Set the /webapp models + default voice. Merges (only overwrites fields the caller sent).
+    /// For the new text primary/fallback fields: a null value leaves the stored value untouched (so an older
+    /// frontend that doesn't send them can't wipe them), while an empty string explicitly clears it (e.g. a
+    /// fallback of "None"). Reasoning normalizes "auto"/empty to null (the model's default).</summary>
     [HttpPut("webapp-config")]
     public async Task<ActionResult<WebappAiConfigDto>> PutWebappConfig([FromBody] WebappAiConfigInput input)
     {
@@ -163,11 +171,32 @@ public class AiChatController : ControllerBase
         if (input.AudioModel is not null) c.AudioModel = input.AudioModel.Trim();
         if (input.LiveModel is not null) c.LiveModel = input.LiveModel.Trim();
         if (input.DefaultVoice is not null) c.DefaultVoice = input.DefaultVoice.Trim();
+        c.TextProvider = MergeText(input.TextProvider, c.TextProvider);
+        c.TextReasoning = MergeReasoning(input.TextReasoning, c.TextReasoning);
+        c.TextFallbackProvider = MergeText(input.TextFallbackProvider, c.TextFallbackProvider);
+        c.TextFallbackModel = MergeText(input.TextFallbackModel, c.TextFallbackModel);
+        c.TextFallbackReasoning = MergeReasoning(input.TextFallbackReasoning, c.TextFallbackReasoning);
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.WebappAiConfigs.Add(c);
         await _db.SaveChangesAsync();
-        return Ok(new WebappAiConfigDto(
-            WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
+        return Ok(WebappDto(c));
+    }
+
+    private static WebappAiConfigDto WebappDto(WebappAiConfig? c) => new(
+        WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
+        WebappAiDefaults.TextProviderOf(c), c?.TextReasoning,
+        c?.TextFallbackProvider, c?.TextFallbackModel, c?.TextFallbackReasoning);
+
+    // null → keep existing (older clients omit the field); ""/whitespace → clear to null; else trimmed value.
+    private static string? MergeText(string? incoming, string? current) =>
+        incoming is null ? current : string.IsNullOrWhiteSpace(incoming) ? null : incoming.Trim();
+
+    // Same merge rule, plus "auto" collapses to null since that already means "the model's default".
+    private static string? MergeReasoning(string? incoming, string? current)
+    {
+        if (incoming is null) return current;
+        var v = incoming.Trim();
+        return v.Length == 0 || v.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : v;
     }
 
     /// <summary>One agent turn. Read tools auto-run; a write tool returns a confirmation proposal.</summary>

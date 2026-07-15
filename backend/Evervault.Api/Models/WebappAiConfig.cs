@@ -10,7 +10,27 @@ namespace Evervault.Api.Models;
 public class WebappAiConfig
 {
     public int Id { get; set; }
+
+    /// <summary>Primary text model id (e.g. a Gemini model, or a ChatGPT model like "gpt-5").</summary>
     public string? TextModel { get; set; }
+
+    /// <summary>Provider for the primary text model: "gemini" | "openai". Null (legacy rows) = "gemini".</summary>
+    public string? TextProvider { get; set; }
+
+    /// <summary>Reasoning/thinking effort for the primary text model when it is a ChatGPT model (its own
+    /// level set: minimal/low/medium/high/xhigh/…). Null/"auto" = the model's default. Ignored for Gemini.</summary>
+    public string? TextReasoning { get; set; }
+
+    /// <summary>Provider for the fallback text model: "gemini" | "openai". Null = no fallback configured.</summary>
+    public string? TextFallbackProvider { get; set; }
+
+    /// <summary>Fallback text model id, used when the primary is unavailable. Null = no fallback.</summary>
+    public string? TextFallbackModel { get; set; }
+
+    /// <summary>Reasoning/thinking effort for the fallback text model when it is a ChatGPT model.
+    /// Null/"auto" = the model's default. Ignored for Gemini.</summary>
+    public string? TextFallbackReasoning { get; set; }
+
     public string? AudioModel { get; set; }
     public string? LiveModel { get; set; }
     public string? DefaultVoice { get; set; }
@@ -25,12 +45,33 @@ public static class WebappAiDefaults
     public const string AudioModel = "gemini-2.5-flash-preview-tts";
     public const string LiveModel = "gemini-3.1-flash-live-preview";
     public const string Voice = "Kore";
+    public const string GeminiProvider = "gemini";
 
     public static string Text(WebappAiConfig? c) => Or(c?.TextModel, TextModel);
     public static string Audio(WebappAiConfig? c) => Or(c?.AudioModel, AudioModel);
     public static string Live(WebappAiConfig? c) => Or(c?.LiveModel, LiveModel);
     public static string VoiceOf(WebappAiConfig? c) => Or(c?.DefaultVoice, Voice);
 
+    /// <summary>Provider of the primary text model, normalized. Legacy rows (null) are Gemini.</summary>
+    public static string TextProviderOf(WebappAiConfig? c) => Norm(c?.TextProvider) ?? GeminiProvider;
+
+    /// <summary>The Gemini text model the <b>keyless browser</b> should call. The /webapp talks only to
+    /// Gemini (via the pooled-key proxy), so when the admin's primary choice is a ChatGPT model we hand the
+    /// browser the first Gemini choice in primary→fallback order, else the Gemini default. This keeps the
+    /// keyless client working no matter what the admin picks (a ChatGPT primary is still stored as the
+    /// admin's preference for surfaces that can honor it). For legacy/Gemini-primary rows this returns the
+    /// primary model exactly as before — no behavior change.</summary>
+    public static string BrowserText(WebappAiConfig? c)
+    {
+        if (TextProviderOf(c) == GeminiProvider) return Or(c?.TextModel, TextModel);
+        if (Norm(c?.TextFallbackProvider) == GeminiProvider && !string.IsNullOrWhiteSpace(c?.TextFallbackModel))
+            return c!.TextFallbackModel!.Trim();
+        return TextModel;
+    }
+
     private static string Or(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static string? Norm(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
 }

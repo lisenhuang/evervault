@@ -36,11 +36,18 @@ export type ModelsResult = { provider: string; models: ModelInfo[]; warning: str
 
 // Models the admin picks for the public /webapp (keyless): text, TTS (voice messages), and the
 // realtime live call, plus the default voice. Mirrors the backend WebappAiConfigDto.
+// The text model has a primary + optional fallback, each Gemini or ChatGPT (with a reasoning level for
+// ChatGPT). textModel is the primary model id; textProvider says which provider it belongs to.
 export type WebappAiConfigDto = {
   textModel: string;
   audioModel: string;
   liveModel: string;
   defaultVoice: string;
+  textProvider: string; // "gemini" | "openai" (primary). Defaults to "gemini".
+  textReasoning: string | null; // primary reasoning level (ChatGPT only); null = model default
+  textFallbackProvider: string | null; // "gemini" | "openai" | null (no fallback)
+  textFallbackModel: string | null;
+  textFallbackReasoning: string | null; // fallback reasoning level (ChatGPT only); null = model default
 };
 
 // One rolling quota window (e.g. ChatGPT's 5-hour and weekly limits). resetUnixMs is epoch ms.
