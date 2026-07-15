@@ -2,7 +2,7 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileAudio, FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
@@ -33,6 +33,26 @@ const md: Components = {
     );
   },
 };
+
+// Pull every markdown image out of an assistant reply, in document order, so a tapped image can open
+// as a gallery of all images in the same bubble (mirroring how a user message's images open). Matches
+// `![alt](url)` and `![alt](url "title")`; the URL is the first non-space token after `(` — exactly
+// what react-markdown parses into an <img>'s `src`, so the tapped image lines up by src. Angle-bracketed
+// or space-containing URLs (rare for web images) simply won't match here, in which case the img renderer
+// falls back to opening just the tapped image — zoom still works either way.
+const MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(\s*([^)\s]+)/g;
+function extractMarkdownImages(text: string): LightboxImage[] {
+  const out: LightboxImage[] = [];
+  for (const m of text.matchAll(MARKDOWN_IMAGE_RE)) out.push({ src: m[2], alt: m[1] });
+  return out;
+}
+
+// react-markdown's default URL sanitizer strips `data:` URLs, which would make an inline (base64)
+// image the assistant embeds vanish entirely. Inline image data is safe to render, so let those
+// through while keeping the default protection for every other URL (links, http/https, etc.).
+function allowInlineImages(url: string): string {
+  return /^data:image\//i.test(url) ? url : defaultUrlTransform(url);
+}
 
 // How long the jumped-to original message stays tinted after tapping a quote.
 const FLASH_MS = 1500;
@@ -73,6 +93,7 @@ export default function MessageList({
   playingAudioId,
   audioPaused,
   onReply,
+  onDelete,
   scrollSignal,
 }: {
   messages: ChatMessage[];
@@ -85,6 +106,8 @@ export default function MessageList({
   audioPaused: boolean;
   /** Start composing a reply that quotes this message. */
   onReply: (m: ChatMessage) => void;
+  /** Remove a message from the chat (via the long-press / right-click menu). */
+  onDelete: (m: ChatMessage) => void;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
   // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
   scrollSignal?: unknown;
@@ -222,6 +245,7 @@ export default function MessageList({
             onPlayAudio={onPlayAudio}
             onReveal={followReveal}
             onOpenMenu={openMenu}
+            onOpenImage={openLightbox}
             onReply={onReply}
           />
         ),
@@ -235,6 +259,10 @@ export default function MessageList({
           onReply={() => {
             setMenu(null);
             onReply(menu.m);
+          }}
+          onDelete={() => {
+            setMenu(null);
+            onDelete(menu.m);
           }}
           onClose={() => setMenu(null)}
         />
@@ -267,6 +295,7 @@ function AssistantMessage({
   onPlayAudio,
   onReveal,
   onOpenMenu,
+  onOpenImage,
   onReply,
 }: {
   m: ChatMessage;
@@ -276,12 +305,43 @@ function AssistantMessage({
   onPlayAudio: (m: ChatMessage) => void;
   onReveal: () => void;
   onOpenMenu: (m: ChatMessage, x: number, y: number) => void;
+  /** Open the full-screen viewer for an image the assistant embedded in its reply. */
+  onOpenImage: (images: LightboxImage[], index: number) => void;
   onReply: (m: ChatMessage) => void;
 }) {
   const t = useT();
   // Whether this reply mounted mid-stream, captured once at mount — history never animates.
   const [mountedStreaming] = useState(!!m.streaming);
   const text = useWordReveal(m.text, mountedStreaming && !m.error);
+
+  // Markdown images the assistant embedded (`![alt](url)`) render as plain, un-tappable <img>s unless
+  // we override the `img` renderer. Make each one open the same full-screen lightbox a user's own
+  // images use — tapping opens a gallery of all images in this reply, starting at the tapped one.
+  const galleryImages = useMemo(() => extractMarkdownImages(text), [text]);
+  const mdComponents = useMemo<Components>(
+    () => ({
+      ...md,
+      img: (props) => {
+        const src = typeof props.src === "string" ? props.src : "";
+        if (!src) return null;
+        const alt = props.alt || t.message.imageAlt;
+        const idx = galleryImages.findIndex((g) => g.src === src);
+        const list = idx >= 0 ? galleryImages : [{ src, alt }];
+        return (
+          <button
+            type="button"
+            onClick={() => onOpenImage(list, idx >= 0 ? idx : 0)}
+            aria-label={t.message.viewImage}
+            className="my-1.5 block cursor-zoom-in overflow-hidden rounded-xl transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={alt} className="max-h-80 w-full object-contain" />
+          </button>
+        );
+      },
+    }),
+    [galleryImages, onOpenImage, t],
+  );
   const [typingDots, setTypingDots] = useState(false);
   useEffect(() => {
     const id = setTimeout(() => setTypingDots(true), TYPING_DELAY_MS);
@@ -320,7 +380,7 @@ function AssistantMessage({
         className={`${BUBBLE_CLS} [-webkit-touch-callout:none] [@media(hover:none)]:select-none`}
       >
         <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={allowInlineImages} components={mdComponents}>
             {text}
           </ReactMarkdown>
         </div>

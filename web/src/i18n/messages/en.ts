@@ -172,6 +172,7 @@ const en = {
     reply: "Reply",
     copy: "Copy",
     copied: "Copied",
+    delete: "Delete",
     you: "You",
     assistantName: "EverVault",
     replyingTo: (name: string) => `Replying to ${name}`,

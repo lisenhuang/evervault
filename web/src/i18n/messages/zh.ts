@@ -173,6 +173,7 @@ const zh: Messages = {
     reply: "回复",
     copy: "复制",
     copied: "已复制",
+    delete: "删除",
     you: "你",
     assistantName: "EverVault",
     replyingTo: (name: string) => `回复${name}`,
