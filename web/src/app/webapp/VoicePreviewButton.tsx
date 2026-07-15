@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Square, Volume2 } from "lucide-react";
 import { playAudioUrlHandle } from "./lib/audio";
+import { setAudioSessionType } from "./lib/liveAudio";
 import { friendlyAiError } from "./lib/aiError";
 import { reportAiError } from "./lib/errorReport";
 import { useT } from "@/i18n/LanguageProvider";
@@ -30,8 +31,11 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
   // Tear down any in-flight load + active playback. Safe to call repeatedly.
   function stop() {
     runId.current++;
-    handleRef.current?.stop();
-    handleRef.current = null;
+    if (handleRef.current) {
+      handleRef.current.stop();
+      handleRef.current = null;
+      setAudioSessionType("auto"); // release the iOS Silent-switch bypass taken for this preview
+    }
     if (mounted.current) {
       setStatus("idle");
       setError("");
@@ -71,6 +75,9 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
       // (Must be "true"/"false": the backend binds this to a bool, which rejects "1" with a 400.)
       // No model param: the backend falls back to the default-model sample (the pre-generated one).
       const url = `/api/voice-samples/${encodeURIComponent(voice)}?inline=true`;
+      // iOS: play the sample through the "playback" audio session so it's audible even with the
+      // hardware Silent switch on (no-op off iOS); released back to "auto" when it ends/stops/errors.
+      setAudioSessionType("playback");
       const handle = playAudioUrlHandle(url);
       handleRef.current = handle;
       await handle.started; // rejects on load/play error (e.g. 502 all-keys-failed)
@@ -79,11 +86,13 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
       void handle.ended.then(() => {
         if (!mounted.current || id !== runId.current) return;
         handleRef.current = null;
+        setAudioSessionType("auto");
         setStatus("idle");
       });
     } catch (e) {
       if (!mounted.current || id !== runId.current) return;
       handleRef.current = null;
+      setAudioSessionType("auto");
       setStatus("error");
       // Localized message + reference code, and log the raw detail for admin lookup — never show the
       // backend's raw error text here.
