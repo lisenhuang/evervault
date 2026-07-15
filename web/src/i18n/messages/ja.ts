@@ -172,6 +172,7 @@ const ja: Messages = {
     reply: "返信",
     copy: "コピー",
     copied: "コピーしました",
+    delete: "削除",
     you: "あなた",
     assistantName: "EverVault",
     replyingTo: (name: string) => `${name}に返信中`,

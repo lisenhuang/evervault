@@ -676,6 +676,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     playAudioClip(m.id, m.audio.base64, m.audio.sampleRate);
   }
 
+  // Remove a message from the transcript (from the long-press / right-click menu). History is
+  // in-memory only, so dropping it here is all it takes for it to disappear from the chatbox.
+  function deleteMessage(m: ChatMessage) {
+    // If this message's spoken clip is the one loaded in the player, stop it — its bubble is leaving.
+    if (audioPlaying?.id === m.id) {
+      playingAudioRef.current?.stop();
+      playingAudioRef.current = null;
+      setAudioPlaying(null);
+      setAudioSessionType("auto");
+    }
+    setMessages((cur) => cur.filter((x) => x.id !== m.id));
+    // Drop a pending reply that quoted the now-deleted message.
+    setReplyTo((r) => (r?.id === m.id ? null : r));
+  }
+
   // --- Realtime voice call (Live API) ---
 
   function appendLiveText(role: "user" | "assistant", delta: string) {
@@ -924,6 +939,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               playingAudioId={audioPlaying?.id ?? null}
               audioPaused={audioPlaying?.paused ?? false}
               onReply={setReplyTo}
+              onDelete={deleteMessage}
               scrollSignal={!!callState}
             />
           )}

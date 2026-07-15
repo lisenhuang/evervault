@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, Copy, Reply } from "lucide-react";
+import { Check, Copy, Reply, Trash2 } from "lucide-react";
 import type { ChatMessage } from "./types";
 import { useT } from "@/i18n/LanguageProvider";
 
@@ -17,6 +17,7 @@ export default function MessageMenu({
   x,
   y,
   onReply,
+  onDelete,
   onClose,
 }: {
   message: ChatMessage;
@@ -24,6 +25,8 @@ export default function MessageMenu({
   x: number;
   y: number;
   onReply: () => void;
+  /** Remove this message from the chat. */
+  onDelete: () => void;
   onClose: () => void;
 }) {
   const t = useT();
@@ -81,6 +84,13 @@ export default function MessageMenu({
           onClick={copied ? undefined : copyText}
         />
       )}
+      <MenuItem
+        icon={<Trash2 size={sheet ? 18 : 15} aria-hidden="true" />}
+        label={t.message.delete}
+        sheet={sheet}
+        danger
+        onClick={onDelete}
+      />
     </>
   );
 
@@ -147,22 +157,27 @@ function MenuItem({
   icon,
   label,
   sheet,
+  danger,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   sheet: boolean;
+  /** Style as a destructive action (e.g. Delete): red text and icon, red-tinted hover. */
+  danger?: boolean;
   onClick?: () => void;
 }) {
   return (
     <button
       role="menuitem"
       onClick={onClick}
-      className={`flex w-full items-center rounded-lg text-left transition hover:bg-black/5 dark:hover:bg-white/10 ${
-        sheet ? "gap-3.5 px-3.5 py-3 text-[15px]" : "gap-2.5 px-2.5 py-1.5 text-sm"
-      }`}
+      className={`flex w-full items-center rounded-lg text-left transition ${
+        danger
+          ? "text-red-600 hover:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/15"
+          : "hover:bg-black/5 dark:hover:bg-white/10"
+      } ${sheet ? "gap-3.5 px-3.5 py-3 text-[15px]" : "gap-2.5 px-2.5 py-1.5 text-sm"}`}
     >
-      <span className="text-black/55 dark:text-white/55">{icon}</span>
+      <span className={danger ? "text-red-600 dark:text-red-400" : "text-black/55 dark:text-white/55"}>{icon}</span>
       {label}
     </button>
   );

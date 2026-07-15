@@ -172,6 +172,7 @@ const ko: Messages = {
     reply: "답장",
     copy: "복사",
     copied: "복사됨",
+    delete: "삭제",
     you: "나",
     assistantName: "EverVault",
     replyingTo: (name: string) => `${name}에게 답장`,
