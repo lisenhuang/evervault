@@ -600,7 +600,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         ...toContents(messages),
         {
           role: "user",
-          parts: [{ inlineData: { mimeType, data: base64 } }, { text: "Respond conversationally to this voice message." }],
+          parts: [
+            { inlineData: { mimeType, data: base64 } },
+            {
+              text:
+                "Respond conversationally to this spoken message. Act on what they say the same as if " +
+                "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
+                "share feedback with the team, call record_suggestion).",
+            },
+          ],
         },
       ];
       // Speak the reply too. TTS runs in the background (see runAssistant), so it doesn't hold the
