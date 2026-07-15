@@ -177,13 +177,24 @@ public class ChatAiController : ControllerBase
                         calls = completion.ToolCalls,
                         providerState = completion.ProviderState,
                     });
+                    return;
                 }
-                else
+
+                // A leg that returns no tool calls AND no text produced nothing the webapp can show —
+                // e.g. a reasoning model that spent the turn on reasoning tokens without emitting a final
+                // message. The HTTP call still succeeded (it logs "ok" with token usage), so the catch
+                // below never sees it. As long as nothing has streamed to the client yet, treat the empty
+                // completion as a leg failure and fall through to the configured fallback model, instead of
+                // returning an empty reply the webapp renders as "(no response)".
+                if (string.IsNullOrWhiteSpace(completion.Text) && !flushed)
                 {
-                    // `text` is the authoritative full reply — non-streaming legs (Gemini fallback)
-                    // deliver everything here; streamed legs let the client fill any missed tail.
-                    await WriteFrameAsync(new { type = "done", text = completion.Text });
+                    failures.Add($"{provider}/{model}: empty completion (no text or tool calls).");
+                    continue;
                 }
+
+                // `text` is the authoritative full reply — non-streaming legs (Gemini fallback)
+                // deliver everything here; streamed legs let the client fill any missed tail.
+                await WriteFrameAsync(new { type = "done", text = completion.Text });
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
