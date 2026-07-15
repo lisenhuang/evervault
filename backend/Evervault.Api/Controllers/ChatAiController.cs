@@ -61,13 +61,16 @@ public class ChatAiController : ControllerBase
     public record WebappConfigDto(string TextModel, string AudioModel, string LiveModel, string DefaultVoice);
     public record LiveTokenDto(string Token, string? ExpiresAt);
 
-    /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks).</summary>
+    /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks). The text
+    /// model is projected to a Gemini model via <see cref="WebappAiDefaults.BrowserText"/> because the keyless
+    /// browser can only call Gemini through the pooled-key proxy — a ChatGPT primary would otherwise be
+    /// unusable here. (Gemini-primary/legacy rows are unaffected.)</summary>
     [HttpGet("config")]
     public async Task<ActionResult<WebappConfigDto>> Config()
     {
         var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
         return Ok(new WebappConfigDto(
-            WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
+            WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c)));
     }
 
     /// <summary>Mint a short-lived, single-use Live ephemeral token for the realtime call. The browser

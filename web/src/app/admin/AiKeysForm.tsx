@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Check, Gauge, Link2, X } from "lucide-react";
 import { api } from "./adminApi";
 import type {
@@ -73,12 +73,149 @@ function withCurrent(options: { id: string; name: string }[], current: string): 
   return [{ id: current, name: current }, ...options];
 }
 
+// A pickable text model with its provider. ChatGPT models carry the reasoning levels they support.
+type TextOpt = { provider: "gemini" | "openai"; id: string; name: string; reasoningLevels?: string[] | null };
+
+const PROVIDER_LABEL: Record<string, string> = { gemini: "Gemini", openai: "ChatGPT" };
+
+// ChatGPT advertises its own reasoning-effort names; pretty-print them (mirrors the admin chat switcher).
+function reasoningLabel(level: string): string {
+  const map: Record<string, string> = {
+    none: "None",
+    minimal: "Minimal",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+    max: "Max",
+    ultra: "Ultra",
+  };
+  return map[level] ?? level.charAt(0).toUpperCase() + level.slice(1);
+}
+
+// Normalize a reasoning value for equality: "auto"/""/null all mean "the model's default".
+function normReason(r: string | null | undefined): string {
+  return !r || r === "auto" ? "" : r;
+}
+
+// One text-model picker (provider+model) plus, for ChatGPT, its reasoning level. Used for both the
+// primary and the fallback (the fallback additionally offers "No fallback").
+function TextModelRow({
+  label,
+  help,
+  allowNone,
+  loading,
+  geminiOpts,
+  openaiOpts,
+  chatGptConnected,
+  provider,
+  model,
+  reasoning,
+  onSelectModel,
+  onSelectReasoning,
+  disabled,
+}: {
+  label: string;
+  help?: ReactNode;
+  allowNone?: boolean;
+  loading: boolean;
+  geminiOpts: TextOpt[];
+  openaiOpts: TextOpt[];
+  chatGptConnected: boolean;
+  provider: string; // "" (none, fallback only) | "gemini" | "openai"
+  model: string;
+  reasoning: string; // "auto" | a level
+  onSelectModel: (provider: string, model: string) => void;
+  onSelectReasoning: (level: string) => void;
+  disabled?: boolean;
+}) {
+  const value = provider && model ? `${provider}:${model}` : "";
+  const optsFor = provider === "openai" ? openaiOpts : geminiOpts;
+  // Keep a saved selection visible even if it isn't in the freshly-loaded list (still loading, or the
+  // model was retired) so it's never silently dropped.
+  const missing = !!provider && !!model && !optsFor.some((o) => o.id === model);
+
+  const levels = provider === "openai" ? openaiOpts.find((o) => o.id === model)?.reasoningLevels ?? [] : [];
+  const shownLevels = Array.from(
+    new Set([...(levels ?? []), ...(reasoning && reasoning !== "auto" ? [reasoning] : [])]),
+  );
+
+  return (
+    <label className="block">
+      <span className="text-sm font-medium">{label}</span>
+      <div className="mt-1 flex flex-wrap gap-2">
+        <Select
+          value={value}
+          onChange={(v) => {
+            if (!v) return onSelectModel("", "");
+            const i = v.indexOf(":");
+            onSelectModel(v.slice(0, i), v.slice(i + 1));
+          }}
+          disabled={disabled}
+        >
+          {loading && geminiOpts.length === 0 && openaiOpts.length === 0 && <option value={value}>Loading…</option>}
+          {allowNone && <option value="">No fallback</option>}
+          {missing && (
+            <option value={value}>
+              {(PROVIDER_LABEL[provider] ?? provider)} · {model} (saved)
+            </option>
+          )}
+          {geminiOpts.length > 0 && (
+            <optgroup label="Gemini">
+              {geminiOpts.map((m) => (
+                <option key={`gemini:${m.id}`} value={`gemini:${m.id}`}>
+                  {m.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {openaiOpts.length > 0 && (
+            <optgroup label={chatGptConnected ? "ChatGPT" : "ChatGPT (connect above)"}>
+              {openaiOpts.map((m) => (
+                <option key={`openai:${m.id}`} value={`openai:${m.id}`}>
+                  {m.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </Select>
+
+        {provider === "openai" &&
+          (shownLevels.length > 0 ? (
+            <Select value={reasoning || "auto"} onChange={onSelectReasoning} disabled={disabled}>
+              <option value="auto">Reasoning: Auto</option>
+              {shownLevels.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  Reasoning: {reasoningLabel(lvl)}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <span className="self-center text-xs text-black/45 dark:text-white/45">
+              Connect ChatGPT above to set a reasoning level.
+            </span>
+          ))}
+      </div>
+      {help && <span className="mt-1 block text-xs text-black/55 dark:text-white/55">{help}</span>}
+    </label>
+  );
+}
+
 function WebappModelsCard() {
   const [cfg, setCfg] = useState<WebappAiConfigDto | null>(null);
   const [chatModels, setChatModels] = useState<{ id: string; name: string }[]>([]);
   const [liveModels, setLiveModels] = useState<{ id: string; name: string }[]>([]);
+  const [openaiModels, setOpenaiModels] = useState<TextOpt[]>([]);
+  const [chatGptConnected, setChatGptConnected] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
+  // Primary text model.
+  const [textProvider, setTextProvider] = useState("gemini");
   const [textModel, setTextModel] = useState("");
+  const [textReasoning, setTextReasoning] = useState("auto");
+  // Fallback text model (fbProvider = "" means none).
+  const [fbProvider, setFbProvider] = useState("");
+  const [fbModel, setFbModel] = useState("");
+  const [fbReasoning, setFbReasoning] = useState("auto");
   const [audioModel, setAudioModel] = useState("");
   const [liveModel, setLiveModel] = useState("");
   const [voice, setVoice] = useState("");
@@ -87,9 +224,10 @@ function WebappModelsCard() {
 
   const loadModels = useCallback(async () => {
     setLoadingModels(true);
-    const [chatRes, liveRes] = await Promise.all([
+    const [chatRes, liveRes, openaiRes] = await Promise.all([
       api("/api/admin/ai/models?provider=gemini&kind=chat"),
       api("/api/admin/ai/models?provider=gemini&kind=live"),
+      api("/api/admin/ai/models?provider=openai&kind=chat"),
     ]);
     setLoadingModels(false);
     if (chatRes.ok) {
@@ -100,18 +238,36 @@ function WebappModelsCard() {
       const d: ModelsResult = await liveRes.json();
       setLiveModels(d.models.map((m) => ({ id: m.id, name: m.name })));
     }
+    if (openaiRes.ok) {
+      const d: ModelsResult = await openaiRes.json();
+      setOpenaiModels(
+        d.models.map((m) => ({ provider: "openai", id: m.id, name: m.name, reasoningLevels: m.reasoningLevels })),
+      );
+    }
   }, []);
 
   useEffect(() => {
     void (async () => {
-      const res = await api("/api/admin/ai/webapp-config");
-      if (res.ok) {
-        const d: WebappAiConfigDto = await res.json();
+      const [cfgRes, oauthRes] = await Promise.all([
+        api("/api/admin/ai/webapp-config"),
+        api("/api/admin/ai/openai"),
+      ]);
+      if (cfgRes.ok) {
+        const d: WebappAiConfigDto = await cfgRes.json();
         setCfg(d);
+        setTextProvider(d.textProvider || "gemini");
         setTextModel(d.textModel);
+        setTextReasoning(d.textReasoning || "auto");
+        setFbProvider(d.textFallbackProvider || "");
+        setFbModel(d.textFallbackModel || "");
+        setFbReasoning(d.textFallbackReasoning || "auto");
         setAudioModel(d.audioModel);
         setLiveModel(d.liveModel);
         setVoice(d.defaultVoice);
+      }
+      if (oauthRes.ok) {
+        const s = await oauthRes.json();
+        setChatGptConnected(s?.connected === true);
       }
       await loadModels();
     })();
@@ -122,7 +278,18 @@ function WebappModelsCard() {
     setMsg(null);
     const res = await api("/api/admin/ai/webapp-config", {
       method: "PUT",
-      body: JSON.stringify({ textModel, audioModel, liveModel, defaultVoice: voice }),
+      body: JSON.stringify({
+        textModel,
+        textProvider,
+        // "" clears server-side; only ChatGPT carries a reasoning level.
+        textReasoning: textProvider === "openai" ? textReasoning || "auto" : "",
+        textFallbackProvider: fbProvider || "",
+        textFallbackModel: fbProvider ? fbModel : "",
+        textFallbackReasoning: fbProvider === "openai" ? fbReasoning || "auto" : "",
+        audioModel,
+        liveModel,
+        defaultVoice: voice,
+      }),
     });
     setBusy(false);
     if (res.ok) {
@@ -135,16 +302,39 @@ function WebappModelsCard() {
   }
 
   // Text = chat-capable models minus the specialized ones; Voice = the TTS models; Live = bidi models.
-  const textOptions = withCurrent(
-    chatModels.filter((m) => !/(tts|embedding|image|imagen|aqa)/i.test(m.id)),
-    textModel,
-  );
+  const geminiTextOpts: TextOpt[] = chatModels
+    .filter((m) => !/(tts|embedding|image|imagen|aqa)/i.test(m.id))
+    .map((m) => ({ provider: "gemini", id: m.id, name: m.name }));
   const audioOptions = withCurrent(chatModels.filter((m) => /tts/i.test(m.id)), audioModel);
   const liveOptions = withCurrent(liveModels, liveModel);
 
+  // Pick the reasoning valid for a newly chosen ChatGPT model (keep the current one if still supported).
+  function reasoningForOpenAiModel(modelId: string, current: string): string {
+    const lv = openaiModels.find((o) => o.id === modelId)?.reasoningLevels ?? [];
+    return current && current !== "auto" && lv.includes(current) ? current : "auto";
+  }
+
+  function onPrimaryModel(p: string, m: string) {
+    setTextProvider(p);
+    setTextModel(m);
+    setTextReasoning(p === "openai" ? reasoningForOpenAiModel(m, textReasoning) : "auto");
+  }
+
+  function onFallbackModel(p: string, m: string) {
+    setFbProvider(p);
+    setFbModel(m);
+    setFbReasoning(p === "openai" ? reasoningForOpenAiModel(m, fbReasoning) : "auto");
+  }
+
+  const fallbackIncomplete = !!fbProvider && !fbModel;
   const dirty =
     !!cfg &&
     (textModel !== cfg.textModel ||
+      textProvider !== (cfg.textProvider || "gemini") ||
+      normReason(textReasoning) !== normReason(cfg.textReasoning) ||
+      (fbProvider || "") !== (cfg.textFallbackProvider || "") ||
+      (fbModel || "") !== (cfg.textFallbackModel || "") ||
+      normReason(fbReasoning) !== normReason(cfg.textFallbackReasoning) ||
       audioModel !== cfg.audioModel ||
       liveModel !== cfg.liveModel ||
       voice !== cfg.defaultVoice);
@@ -152,29 +342,50 @@ function WebappModelsCard() {
   return (
     <Card
       title="Webapp AI models"
-      subtitle="Which Gemini models power the public /webapp chat (it's keyless — users don't pick)."
+      subtitle="Which models power the public /webapp chat (it's keyless — users don't pick)."
     >
       <div className="space-y-4">
         <Banner kind="info">
-          The <strong>/webapp</strong> uses your pooled Gemini keys, so these choices spend{" "}
-          <strong>your</strong> quota. Pick capable but cost-appropriate models. Lists load from your Gemini
-          keys; a saved value that isn&rsquo;t in the list still shows so it&rsquo;s never lost.
+          The <strong>/webapp</strong> uses your pooled Gemini keys (and, for ChatGPT, your connected
+          account), so these choices spend <strong>your</strong> quota. Pick capable but cost-appropriate
+          models. Lists load from your keys; a saved value that isn&rsquo;t in the list still shows so it&rsquo;s
+          never lost.
         </Banner>
 
-        <label className="block">
-          <span className="text-sm font-medium">Text model</span>
-          <div className="mt-1">
-            <Select value={textModel} onChange={setTextModel} disabled={busy || loadingModels}>
-              {loadingModels && textOptions.length === 0 && <option value="">Loading…</option>}
-              {textOptions.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </Select>
-          </div>
-          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
-            Powers text chat, transcription, and memory extraction.
+        <div className="space-y-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
+          <TextModelRow
+            label="Text model — primary"
+            loading={loadingModels}
+            geminiOpts={geminiTextOpts}
+            openaiOpts={openaiModels}
+            chatGptConnected={chatGptConnected}
+            provider={textProvider}
+            model={textModel}
+            reasoning={textReasoning}
+            onSelectModel={onPrimaryModel}
+            onSelectReasoning={setTextReasoning}
+            disabled={busy || loadingModels}
+          />
+          <TextModelRow
+            label="Text model — fallback"
+            allowNone
+            loading={loadingModels}
+            geminiOpts={geminiTextOpts}
+            openaiOpts={openaiModels}
+            chatGptConnected={chatGptConnected}
+            provider={fbProvider}
+            model={fbModel}
+            reasoning={fbReasoning}
+            onSelectModel={onFallbackModel}
+            onSelectReasoning={setFbReasoning}
+            disabled={busy || loadingModels}
+          />
+          <span className="block text-xs text-black/55 dark:text-white/55">
+            Powers text chat, transcription, and memory extraction. Each can be Gemini or ChatGPT; the fallback
+            is used if the primary is unavailable. The keyless webapp calls Gemini directly, so it uses your
+            first Gemini choice (primary if it&rsquo;s Gemini, otherwise the Gemini fallback).
           </span>
-        </label>
+        </div>
 
         <label className="block">
           <span className="text-sm font-medium">Voice (speech) model</span>
@@ -234,7 +445,10 @@ function WebappModelsCard() {
         {msg && <Banner kind={msg.kind}>{msg.text}</Banner>}
 
         <div className="flex items-center gap-2">
-          <Button onClick={save} disabled={busy || !dirty || !textModel || !audioModel || !liveModel}>
+          <Button
+            onClick={save}
+            disabled={busy || !dirty || !textModel || !audioModel || !liveModel || fallbackIncomplete}
+          >
             Save
           </Button>
           <Button variant="ghost" size="sm" onClick={loadModels} disabled={busy || loadingModels}>
