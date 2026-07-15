@@ -9,7 +9,7 @@ import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServe
 import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
-import { CAPABILITY_BOUNDS } from "./persona";
+import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
@@ -271,6 +271,7 @@ export class LiveSession {
           // The user's chosen response style for calls (empty on default) — layered after the base
           // voice persona so it refines tone without dropping the "short and spoken" baseline.
           this.styleInstruction || "",
+          CONFIDENTIALITY,
           CAPABILITY_BOUNDS,
           // Steer the spoken reply into the selected UI language (empty for English).
           aiReplyDirective(this.language),

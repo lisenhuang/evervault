@@ -16,7 +16,7 @@ import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } fro
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
-import { CAPABILITY_BOUNDS } from "./lib/persona";
+import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA, type SuggestionImage } from "./lib/suggestionTool";
@@ -414,6 +414,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         renderAgendaBlock(tasksRef.current),
         langDirective,
         styleDir,
+        CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
         MEMORY_PERSONA,
         TASKS_PERSONA,
@@ -435,7 +436,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onDelta(delta);
       }
     } else {
-      const sys = [langDirective, styleDir, CAPABILITY_BOUNDS, SUGGESTION_PERSONA, currentTimeContext()]
+      const sys = [langDirective, styleDir, CONFIDENTIALITY, CAPABILITY_BOUNDS, SUGGESTION_PERSONA, currentTimeContext()]
         .filter(Boolean)
         .join("\n\n");
       const tools = [{ functionDeclarations: [RECORD_SUGGESTION_DECLARATION] }];
