@@ -2,6 +2,9 @@
 // encodes 16 kHz mono PCM16 WAV (a format Gemini reliably accepts) as base64. Playback decodes the
 // PCM16 that Gemini TTS returns. No audio ever passes through our server.
 
+import { setAudioSessionType } from "./liveAudio";
+import { acquireMicStream } from "./mic";
+
 type AudioCtor = typeof AudioContext;
 function getAudioContext(): AudioContext {
   const Ctor: AudioCtor =
@@ -41,7 +44,20 @@ export type Recorder = {
 };
 
 export async function startRecording(): Promise<Recorder> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // iOS: pin the record-friendly audio session BEFORE acquiring the mic (mirrors MicStreamer.start).
+  // unlockAudioPlayback() and any just-played reply leave the session on a playback category; on iOS
+  // getUserMedia can then fail with no prompt unless we switch it to "play-and-record" first. No-op
+  // off iOS. Released back to "auto" if acquisition fails, and on cleanup once recording ends.
+  setAudioSessionType("play-and-record");
+  let stream: MediaStream;
+  try {
+    // acquireMicStream throws a typed MicError (unsupported / insecure / denied / notfound / inuse)
+    // so the caller can show an accurate message instead of a blanket "access was blocked".
+    stream = await acquireMicStream({ audio: true });
+  } catch (e) {
+    setAudioSessionType("auto"); // release the record session we optimistically pinned
+    throw e;
+  }
   const ctx = getAudioContext();
   const source = ctx.createMediaStreamSource(stream);
   const processor = ctx.createScriptProcessor(4096, 1, 1);
@@ -64,6 +80,7 @@ export async function startRecording(): Promise<Recorder> {
     source.disconnect();
     stream.getTracks().forEach((t) => t.stop());
     void ctx.close();
+    setAudioSessionType("auto"); // release the record session so a later reply plays back normally
   };
 
   return {

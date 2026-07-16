@@ -3,6 +3,7 @@
 // page, or provider JSON) never reaches the bubble; it goes into `detail` for the error report an
 // admin can look up by code in /admin/errors.
 import type { Messages } from "@/i18n/messages/en";
+import { isMicError } from "./mic";
 
 export type FriendlyAiError = {
   /** Localized message + reference code — safe to render. */
@@ -39,6 +40,30 @@ export function isNetworkError(e: unknown): boolean {
   if (typeof status === "number" && status !== 0) return false; // a real HTTP response came back
   const raw = e instanceof Error ? e.message : String(e ?? "");
   return NETWORK_ERROR_RE.test(raw);
+}
+
+/**
+ * Localized message for a microphone-acquisition failure, or null when `e` isn't a MicError (so the
+ * caller can fall through to {@link friendlyAiError}). Each reason maps to specific, actionable copy —
+ * an in-app browser that can't record gets "open in Safari/Chrome", a persisted block gets "enable it
+ * in settings" — instead of the old blanket "access was blocked" that had no prompt to act on.
+ */
+export function micErrorMessage(e: unknown, t: Messages): string | null {
+  if (!isMicError(e)) return null;
+  switch (e.reason) {
+    case "insecure":
+      return t.chat.micInsecure;
+    case "unsupported":
+      return t.chat.micUnsupported;
+    case "denied":
+      return t.chat.micBlocked;
+    case "notfound":
+      return t.chat.micNoDevice;
+    case "inuse":
+      return t.chat.micInUse;
+    default:
+      return t.chat.micGeneric;
+  }
 }
 
 export function newErrorCode(): string {
