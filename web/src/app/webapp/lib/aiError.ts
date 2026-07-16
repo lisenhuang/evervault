@@ -21,6 +21,26 @@ export type FriendlyAiError = {
 const ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_SHAPE = /^EV-[A-Z0-9]{4,16}$/;
 
+// A network-level failure (origin unreachable before any HTTP response) surfaces as a TypeError whose
+// message is browser-specific English. On iOS Safari a tab suspension produces the very same thing:
+// backgrounding the app tears down the in-flight request, which rejects with "Load failed" the moment
+// the page resumes. Shared by friendlyAiError (to classify it as "unreachable") and isNetworkError.
+const NETWORK_ERROR_RE =
+  /failed to fetch|networkerror|load failed|network request failed|the network connection was lost/i;
+
+/**
+ * True when `e` is a transport-level failure — a network TypeError with no HTTP response behind it
+ * (origin down, connection dropped, or an iOS tab-suspension kill). Distinguished from a real HTTP
+ * error, which always carries a numeric status. Callers use this to tell a retryable suspension kill
+ * apart from a genuine server error.
+ */
+export function isNetworkError(e: unknown): boolean {
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === "number" && status !== 0) return false; // a real HTTP response came back
+  const raw = e instanceof Error ? e.message : String(e ?? "");
+  return NETWORK_ERROR_RE.test(raw);
+}
+
 export function newErrorCode(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
@@ -77,8 +97,7 @@ export function friendlyAiError(e: unknown, t: Messages): FriendlyAiError {
   // A network-level failure (origin down before any HTTP response) surfaces as a TypeError whose
   // message is browser-specific English ("Failed to fetch" / "Load failed" / "NetworkError…") — treat
   // it as unreachable, not as text to show.
-  const networkError =
-    status === undefined && /failed to fetch|networkerror|load failed|network request failed/i.test(raw);
+  const networkError = status === undefined && NETWORK_ERROR_RE.test(raw);
   const busy =
     status === 429 || /resource_exhausted/i.test(raw) || parsed.statusText === "RESOURCE_EXHAUSTED";
   const gateway =

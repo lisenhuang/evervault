@@ -33,6 +33,7 @@ import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
 import { friendlyAiError } from "./lib/aiError";
 import { reportAiError } from "./lib/errorReport";
+import { runWithSuspensionRetry } from "./lib/suspensionRetry";
 import type { ChatMessage, ReplyRef } from "./types";
 import { useLang } from "@/i18n/LanguageProvider";
 import { aiReplyDirective } from "@/i18n/config";
@@ -661,9 +662,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true }]);
     setStreaming(true);
     try {
-      const preface = await ragPreface(text);
-      const contents = preface ? [preface, ...toContents(base)] : toContents(base);
-      const reply = await runAssistant(asstId, contents, false);
+      // Retry across an iOS tab suspension (see stopVoice): leaving the tab mid-reply kills the in-flight
+      // request, which rejects with "Load failed" on return. Re-run rather than error out. Each attempt
+      // rebuilds `contents` fresh — the tool loop appends to it — and re-runs RAG retrieval.
+      const reply = await runWithSuspensionRetry(async (attempt) => {
+        if (attempt > 0) {
+          setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
+        }
+        const preface = await ragPreface(text);
+        const contents = preface ? [preface, ...toContents(base)] : toContents(base);
+        return runAssistant(asstId, contents, false);
+      });
       if (files?.length) {
         // Record the turn so past attachments can be recalled: each file becomes a memory line that
         // states the user *sent* a file (type + name) plus whatever content we can extract — image
@@ -751,10 +760,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         serverChat && serverTranscript
           ? { role: "user", parts: [{ text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
           : { role: "user", parts: [{ inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
-      const contents: Content[] = [...toContents(messages), lastTurn];
       // Speak the reply too. TTS runs in the background (see runAssistant), so it doesn't hold the
       // composer's busy state — the voice button stays usable while the audio is being generated.
-      const reply = await runAssistant(asstId, contents, true);
+      // Retry across an iOS tab suspension: backgrounding the app mid-reply kills the in-flight request
+      // (it rejects with "Load failed" on return), so re-run the generation once the user is back instead
+      // of surfacing a bogus "server unreachable". The recorded audio is already captured, so each attempt
+      // just rebuilds `contents` fresh — the tool loop appends to that array, so it can't be reused as-is.
+      const reply = await runWithSuspensionRetry((attempt) => {
+        if (attempt > 0) {
+          setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
+        }
+        return runAssistant(asstId, [...toContents(messages), lastTurn], true);
+      });
       // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
       const transcript = await transcriptPromise; // already resolved in practice; never throws
       void recordTextTurns(
