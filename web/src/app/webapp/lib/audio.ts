@@ -35,13 +35,15 @@ function replyAudioElement(): HTMLAudioElement {
   return replyEl;
 }
 
-// A tiny (10 ms) silent WAV used to prime the reply element inside a user gesture — audible playback
-// permission is granted to the element without the user hearing anything. Built lazily, reusing the
+// A 1-second silent WAV, looped to prime the reply element inside a user gesture — audible playback
+// permission is granted to the element without the user hearing anything. A full second (rather than
+// a few ms) means looping it back to the start happens once a second instead of ~100×/s, so the
+// element stays cleanly "playing" across the seconds until the reply lands. Built lazily, reusing the
 // recorder's WAV encoder.
 let silentWavUri: string | null = null;
 function silentWav(): string {
   if (!silentWavUri) {
-    silentWavUri = `data:audio/wav;base64,${arrayBufferToBase64(encodeWav(new Float32Array(160), 16000))}`;
+    silentWavUri = `data:audio/wav;base64,${arrayBufferToBase64(encodeWav(new Float32Array(16000), 16000))}`;
   }
   return silentWavUri;
 }
