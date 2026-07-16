@@ -179,6 +179,8 @@ const ko: Messages = {
     cancelReply: "답장 취소",
     messageActions: "메시지 작업",
     jumpToMessage: "원본 메시지로 이동",
+    deleteTitle: "메시지를 삭제할까요?",
+    deleteConfirmMessage: "이 메시지가 채팅에서 삭제됩니다.",
   },
   settings: {
     title: "설정",
