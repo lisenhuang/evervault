@@ -9,6 +9,32 @@ function getAudioContext(): AudioContext {
   return new Ctor();
 }
 
+// A single AudioContext shared by every spoken voice-reply clip. iOS starts an AudioContext
+// "suspended" and only a USER GESTURE moves it to "running". The old approach — a brand-new context
+// per clip, closed when the clip ended — meant an auto-played reply (synthesized a few seconds after
+// the tap that triggered it) had no gesture to unlock its fresh context, so it played silently and
+// the user had to press "Play" on every reply. Keeping ONE context that stays "running" once unlocked
+// lets subsequent replies auto-play without their own tap. (Backgrounding the page suspends it again;
+// the next gesture — a "Play" tap or the mic press — re-unlocks it.)
+let sharedCtx: AudioContext | null = null;
+function sharedAudioContext(): AudioContext {
+  if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = getAudioContext();
+  return sharedCtx;
+}
+
+/**
+ * Unlock spoken-reply playback on iOS. Creates (once) and resumes the shared AudioContext. Call it
+ * SYNCHRONOUSLY from inside a user gesture (a click/tap/press handler, before any `await`) so iOS
+ * grants the unlock; once unlocked the context stays "running", so later voice replies can auto-play
+ * without a gesture of their own. Safe to call repeatedly, and a harmless no-op off iOS / when already
+ * running. Best-effort: if the platform declines the resume, playback simply falls back to the manual
+ * "Play" tap (which unlocks the same context), so no reply is ever left permanently silent.
+ */
+export function unlockAudioPlayback(): void {
+  const ctx = sharedAudioContext();
+  if (ctx.state !== "running") void ctx.resume();
+}
+
 export type Recorder = {
   stop: () => Promise<{ base64: string; mimeType: string }>;
   cancel: () => void;
@@ -55,10 +81,16 @@ export async function startRecording(): Promise<Recorder> {
 }
 
 /**
- * Play base64 PCM16 (mono) and return a handle to control it. `ended` resolves when playback
- * finishes naturally OR is stopped (never on pause). `pause()`/`resume()` halt and continue the
- * context clock, so playback picks back up at the exact same sample. Start from a user gesture;
- * resume() is also gesture-driven (a click), so it's allowed even under iOS autoplay policy.
+ * Play base64 PCM16 (mono) through the shared, gesture-unlocked AudioContext and return a handle to
+ * control it. Reusing ONE context (see {@link unlockAudioPlayback}) — rather than a fresh one per clip
+ * — is what lets a reply auto-play on iOS: once the context has been resumed inside a gesture (the mic
+ * press, or the first "Play" tap), it stays "running", so the next clip can start without its own tap.
+ * `ended` resolves when playback finishes naturally OR is stopped (never on pause). `pause()`/`resume()`
+ * suspend and continue the context clock, so playback picks back up at the exact same sample.
+ *
+ * Only one reply clip plays at a time (the caller stops the prior handle before starting a new one), so
+ * suspending the whole shared context to pause is safe. The context is deliberately left open when a
+ * clip ends — only the source node is torn down — so it stays unlocked for whatever plays next.
  */
 export function playPcm16Handle(
   base64: string,
@@ -67,7 +99,11 @@ export function playPcm16Handle(
   const bytes = base64ToUint8(base64);
   const samples = Math.floor(bytes.byteLength / 2);
   const view = new DataView(bytes.buffer);
-  const ctx = getAudioContext();
+  const ctx = sharedAudioContext();
+  // Resume in case this call is the unlocking gesture, or a previous clip left the context suspended
+  // (paused). Outside a gesture on a still-locked context this stays pending — the clip then plays once
+  // a later gesture unlocks the context, matching the old "first one is silent until you tap" behavior.
+  void ctx.resume();
   const buffer = ctx.createBuffer(1, samples, sampleRate);
   const channel = buffer.getChannelData(0);
   for (let i = 0; i < samples; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
@@ -76,19 +112,27 @@ export function playPcm16Handle(
   src.buffer = buffer;
   src.connect(ctx.destination);
 
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    void ctx.close();
-  };
+  let done = false;
+  let resolveEnded: () => void = () => {};
   const ended = new Promise<void>((resolve) => {
-    src.onended = () => {
-      close();
-      resolve();
-    };
-    src.start();
+    resolveEnded = resolve;
   });
+  // Settle exactly once — on natural end OR an explicit stop — and tear down just the source, leaving
+  // the shared context open (and unlocked) for the next clip. Resolving here rather than relying on
+  // `onended` means a stop() while the context is suspended still settles `ended` immediately.
+  const finish = () => {
+    if (done) return;
+    done = true;
+    try {
+      src.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    resolveEnded();
+  };
+  src.onended = finish;
+  src.start();
+
   return {
     stop: () => {
       try {
@@ -96,15 +140,15 @@ export function playPcm16Handle(
       } catch {
         /* already stopped */
       }
-      close();
+      finish();
     },
-    // Suspend/resume the whole context — playback halts and later continues from the exact sample.
-    // Safe to call redundantly (state-guarded); no-op once the clip has ended and closed the context.
+    // Suspend/resume the shared context — playback halts and later continues from the exact sample.
+    // State-guarded so redundant calls are no-ops, and skipped once the clip has finished.
     pause: () => {
-      if (!closed && ctx.state === "running") void ctx.suspend();
+      if (!done && ctx.state === "running") void ctx.suspend();
     },
     resume: () => {
-      if (!closed && ctx.state === "suspended") void ctx.resume();
+      if (!done && ctx.state === "suspended") void ctx.resume();
     },
     ended,
   };
