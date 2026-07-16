@@ -421,17 +421,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // playback anyway); the reply's "Play" button covers that case.
   const applyVoiceAudio = useCallback(
     (asstId: string, audio: VoiceReplyAudio) => {
-      let applied = false;
+      // Decide whether this clip should auto-play from the ref, NOT from a flag set inside the
+      // setMessages updater: React may defer running the updater (it batches state updates from
+      // async contexts like this poll callback), and a deferred updater would leave the flag false
+      // here — silently skipping the auto-play and releasing the priming loop for nothing. The ref
+      // always reflects the latest committed messages, so the decision is deterministic.
+      const target = messagesRef.current.find((m) => m.id === asstId);
+      const shouldApply = !!target && !!target.pendingAudio && !target.audio;
       setMessages((cur) =>
-        cur.map((m) => {
-          if (m.id === asstId && m.pendingAudio && !m.audio) {
-            applied = true;
-            return { ...m, streaming: false, pendingAudio: false, audio };
-          }
-          return m;
-        }),
+        cur.map((m) =>
+          m.id === asstId && m.pendingAudio && !m.audio
+            ? { ...m, streaming: false, pendingAudio: false, audio }
+            : m,
+        ),
       );
-      if (applied && typeof document !== "undefined" && document.visibilityState === "visible") {
+      if (shouldApply && typeof document !== "undefined" && document.visibilityState === "visible") {
         playAudioClip(asstId, audio.base64, audio.sampleRate);
       } else {
         // The clip won't auto-play (hidden tab, or it was already resolved/deleted) — stop the silent

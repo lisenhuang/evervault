@@ -160,24 +160,32 @@ export async function startRecording(): Promise<Recorder> {
 }
 
 /**
- * Play base64 PCM16 (mono) as a voice reply through the persistent, gesture-primed reply element
- * (see {@link unlockAudioPlayback}) and return a handle to control it. The PCM16 is wrapped in a WAV
- * header (no re-encoding) and handed to the element as a blob URL — the element renegotiates the
- * output route per play(), which is what makes replies audible again right after microphone capture,
- * where a Web Audio context would come out silently broken.
+ * Play base64 PCM16 (mono) as a voice reply and return a handle to control it. Two playback paths:
  *
- * `ended` resolves when playback finishes naturally, is stopped, or fails to start (never on pause) —
- * a failed auto-play (e.g. the element was never primed after a page reload) settles immediately, so
- * the bubble falls back to its normal "Play" button, whose tap plays this same element inside a
- * gesture. `pause()`/`resume()` map to the element's native pause/play, which keep position exactly.
- * Only one reply clip plays at a time (the caller stops the prior handle before starting a new one).
+ * 1. The persistent, gesture-primed reply element (see {@link unlockAudioPlayback}): the PCM16 is
+ *    wrapped in a WAV header (no re-encoding) and handed to the element as a blob URL. The element
+ *    renegotiates the output route per play(), which is what makes replies audible right after
+ *    microphone capture, and it sounds through the hardware Silent switch.
+ * 2. If the element's play() is REFUSED — some iOS browsers (notably in-app/WKWebView ones) demand a
+ *    fresh user tap for every media-element play, which no priming can satisfy — the clip immediately
+ *    falls back to the Web Audio API: a fresh AudioContext created now, at reply time, when capture is
+ *    long torn down and the session has settled. Those same browsers generally leave Web Audio
+ *    unrestricted, so the reply still auto-plays. The fallback verifies the context clock actually
+ *    advances; if it doesn't (e.g. Safari proper refusing an un-gestured context), it settles.
+ *
+ * `ended` resolves when playback finishes naturally, is stopped, or fails to start on BOTH paths
+ * (never on pause) — so a genuinely blocked auto-play still ends with the bubble's normal "Play"
+ * button, whose tap plays the element inside a gesture (allowed everywhere). `pause()`/`resume()`
+ * map to the active path's native pause/continue and keep position. Only one reply clip plays at a
+ * time (the caller stops the prior handle before starting a new one).
  */
 export function playPcm16Handle(
   base64: string,
   sampleRate: number,
 ): { stop: () => void; pause: () => void; resume: () => void; ended: Promise<void> } {
   const el = replyAudioElement();
-  const url = URL.createObjectURL(pcm16ToWavBlob(base64ToUint8(base64), sampleRate));
+  const pcmBytes = base64ToUint8(base64); // decoded once; used by the blob AND the Web Audio fallback
+  const url = URL.createObjectURL(pcm16ToWavBlob(pcmBytes, sampleRate));
   // Claim the element: end the silent priming loop (the element is ideally still playing it — that's
   // what lets this src swap + play() proceed without a fresh gesture) and take ownership.
   clearTimeout(primeCapTimer);
@@ -185,6 +193,12 @@ export function playPcm16Handle(
   replyClipUrl = url;
 
   let done = false;
+  // Mirrors the caller's pause intent across both paths, so the fallback's late start (or its verify
+  // timer) can't audibly override a pause the user already requested.
+  let pauseRequested = false;
+  // Set once the Web Audio fallback takes over; the element is released at that point.
+  let waCtx: AudioContext | null = null;
+  let waSrc: AudioBufferSourceNode | null = null;
   let resolveEnded: () => void = () => {};
   const ended = new Promise<void>((resolve) => {
     resolveEnded = resolve;
@@ -193,38 +207,91 @@ export function playPcm16Handle(
   // the src (the caller stops the old handle first, but late events can still race) must not have the
   // element paused or its state clobbered from under it by a stale handle.
   const ownsElement = () => el.currentSrc === url || el.src === url;
-  // Settle exactly once — natural end, stop(), or a start failure — then release the element and the
-  // blob URL. The element itself stays alive (and gesture-primed) for the next clip.
-  const finish = () => {
-    if (done) return;
-    done = true;
+  const releaseElement = () => {
     if (ownsElement()) {
       el.pause();
       el.onended = null;
       el.onerror = null;
       replyClipUrl = null;
     }
+  };
+  // Settle exactly once — natural end, stop(), or a start failure on both paths — then release
+  // whichever path was active. The element itself stays alive (and gesture-primed) for the next clip.
+  const finish = () => {
+    if (done) return;
+    done = true;
+    releaseElement();
+    if (waSrc) {
+      try {
+        waSrc.stop();
+        waSrc.disconnect();
+      } catch {
+        /* already stopped */
+      }
+    }
+    if (waCtx) void waCtx.close();
     URL.revokeObjectURL(url);
     resolveEnded();
+  };
+
+  // The element refused to start (policy veto — e.g. an in-app browser requiring a tap per play).
+  // Replay the same clip through a fresh AudioContext: created NOW, at reply time, it postdates all
+  // capture teardown, and Web Audio start is not gated by the media-element autoplay policy in the
+  // browsers that veto path 1. Runs in-gesture too when a tap-play somehow fails, where the resume()
+  // is trivially allowed.
+  const webAudioFallback = () => {
+    if (done) return;
+    releaseElement(); // hand the element back; this clip now lives on the fallback context
+    const ctx = getAudioContext();
+    waCtx = ctx;
+    void ctx.resume().catch(() => {/* stays suspended — the verify below settles the handle */});
+    const samples = Math.floor(pcmBytes.byteLength / 2);
+    const view = new DataView(pcmBytes.buffer);
+    const buffer = ctx.createBuffer(1, samples, sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
+    const src = ctx.createBufferSource();
+    waSrc = src;
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    src.onended = finish;
+    src.start();
+    // Verify the context is genuinely rendering: a running context's clock advances every few ms, so
+    // a still-frozen clock means this platform refused the un-gestured start (or the context is
+    // broken) — settle, and the bubble's Play button takes over. Skipped while the user has paused.
+    const startClock = ctx.currentTime;
+    setTimeout(() => {
+      if (done || pauseRequested) return;
+      if (ctx.state === "running" && ctx.currentTime > startClock) return; // audibly under way
+      finish();
+    }, 350);
   };
 
   el.onended = finish;
   el.onerror = finish;
   el.src = url;
   const p = el.play();
-  // A rejected play (not primed / platform veto) settles `ended` right away: the caller's playing
-  // state clears and the bubble's "Play" button becomes the gesture that retries this clip fresh.
-  if (p) p.catch(finish);
+  if (p) p.then(undefined, webAudioFallback);
 
   return {
     stop: finish,
-    // Native element pause/resume — position is kept by the element, so resume continues exactly
-    // where pause left off. Guarded so calls after finish (or from a stale handle) are no-ops.
+    // Pause/continue on whichever path is active — both keep position. Guarded so calls after finish
+    // (or from a stale handle) are no-ops.
     pause: () => {
-      if (!done && ownsElement()) el.pause();
+      if (done) return;
+      pauseRequested = true;
+      if (waCtx) {
+        if (waCtx.state === "running") void waCtx.suspend();
+      } else if (ownsElement()) {
+        el.pause();
+      }
     },
     resume: () => {
-      if (!done && ownsElement()) {
+      if (done) return;
+      pauseRequested = false;
+      if (waCtx) {
+        if (waCtx.state === "suspended") void waCtx.resume();
+      } else if (ownsElement()) {
         const rp = el.play();
         if (rp) rp.catch(() => {/* resume declined — stays paused; the next tap retries */});
       }
