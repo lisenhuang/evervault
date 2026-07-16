@@ -9,7 +9,7 @@ import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
+import { playPcm16Handle, refreshAudioPlayback, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
@@ -42,6 +42,10 @@ const uid = () => crypto.randomUUID();
 
 /** Small await-able delay, used by the voice-reply poll loop. */
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Recordings shorter than this are discarded instead of sent: a blink-quick tap-tap holds no speech,
+// and transcribing/answering near-empty audio produces nonsense that derails the conversation.
+const MIN_VOICE_MESSAGE_SECONDS = 0.5;
 
 // One attachment as a Gemini part: images/PDFs go inline; extracted documents go as delimited text.
 function fileToPart(f: PreparedFile) {
@@ -756,12 +760,26 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const rec = recorderRef.current;
     if (!rec) return;
     recorderRef.current = null;
+    // A stray clip (e.g. a slow previous reply that landed mid-recording) must not keep talking over
+    // the send — and rec.stop()'s cleanup rebuilds the shared playback context (refreshAudioPlayback),
+    // which mustn't be yanked out from under a clip that's still holding it.
+    stopReplyAudio();
     setVoiceState("processing");
     setStreaming(true);
     const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
     const asstId = uid();
     try {
-      const { base64, mimeType } = await rec.stop();
+      const { base64, mimeType, seconds } = await rec.stop();
+      // A blink-quick tap-tap captures no usable speech. Sent anyway, the transcription model answers
+      // the silence with its own prompt ("Please provide the audio file…"), which lands in the user's
+      // bubble and derails the conversation — drop the recording with a hint instead.
+      if (seconds < MIN_VOICE_MESSAGE_SECONDS) {
+        setMessages((cur) => [
+          ...cur,
+          { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true },
+        ]);
+        return; // finally() below resets the composer state
+      }
       const base = [...messages, userMsg];
       // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready
       // (see runAssistant), so the text doesn't appear ahead of the slower voice.
@@ -970,6 +988,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveRef.current = null;
     finishCall();
     await s?.stop();
+    // The call held the mic, which can leave the pre-capture shared reply context broken (see
+    // refreshAudioPlayback) — rebuild it once the mic is released. stop() is quick, so this still
+    // usually falls inside the End tap's activation window and the new context comes up unlocked;
+    // if not, the next Play tap resumes it.
+    refreshAudioPlayback();
     setCallState(null);
   }
 
@@ -1010,6 +1033,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (callState !== "closed" && callState !== "error") return;
     void liveRef.current?.stop();
     liveRef.current = null;
+    refreshAudioPlayback(); // the call held the mic — rebuild the shared reply context (best-effort, no gesture here)
     finishCall(); // log the duration once; no-ops if End already handled it or the call never connected
     if (callState === "closed") {
       if (callIdleClosed) {
