@@ -779,8 +779,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const asstId = uid();
     try {
       const { base64, mimeType, seconds } = await rec.stop();
-      // Capture teardown (inside rec.stop) can pause the priming loop — re-kick it now, still within
-      // the stop tap's activation, so the element is playing silence when the reply's audio lands.
+      // rec.stop() released the mic and reset the session to "auto". Pin it to "playback" NOW and
+      // hold it there through the reply: the priming loop (re-kicked just below) and the reply clip
+      // that replaces it then play under ONE stable session. With no session reconfiguration at reply
+      // time, the silently-looping element stays cleanly "playing", so the deferred auto-play is
+      // treated as a continuation and isn't re-locked. Still within the stop tap's activation window.
+      setAudioSessionType("playback");
       unlockAudioPlayback();
       // A blink-quick tap-tap captures no usable speech. Sent anyway, the transcription model answers
       // the silence with its own prompt ("Please provide the audio file…"), which lands in the user's

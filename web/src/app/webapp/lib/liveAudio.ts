@@ -36,12 +36,21 @@ export function isIOS(): boolean {
  *    Silent switch mutes. Restoring "auto" after a call/clip releases the override, so later media
  *    playback isn't stuck at call volume/routing (WebKit keeps a non-"auto" type as a hard override
  *    for the page's lifetime).
+ *
+ * Redundant sets are skipped: re-assigning the SAME type still reconfigures the iOS audio session,
+ * which can interrupt a currently-playing media element (e.g. the silent loop that keeps reply
+ * auto-play unlocked — see unlockAudioPlayback in audio.ts). Only a genuine change is applied.
  */
+let currentAudioSessionType: "play-and-record" | "playback" | "auto" | null = null;
 export function setAudioSessionType(type: "play-and-record" | "playback" | "auto") {
   if (!isIOS()) return;
+  if (type === currentAudioSessionType) return; // already on this category — don't reconfigure
   try {
     const nav = navigator as Navigator & { audioSession?: { type: string } };
-    if (nav.audioSession) nav.audioSession.type = type;
+    if (nav.audioSession) {
+      nav.audioSession.type = type;
+      currentAudioSessionType = type;
+    }
   } catch {
     /* experimental API — ignore */
   }
