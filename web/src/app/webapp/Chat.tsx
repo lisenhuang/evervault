@@ -13,6 +13,7 @@ import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
+import { fetchVoiceReply, startVoiceReply, type VoiceReplyAudio } from "./lib/voiceReply";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { setAudioSessionType } from "./lib/liveAudio";
@@ -37,6 +38,9 @@ import { useLang } from "@/i18n/LanguageProvider";
 import { aiReplyDirective } from "@/i18n/config";
 
 const uid = () => crypto.randomUUID();
+
+/** Small await-able delay, used by the voice-reply poll loop. */
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // One attachment as a Gemini part: images/PDFs go inline; extracted documents go as delimited text.
 function fileToPart(f: PreparedFile) {
@@ -387,6 +391,132 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const pickVoiceStyle = (v: ResponseStyle) => pickStyle("voice", v, store.setVoiceStyle, setVoiceStyle);
   const pickLiveStyle = (v: ResponseStyle) => pickStyle("live", v, store.setLiveStyle, setLiveStyle);
 
+  // --- Voice-message reply audio (synthesized server-side, resilient to a backgrounded tab) ---
+
+  // Replies whose audio a poll loop is already resolving, so the initial kickoff and the
+  // foreground-resume handler never spin up duplicate loops for the same reply.
+  const voiceResolveRef = useRef<Set<string>>(new Set());
+
+  // Attach a finished spoken clip to its reply and reveal the text. Guarded so a late arrival can't
+  // clobber a reply that was already resolved (or deleted). Auto-plays only when the tab is foreground —
+  // a clip that resolves while the user is away shouldn't play to no one (and iOS blocks un-gestured
+  // playback anyway); the reply's "Play" button covers that case.
+  const applyVoiceAudio = useCallback(
+    (asstId: string, audio: VoiceReplyAudio) => {
+      let applied = false;
+      setMessages((cur) =>
+        cur.map((m) => {
+          if (m.id === asstId && m.pendingAudio && !m.audio) {
+            applied = true;
+            return { ...m, streaming: false, pendingAudio: false, audio };
+          }
+          return m;
+        }),
+      );
+      if (applied && typeof document !== "undefined" && document.visibilityState === "visible") {
+        playAudioClip(asstId, audio.base64, audio.sampleRate);
+      }
+    },
+    [playAudioClip],
+  );
+
+  // Give up on a reply's spoken audio: reveal its text without a clip (the same end state a TTS failure
+  // has always produced). No-op once the reply is no longer waiting on audio.
+  const revealWithoutAudio = useCallback((asstId: string) => {
+    setMessages((cur) =>
+      cur.map((m) => (m.id === asstId && m.pendingAudio ? { ...m, streaming: false, pendingAudio: false } : m)),
+    );
+  }, []);
+
+  // Compatibility fallback for a backend without the server-side endpoint (or a failed kickoff): synthesize
+  // in the browser, exactly as before. This path is still killed by backgrounding — it's a shim, not the
+  // fix — but it keeps a foreground voice reply working against any backend during a rollout.
+  const clientSideSynthesize = useCallback(
+    async (asstId: string, text: string, voice: string) => {
+      try {
+        applyVoiceAudio(asstId, await synthesizeSpeech(audioModel, text, voice));
+      } catch {
+        revealWithoutAudio(asstId);
+      }
+    },
+    [audioModel, applyVoiceAudio, revealWithoutAudio],
+  );
+
+  // Drive a reply's spoken audio to completion: ask the backend to synthesize it (server-side, so it
+  // finishes even while the tab is backgrounded), then poll until the clip is ready. Only FOREGROUND time
+  // counts against the attempt budget — a suspended tab freezes this loop, and the time the user was away
+  // must not be spent as wasted attempts. Guarded so the initial call and the resume handler share one loop.
+  const ensureVoiceReplyAudio = useCallback(
+    async (asstId: string, text: string) => {
+      if (!text.trim()) {
+        revealWithoutAudio(asstId);
+        return;
+      }
+      if (voiceResolveRef.current.has(asstId)) return;
+      voiceResolveRef.current.add(asstId);
+      try {
+        const voice = store.getVoice();
+        if (!(await startVoiceReply(asstId, text, voice))) {
+          // Endpoint missing / request failed → in-browser fallback so the reply still gets a voice.
+          await clientSideSynthesize(asstId, text, voice);
+          return;
+        }
+        let visibleAttempts = 0;
+        const maxVisibleAttempts = 75; // ~75s of FOREGROUND polling; a synthesis normally lands in a few
+        for (;;) {
+          const msg = messagesRef.current.find((m) => m.id === asstId);
+          if (!msg || !msg.pendingAudio || msg.audio) return; // resolved, deleted, or chat cleared
+          if (typeof document !== "undefined" && document.hidden) {
+            await sleep(1000); // tab suspended — wait without spending the budget
+            continue;
+          }
+          const res = await fetchVoiceReply(asstId);
+          if (res.status === "ready") {
+            applyVoiceAudio(asstId, { base64: res.base64, sampleRate: res.sampleRate });
+            return;
+          }
+          if (res.status === "failed") {
+            revealWithoutAudio(asstId);
+            return;
+          }
+          if (res.status === "unknown") await startVoiceReply(asstId, text, voice); // lost/swept — re-kick
+          if (++visibleAttempts >= maxVisibleAttempts) {
+            revealWithoutAudio(asstId);
+            return;
+          }
+          await sleep(1000);
+        }
+      } catch {
+        revealWithoutAudio(asstId);
+      } finally {
+        voiceResolveRef.current.delete(asstId);
+      }
+    },
+    [applyVoiceAudio, revealWithoutAudio, clientSideSynthesize],
+  );
+
+  // When the tab returns to the foreground, re-drive any spoken reply still waiting on its audio. This is
+  // the recovery path for the bug being fixed: the user fired a voice message, backgrounded the tab (which
+  // froze the in-page poll loop), and returned — the audio was synthesized server-side in the meantime, so
+  // fetch it now. `ensureVoiceReplyAudio` is guarded against duplicate loops, so firing alongside a
+  // still-running poll is harmless. Only "text done, audio pending" replies match (streaming already false).
+  useEffect(() => {
+    const resume = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      for (const m of messagesRef.current) {
+        if (m.role === "assistant" && m.pendingAudio && !m.audio && !m.streaming && !m.error) {
+          void ensureVoiceReplyAudio(m.id, m.text);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("pageshow", resume);
+    return () => {
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("pageshow", resume);
+    };
+  }, [ensureVoiceReplyAudio]);
+
   async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";
     const onDelta = (delta: string) => {
@@ -454,27 +584,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
     const finalText = acc || "_(no response)_";
     if (speak && acc) {
-      // Voice reply: hold the text behind the "typing" dots (the placeholder carries pendingAudio)
-      // until the spoken audio is ready, then reveal the text and auto-play — so the reply lands as
-      // text + voice together instead of the text racing ahead of the slower TTS. We keep the message
-      // flagged (streaming + pendingAudio) so the bubble stays on the dots while synthesis runs; the
-      // caller's busy state settles immediately, so the composer stays usable in the meantime.
-      setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: finalText } : m)));
-      void (async () => {
-        try {
-          const audio = await synthesizeSpeech(audioModel, acc, voice);
-          setMessages((cur) =>
-            cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, audio } : m)),
-          );
-          // Auto-play the moment the audio lands; the manual "Play reply" button stays for replay.
-          playAudioClip(asstId, audio.base64, audio.sampleRate);
-        } catch {
-          // TTS failed — drop the hold so the text still appears (just without spoken audio).
-          setMessages((cur) =>
-            cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false } : m)),
-          );
-        }
-      })();
+      // Voice reply: the text has fully streamed in, but keep it behind the "typing" dots (pendingAudio)
+      // until the spoken audio is ready, so the reply lands as text + voice together instead of the text
+      // racing ahead of the slower TTS. Synthesis runs SERVER-SIDE now (see ensureVoiceReplyAudio): the
+      // backend generates the voice on a worker that keeps going even if the tab is backgrounded — the
+      // exact case where the old in-page TTS was killed and the reply came back voiceless. Detached, so
+      // the caller settles immediately; `pendingAudio` alone keeps the composer disabled until it lands.
+      setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, streaming: false, text: finalText } : m)));
+      void ensureVoiceReplyAudio(asstId, acc);
     } else {
       setMessages((cur) =>
         cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, text: finalText } : m)),

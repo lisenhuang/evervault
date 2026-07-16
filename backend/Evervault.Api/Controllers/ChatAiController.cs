@@ -37,16 +37,18 @@ public class ChatAiController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IErrorReportService _errors;
     private readonly IAiCallLogService _callLog;
+    private readonly VoiceReplySynthesizer _voiceReplies;
 
     public ChatAiController(
         KeyFailoverRunner failover, GeminiProvider gemini, AppDbContext db,
-        IErrorReportService errors, IAiCallLogService callLog)
+        IErrorReportService errors, IAiCallLogService callLog, VoiceReplySynthesizer voiceReplies)
     {
         _failover = failover;
         _gemini = gemini;
         _db = db;
         _errors = errors;
         _callLog = callLog;
+        _voiceReplies = voiceReplies;
     }
 
     private int? Uid =>
@@ -76,6 +78,67 @@ public class ChatAiController : ControllerBase
         return Ok(new WebappConfigDto(
             WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
             WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider));
+    }
+
+    // --- Server-side voice-message reply audio ---
+    //
+    // The webapp's spoken reply is normally synthesized in the browser (TTS via the Gemini proxy) AFTER the
+    // text reply finishes. On iOS Safari, backgrounding the tab suspends the page and kills that in-flight
+    // request, so a user who fires a voice message and switches away returns to text with no voice. These two
+    // endpoints move synthesis server-side: the browser posts the finished reply text, we synthesize on a
+    // background worker that runs regardless of whether the tab is still open, and the client polls for the
+    // clip (right away, and again whenever it comes back to the foreground). Additive + keyless — the old
+    // client that never calls these keeps working unchanged.
+
+    public record VoiceReplyRequest(string? ReplyId, string? Text, string? Voice);
+
+    // Bound the synthesized text so one request can't queue an unbounded TTS job. Normal spoken replies are
+    // a few sentences; anything past this is clipped (the provider would reject a huge input anyway).
+    private const int MaxTtsChars = 8000;
+
+    /// <summary>Kick off server-side synthesis of a spoken reply. The browser supplies a client-generated
+    /// <c>replyId</c> (the assistant message id) plus the finished reply text and the chosen voice; we queue
+    /// the synthesis on a background worker and return immediately. Idempotent — re-posting the same replyId
+    /// just reads back the current status. 202 with <c>{status}</c> = pending | ready | failed.</summary>
+    [HttpPost("voice-reply")]
+    public async Task<IActionResult> StartVoiceReply([FromBody] VoiceReplyRequest req)
+    {
+        if (Uid is not int uid) return Unauthorized();
+
+        var replyId = (req.ReplyId ?? "").Trim();
+        var text = (req.Text ?? "").Trim();
+        if (replyId.Length is 0 or > 200) return BadRequest(new { error = "A valid replyId is required." });
+        if (text.Length == 0) return BadRequest(new { error = "No text to synthesize." });
+        if (text.Length > MaxTtsChars) text = text[..MaxTtsChars];
+
+        var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
+        var model = WebappAiDefaults.Audio(c);
+        var voice = string.IsNullOrWhiteSpace(req.Voice) ? WebappAiDefaults.VoiceOf(c) : req.Voice!.Trim();
+        if (voice.Length > 64) voice = voice[..64];
+
+        var status = _voiceReplies.Enqueue(uid, replyId, text, voice, model, UserAgent);
+        return StatusCode(StatusCodes.Status202Accepted, new { status = status.ToString().ToLowerInvariant(), replyId });
+    }
+
+    /// <summary>Poll a spoken reply's synthesis. <c>ready</c> carries the raw mono PCM16 as base64 plus its
+    /// sample rate (exactly what the browser's PCM player consumes); <c>pending</c> means keep waiting;
+    /// <c>failed</c> means synthesis gave up (the client reveals the text without audio); a 404 means we have
+    /// no record of it (never started, or swept — the client re-kicks).</summary>
+    [HttpGet("voice-reply/{replyId}")]
+    public IActionResult GetVoiceReply(string replyId)
+    {
+        if (Uid is not int uid) return Unauthorized();
+
+        var result = _voiceReplies.TryGet(uid, (replyId ?? "").Trim());
+        if (result is null) return NotFound(new { status = "unknown" });
+
+        return result.Status switch
+        {
+            VoiceReplySynthesizer.ReplyStatus.Ready =>
+                Ok(new { status = "ready", base64 = Convert.ToBase64String(result.Pcm!), sampleRate = result.SampleRate }),
+            VoiceReplySynthesizer.ReplyStatus.Failed => Ok(new { status = "failed" }),
+            _ => Ok(new { status = "pending" }),
+        };
     }
 
     // --- Server-side text chat (used when the primary text model isn't Gemini) ---
