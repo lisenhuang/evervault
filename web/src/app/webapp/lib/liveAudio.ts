@@ -41,7 +41,9 @@ export function isIOS(): boolean {
  * which can interrupt a currently-playing media element (e.g. the silent loop that keeps reply
  * auto-play unlocked — see unlockAudioPlayback in audio.ts). Only a genuine change is applied.
  */
-let currentAudioSessionType: "play-and-record" | "playback" | "auto" | null = null;
+// Starts as "auto" — the platform default — so a first set to "auto" is already a no-op and can't
+// reconfigure (and momentarily interrupt) audio that is just starting.
+let currentAudioSessionType: "play-and-record" | "playback" | "auto" = "auto";
 export function setAudioSessionType(type: "play-and-record" | "playback" | "auto") {
   if (!isIOS()) return;
   if (type === currentAudioSessionType) return; // already on this category — don't reconfigure

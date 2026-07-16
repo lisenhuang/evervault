@@ -9,7 +9,7 @@ import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { playPcm16Handle, releaseAudioPlayback, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
+import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
@@ -218,6 +218,24 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     playingAudioRef.current = null;
     setAudioPlaying(null);
     setAudioSessionType("auto");
+  }, []);
+
+  // Unlock spoken-reply auto-play at the user's FIRST gesture anywhere in the app. iOS removes the
+  // reply element's play-needs-a-gesture restriction only once a play actually BEGINS inside a
+  // gesture — and playback is interrupted while microphone capture is active or still settling, which
+  // is why priming only on the mic press / stop tap never registered (those are exactly the moments
+  // capture churn swallows it). The first tap in the app — opening the sidebar, focusing the composer,
+  // even the mic button's own pointerdown, which fires before capture starts — is clean, so the prime
+  // lands there. Listeners stay attached and retry on every gesture until one succeeds;
+  // unlockAudioPlayback is a no-op from then on (and while a real clip is playing).
+  useEffect(() => {
+    const prime = () => unlockAudioPlayback();
+    window.addEventListener("pointerdown", prime, { capture: true, passive: true });
+    window.addEventListener("keydown", prime, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", prime, { capture: true });
+      window.removeEventListener("keydown", prime, { capture: true });
+    };
   }, []);
 
   // Realtime voice call (Live API)
@@ -437,10 +455,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       );
       if (shouldApply && typeof document !== "undefined" && document.visibilityState === "visible") {
         playAudioClip(asstId, audio.base64, audio.sampleRate);
-      } else {
-        // The clip won't auto-play (hidden tab, or it was already resolved/deleted) — stop the silent
-        // priming loop; the bubble's "Play" button takes over from here.
-        releaseAudioPlayback();
       }
     },
     [playAudioClip],
@@ -449,7 +463,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Give up on a reply's spoken audio: reveal its text without a clip (the same end state a TTS failure
   // has always produced). No-op once the reply is no longer waiting on audio.
   const revealWithoutAudio = useCallback((asstId: string) => {
-    releaseAudioPlayback(); // no clip will claim the element — stop the silent priming loop
     setMessages((cur) =>
       cur.map((m) => (m.id === asstId && m.pendingAudio ? { ...m, streaming: false, pendingAudio: false } : m)),
     );
@@ -492,12 +505,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         const maxVisibleAttempts = 75; // ~75s of FOREGROUND polling; a synthesis normally lands in a few
         for (;;) {
           const msg = messagesRef.current.find((m) => m.id === asstId);
-          if (!msg || !msg.pendingAudio || msg.audio) {
-            // Resolved, deleted, or chat cleared. Release the priming loop for the deleted/cleared
-            // cases — a no-op when the resolved clip claimed the element (its own lifecycle rules it).
-            releaseAudioPlayback();
-            return;
-          }
+          if (!msg || !msg.pendingAudio || msg.audio) return; // resolved, deleted, or chat cleared
           if (typeof document !== "undefined" && document.hidden) {
             await sleep(1000); // tab suspended — wait without spending the budget
             continue;
@@ -760,7 +768,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       setVoiceState("recording");
     } catch (e) {
       setVoiceState("idle");
-      releaseAudioPlayback(); // recording never started — no reply is coming; stop the priming loop
       // startRecording throws a typed MicError; micErrorMessage turns each reason into specific,
       // actionable copy (unsupported browser, insecure context, blocked, no device, in use).
       const text = micErrorMessage(e, t) ?? t.chat.micGeneric;
@@ -783,18 +790,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const asstId = uid();
     try {
       const { base64, mimeType, seconds } = await rec.stop();
-      // rec.stop() released the mic and reset the session to "auto". Pin it to "playback" NOW and
-      // hold it there through the reply: the priming loop (re-kicked just below) and the reply clip
-      // that replaces it then play under ONE stable session. With no session reconfiguration at reply
-      // time, the silently-looping element stays cleanly "playing", so the deferred auto-play is
-      // treated as a continuation and isn't re-locked. Still within the stop tap's activation window.
+      // rec.stop() released the mic and reset the session to "auto". Pin it to "playback" now and
+      // hold it there through the reply, so the reply clip plays under a stable media session (and
+      // through the Silent switch). Then retry the one-shot unlock — still within the stop tap's
+      // activation window, and the first moment after capture where a prime can actually reach
+      // "playing" (a no-op if some earlier gesture already unlocked the element).
       setAudioSessionType("playback");
       unlockAudioPlayback();
       // A blink-quick tap-tap captures no usable speech. Sent anyway, the transcription model answers
       // the silence with its own prompt ("Please provide the audio file…"), which lands in the user's
       // bubble and derails the conversation — drop the recording with a hint instead.
       if (seconds < MIN_VOICE_MESSAGE_SECONDS) {
-        releaseAudioPlayback(); // nothing will be sent — no reply is coming; stop the priming loop
         setMessages((cur) => [
           ...cur,
           { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true },
@@ -849,7 +855,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         { audioBase64: base64 },
       );
     } catch (e) {
-      releaseAudioPlayback(); // the turn failed — no reply audio is coming; stop the priming loop
       const fe = friendlyAiError(e, t);
       reportAiError(fe, "chat.voice");
       setMessages((cur) => {
