@@ -70,6 +70,26 @@ and TTS always run on the pooled Gemini keys; only the *answer* follows the prim
                  Gemini TTS ─▶ 🔊 spoken reply + 💬 text
 ```
 
+### 🔊 Why the reply plays on its own (iOS)
+
+iOS lets a page play sound **without a tap** only after an `<audio>` element has *begun playing inside a
+gesture* — then it stays unlocked for its lifetime, even across new clips. The trap that made replies
+silent: playback is suppressed **while the mic is capturing**, so priming on the record/stop tap never
+took. Fix — unlock on the user's **first tap anywhere**, before any capture exists:
+
+```
+👆 first tap anywhere ──▶ 🔇 play 10 ms of silence ──▶ 🔓 element unlocked for good
+   (sidebar · composer · mic-press — never mid-capture)
+
+🔊 reply audio lands ──▶ el.play() ✅ auto-plays, no tap
+                            │ ❌ in-app webview still blocks it
+                            ▼
+                     🎛️ Web Audio replay ──❌──▶ ▶️ "Play reply" (always works)
+```
+
+> 🖥️ macOS never suppresses playback for capture, so it worked there all along — the unlock dance is
+> purely an iOS concern.
+
 ## 🔌 Ports
 
 | Port | Service | Exposed |
