@@ -26,77 +26,60 @@ let replyEl: HTMLAudioElement | null = null;
 // re-priming from clobbering an in-flight clip, and lets a stale handle detect it no longer owns the
 // element.
 let replyClipUrl: string | null = null;
+// True once ANY source has reached "playing" on the element inside a user gesture — the moment iOS
+// removes the element's play-needs-a-gesture restriction for good. Tracked via the element's own
+// "playing" event (which also fires when the user's first gesture is a manual "Play reply" tap), so
+// priming attempts stop as soon as one has actually succeeded.
+let elementUnlocked = false;
 
 function replyAudioElement(): HTMLAudioElement {
   if (!replyEl) {
     replyEl = new Audio();
     replyEl.preload = "auto";
+    replyEl.addEventListener("playing", () => {
+      elementUnlocked = true;
+    });
   }
   return replyEl;
 }
 
-// A 1-second silent WAV, looped to prime the reply element inside a user gesture — audible playback
-// permission is granted to the element without the user hearing anything. A full second (rather than
-// a few ms) means looping it back to the start happens once a second instead of ~100×/s, so the
-// element stays cleanly "playing" across the seconds until the reply lands. Built lazily, reusing the
+// A tiny (10 ms) silent WAV used to prime the reply element inside a user gesture — audible playback
+// permission is granted to the element without the user hearing anything. Built lazily, reusing the
 // recorder's WAV encoder.
 let silentWavUri: string | null = null;
 function silentWav(): string {
   if (!silentWavUri) {
-    silentWavUri = `data:audio/wav;base64,${arrayBufferToBase64(encodeWav(new Float32Array(16000), 16000))}`;
+    silentWavUri = `data:audio/wav;base64,${arrayBufferToBase64(encodeWav(new Float32Array(160), 16000))}`;
   }
   return silentWavUri;
 }
 
-// Backstop for the priming loop below: if no reply ever claims the element (the generation failed in
-// some path that forgot to release, or the tab sat idle), stop looping silence rather than playing it
-// forever. Generously above the reply pipeline's worst case (~75 s of polling plus synthesis time).
-const PRIME_LOOP_CAP_MS = 100_000;
-let primeCapTimer: ReturnType<typeof setTimeout> | undefined;
-
 /**
- * Keep spoken-reply playback unlocked on iOS by LOOPING a silent clip through the persistent reply
+ * Unlock spoken-reply playback on iOS by playing a 10 ms silent clip through the persistent reply
  * element. Call it SYNCHRONOUSLY from inside a user gesture (a click/tap handler, before any `await`).
+ * Once the clip actually reaches "playing", iOS removes the element's play-needs-a-gesture restriction
+ * for the element's lifetime — across src changes — so a reply arriving seconds later can el.play()
+ * with no gesture of its own.
  *
- * A one-shot silent prime is not enough: the mic press / stop tap immediately reconfigures the audio
- * session for capture, which can abort the 10 ms clip before it ever reaches "playing" — and iOS only
- * grants an element durable play permission once playback has actually begun inside the gesture.
- * Looping keeps the element *actively playing* (inaudibly) from the tap until the reply arrives;
- * swapping a new src into an already-playing element and calling play() is allowed without a fresh
- * gesture, so the reply auto-plays (see playPcm16Handle, which claims the element and ends the loop).
- *
- * Safe to call repeatedly (re-kicks the loop if capture churn paused it); a no-op while a real clip
- * owns the element. Callers on paths where no reply will arrive must call releaseAudioPlayback() so
- * the loop doesn't idle on; the cap timer is the backstop for anything missed. Best-effort: if the
- * platform still declines the later auto-play, the reply's "Play" button plays the same element
- * directly inside its own tap, so no reply is ever left unplayable.
+ * The catch that sank earlier attempts: playback is INTERRUPTED while microphone capture is active or
+ * still settling, so a prime attempted on the mic press or the stop tap could be swallowed before it
+ * ever began — and an unlock that never begins never registers. That's why Chat also primes on the
+ * user's FIRST gesture anywhere in the app (see the first-gesture listener there), which normally
+ * happens long before any capture; attempts keep retrying on later gestures until one lands, and the
+ * element's "playing" listener records the success. A no-op once unlocked, and while a real clip owns
+ * the element. Best-effort: if the platform still refuses the reply's auto-play, playPcm16Handle falls
+ * back to Web Audio, and the bubble's "Play" button remains the always-works path.
  */
 export function unlockAudioPlayback(): void {
+  if (elementUnlocked) return; // the restriction is already permanently removed — nothing to do
   if (replyClipUrl) return; // a clip is loaded/playing — don't replace its src
   const el = replyAudioElement();
   // Reassigning src reloads the element, so only do it when it isn't already on the silent clip (or
-  // needs the reload to clear an error) — repeated unlock calls then just re-kick play() on the loop.
+  // needs the reload to clear an error) — repeated attempts then just re-kick play().
   if (el.src !== silentWav() || el.error) el.src = silentWav();
-  el.loop = true;
+  el.loop = false;
   const p = el.play();
-  if (p) p.catch(() => {/* priming denied — the Play button remains the unlock path */});
-  clearTimeout(primeCapTimer);
-  primeCapTimer = setTimeout(releaseAudioPlayback, PRIME_LOOP_CAP_MS);
-}
-
-/**
- * Stop the silent priming loop (see {@link unlockAudioPlayback}) once it's known no reply will claim
- * the element: the recording failed or was discarded, the reply errored out or arrived without audio,
- * or it landed while the tab was hidden (where auto-play is skipped anyway). No-op while a real clip
- * owns the element — a claimed clip's own lifecycle releases it.
- */
-export function releaseAudioPlayback(): void {
-  if (replyClipUrl) return;
-  clearTimeout(primeCapTimer);
-  if (replyEl) {
-    replyEl.loop = false;
-    replyEl.pause();
-  }
+  if (p) p.catch(() => {/* denied (e.g. mid-capture) — a later gesture retries */});
 }
 
 export type Recorder = {
@@ -186,9 +169,7 @@ export function playPcm16Handle(
   const el = replyAudioElement();
   const pcmBytes = base64ToUint8(base64); // decoded once; used by the blob AND the Web Audio fallback
   const url = URL.createObjectURL(pcm16ToWavBlob(pcmBytes, sampleRate));
-  // Claim the element: end the silent priming loop (the element is ideally still playing it — that's
-  // what lets this src swap + play() proceed without a fresh gesture) and take ownership.
-  clearTimeout(primeCapTimer);
+  // Take ownership of the element (loop=false defends against any stray primer state).
   el.loop = false;
   replyClipUrl = url;
 
