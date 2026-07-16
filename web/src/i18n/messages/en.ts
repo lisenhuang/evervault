@@ -99,6 +99,7 @@ const en = {
     micNoDevice: "No microphone was found on this device.",
     micInUse: "Your microphone is being used by another app. Close it, then try again.",
     micGeneric: "Couldn't access the microphone. Please try again.",
+    recordingTooShort: "That recording was too short to send. Tap the mic, say your message, then tap stop.",
     aiUnreachable: "The server is temporarily unreachable — please try again in a moment.",
     aiBusy: "The AI is handling a lot of requests right now — please try again shortly.",
     aiFailedGeneric: "Something went wrong. Please try again.",

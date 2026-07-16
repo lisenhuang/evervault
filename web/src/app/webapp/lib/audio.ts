@@ -25,6 +25,29 @@ function sharedAudioContext(): AudioContext {
   return sharedCtx;
 }
 
+// Discard the shared context and start a fresh one. Used when the current context can no longer be
+// trusted to make sound (see refreshAudioPlayback and the watchdog in playPcm16Handle).
+function resetSharedAudioContext(): AudioContext {
+  if (sharedCtx && sharedCtx.state !== "closed") void sharedCtx.close();
+  sharedCtx = null;
+  return sharedAudioContext();
+}
+
+/**
+ * Rebuild the shared playback context after microphone capture ends. Opening the mic (a voice
+ * recording or a live call) makes iOS reconfigure the audio device — sample rate and route change for
+ * capture — and an AudioContext created BEFORE that reconfiguration can come out of it broken: still
+ * reporting "running", but with a frozen clock and silent output. Because it looks "running", resume()
+ * is a no-op and it never heals, leaving every reply clip mute — even on an explicit Play tap. A fresh
+ * context created after capture ends picks up the settled device config. Call this from within the
+ * gesture that ends capture (the stop-recording / End-call tap) so the new context comes up unlocked
+ * and the reply that follows can still auto-play.
+ */
+export function refreshAudioPlayback(): void {
+  const ctx = resetSharedAudioContext();
+  if (ctx.state !== "running") void ctx.resume();
+}
+
 /**
  * Unlock spoken-reply playback on iOS. Creates (once) and resumes the shared AudioContext. Call it
  * SYNCHRONOUSLY from inside a user gesture (a click/tap/press handler, before any `await`) so iOS
@@ -39,7 +62,8 @@ export function unlockAudioPlayback(): void {
 }
 
 export type Recorder = {
-  stop: () => Promise<{ base64: string; mimeType: string }>;
+  /** `seconds` is the captured duration — callers gate on it so a blink-quick tap-tap isn't sent. */
+  stop: () => Promise<{ base64: string; mimeType: string; seconds: number }>;
   cancel: () => void;
 };
 
@@ -81,6 +105,10 @@ export async function startRecording(): Promise<Recorder> {
     stream.getTracks().forEach((t) => t.stop());
     void ctx.close();
     setAudioSessionType("auto"); // release the record session so a later reply plays back normally
+    // The capture that just ended may have left the pre-capture shared context broken (see
+    // refreshAudioPlayback). Rebuild it now — cleanup runs synchronously inside the stop-tap's
+    // gesture, so the fresh context comes up unlocked and the upcoming reply can auto-play.
+    refreshAudioPlayback();
   };
 
   return {
@@ -89,7 +117,7 @@ export async function startRecording(): Promise<Recorder> {
       cleanup();
       const down = downsample(merged, inRate, 16000);
       const wav = encodeWav(down, 16000);
-      return { base64: arrayBufferToBase64(wav), mimeType: "audio/wav" };
+      return { base64: arrayBufferToBase64(wav), mimeType: "audio/wav", seconds: down.length / 16000 };
     },
     cancel() {
       cleanup();
@@ -116,20 +144,28 @@ export function playPcm16Handle(
   const bytes = base64ToUint8(base64);
   const samples = Math.floor(bytes.byteLength / 2);
   const view = new DataView(bytes.buffer);
-  const ctx = sharedAudioContext();
+  let ctx = sharedAudioContext();
   // Resume in case this call is the unlocking gesture, or a previous clip left the context suspended
   // (paused). Outside a gesture on a still-locked context this stays pending — the clip then plays once
   // a later gesture unlocks the context, matching the old "first one is silent until you tap" behavior.
   void ctx.resume();
-  const buffer = ctx.createBuffer(1, samples, sampleRate);
-  const channel = buffer.getChannelData(0);
-  for (let i = 0; i < samples; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
 
-  const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  src.connect(ctx.destination);
+  // Decode + wire the clip against a given context, so the watchdog below can rebuild the whole
+  // chain on a fresh context if the current one turns out to be broken.
+  const makeSource = (c: AudioContext) => {
+    const buffer = c.createBuffer(1, samples, sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
+    const s = c.createBufferSource();
+    s.buffer = buffer;
+    s.connect(c.destination);
+    return s;
+  };
 
   let done = false;
+  // Mirrors the caller's pause/resume intent (independent of context state), so a watchdog rebuild
+  // doesn't audibly start a clip the user has paused.
+  let pauseRequested = false;
   let resolveEnded: () => void = () => {};
   const ended = new Promise<void>((resolve) => {
     resolveEnded = resolve;
@@ -137,9 +173,12 @@ export function playPcm16Handle(
   // Settle exactly once — on natural end OR an explicit stop — and tear down just the source, leaving
   // the shared context open (and unlocked) for the next clip. Resolving here rather than relying on
   // `onended` means a stop() while the context is suspended still settles `ended` immediately.
+  // `watchdog` is declared (const) below, after start(); finish only ever runs later — via onended,
+  // stop(), or the watchdog itself — so the closure never sees it uninitialized.
   const finish = () => {
     if (done) return;
     done = true;
+    clearTimeout(watchdog);
     try {
       src.disconnect();
     } catch {
@@ -147,8 +186,35 @@ export function playPcm16Handle(
     }
     resolveEnded();
   };
+  let src = makeSource(ctx);
   src.onended = finish;
   src.start();
+
+  // Zombie watchdog. Mic capture reconfigures iOS's audio device, and a context from before that
+  // reconfiguration can come back broken — "running" with a frozen clock and silent output — which
+  // resume() can't heal (see refreshAudioPlayback). A genuinely running context advances its clock
+  // every few ms, so a clock that hasn't moved shortly after start() means this clip will never be
+  // heard: rebuild it once on a fresh shared context. Inside a gesture (the Play tap) the fresh
+  // context is unlocked and sounds immediately; outside one it waits for the next gesture exactly
+  // like any locked context. A merely-locked (suspended) context also trips this, harmlessly: the
+  // rebuilt clip is equally pending, just on a fresh context.
+  const startClock = ctx.currentTime;
+  const watchdog = setTimeout(() => {
+    if (done || ctx.currentTime !== startClock) return; // finished or genuinely progressing
+    try {
+      src.onended = null;
+      src.stop();
+      src.disconnect();
+    } catch {
+      /* discarding the broken source — best-effort */
+    }
+    ctx = resetSharedAudioContext();
+    void ctx.resume();
+    src = makeSource(ctx);
+    src.onended = finish;
+    src.start();
+    if (pauseRequested) void ctx.suspend(); // user paused during the silent window — stay paused
+  }, 400);
 
   return {
     stop: () => {
@@ -162,9 +228,11 @@ export function playPcm16Handle(
     // Suspend/resume the shared context — playback halts and later continues from the exact sample.
     // State-guarded so redundant calls are no-ops, and skipped once the clip has finished.
     pause: () => {
+      pauseRequested = true;
       if (!done && ctx.state === "running") void ctx.suspend();
     },
     resume: () => {
+      pauseRequested = false;
       if (!done && ctx.state === "suspended") void ctx.resume();
     },
     ended,
