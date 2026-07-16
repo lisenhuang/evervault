@@ -9,7 +9,7 @@ import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { playPcm16Handle, refreshAudioPlayback, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
+import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
@@ -210,11 +210,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }, []);
 
   // Stop any spoken reply that's currently playing or paused and clear the player state. Starting a
-  // recording or a call calls this first, for two reasons: the assistant's voice should go quiet as
-  // the user starts talking, and — crucially — pause is implemented by SUSPENDING the shared audio
-  // context (see playPcm16Handle), the very thing unlockAudioPlayback() resumes. Without stopping the
-  // clip first, tapping the mic while a reply is paused/playing would resume and replay that reply
-  // instead of cleanly starting a new recording.
+  // recording or a call calls this first: the assistant's voice should go quiet as the user starts
+  // talking, and it frees the reply element so unlockAudioPlayback() can re-prime it (priming skips
+  // itself while a clip still owns the element — see audio.ts).
   const stopReplyAudio = useCallback(() => {
     playingAudioRef.current?.stop();
     playingAudioRef.current = null;
@@ -729,9 +727,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startVoice() {
-    // Silence any spoken reply first — otherwise the unlockAudioPlayback() resume() just below would
-    // restart a paused/playing reply (pause == suspending the shared context) instead of starting a
-    // fresh recording. Must run before the unlock, and synchronously (no await) so the gesture holds.
+    // Silence any spoken reply first — the assistant shouldn't keep talking into the recording, and
+    // freeing the reply element lets the unlock below re-prime it. Synchronous, so the gesture holds.
     stopReplyAudio();
     // The mic press is a user gesture, and it's the earliest one in the voice-message flow — unlock
     // spoken-reply playback now (synchronously, before the awaited getUserMedia) so the reply that
@@ -742,7 +739,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     try {
       unlockAudioPlayback();
     } catch {
-      /* playback unlock is best-effort; the reply's "Play" button unlocks the context on tap */
+      /* playback priming is best-effort; the reply's "Play" button plays it directly on tap */
     }
     try {
       recorderRef.current = await startRecording();
@@ -761,9 +758,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (!rec) return;
     recorderRef.current = null;
     // A stray clip (e.g. a slow previous reply that landed mid-recording) must not keep talking over
-    // the send — and rec.stop()'s cleanup rebuilds the shared playback context (refreshAudioPlayback),
-    // which mustn't be yanked out from under a clip that's still holding it.
+    // the send. This also frees the reply element, and the stop tap is a gesture — re-prime playback
+    // so the reply that's about to be synthesized can auto-play (see unlockAudioPlayback).
     stopReplyAudio();
+    unlockAudioPlayback();
     setVoiceState("processing");
     setStreaming(true);
     const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
@@ -988,11 +986,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveRef.current = null;
     finishCall();
     await s?.stop();
-    // The call held the mic, which can leave the pre-capture shared reply context broken (see
-    // refreshAudioPlayback) — rebuild it once the mic is released. stop() is quick, so this still
-    // usually falls inside the End tap's activation window and the new context comes up unlocked;
-    // if not, the next Play tap resumes it.
-    refreshAudioPlayback();
     setCallState(null);
   }
 
@@ -1033,7 +1026,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (callState !== "closed" && callState !== "error") return;
     void liveRef.current?.stop();
     liveRef.current = null;
-    refreshAudioPlayback(); // the call held the mic — rebuild the shared reply context (best-effort, no gesture here)
     finishCall(); // log the duration once; no-ops if End already handled it or the call never connected
     if (callState === "closed") {
       if (callIdleClosed) {
