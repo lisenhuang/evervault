@@ -176,6 +176,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   // Message the next send will quote — set from a bubble's context menu (right-click / long-press).
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Message awaiting delete confirmation — set from the context menu's Delete, cleared on confirm/cancel.
+  const [pendingDelete, setPendingDelete] = useState<ChatMessage | null>(null);
   const recorderRef = useRef<Recorder | null>(null);
   // Only one spoken reply plays at a time — starting another (auto-play or a manual "Play reply"
   // click) stops whatever is currently playing first.
@@ -1056,7 +1058,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               playingAudioId={audioPlaying?.id ?? null}
               audioPaused={audioPlaying?.paused ?? false}
               onReply={setReplyTo}
-              onDelete={deleteMessage}
+              onDelete={setPendingDelete}
               scrollSignal={!!callState}
             />
           )}
@@ -1141,6 +1143,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           if (!deletingAccount) setConfirmDeleteAccount(false);
         }}
         onConfirm={deleteAccount}
+      />
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title={t.message.deleteTitle}
+        message={t.message.deleteConfirmMessage}
+        confirmLabel={t.message.delete}
+        cancelLabel={t.common.cancel}
+        confirmVariant="danger"
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) deleteMessage(pendingDelete);
+          setPendingDelete(null);
+        }}
       />
 
       <CallEndedModal

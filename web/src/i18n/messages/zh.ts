@@ -180,6 +180,8 @@ const zh: Messages = {
     cancelReply: "取消回复",
     messageActions: "消息操作",
     jumpToMessage: "跳转到原消息",
+    deleteTitle: "删除这条消息？",
+    deleteConfirmMessage: "这条消息将从聊天中移除。",
   },
   settings: {
     title: "设置",

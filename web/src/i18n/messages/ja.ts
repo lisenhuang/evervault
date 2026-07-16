@@ -179,6 +179,8 @@ const ja: Messages = {
     cancelReply: "返信をキャンセル",
     messageActions: "メッセージ操作",
     jumpToMessage: "元のメッセージへ移動",
+    deleteTitle: "メッセージを削除しますか？",
+    deleteConfirmMessage: "このメッセージはチャットから削除されます。",
   },
   settings: {
     title: "設定",

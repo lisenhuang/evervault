@@ -179,6 +179,8 @@ const en = {
     cancelReply: "Cancel reply",
     messageActions: "Message actions",
     jumpToMessage: "Jump to the original message",
+    deleteTitle: "Delete message?",
+    deleteConfirmMessage: "This message will be removed from the chat.",
   },
   settings: {
     title: "Settings",
