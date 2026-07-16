@@ -1,6 +1,7 @@
 // Browser audio helpers for voice chat. Recording captures mic input via the Web Audio API and
-// encodes 16 kHz mono PCM16 WAV (a format Gemini reliably accepts) as base64. Playback decodes the
-// PCM16 that Gemini TTS returns. No audio ever passes through our server.
+// encodes 16 kHz mono PCM16 WAV (a format Gemini reliably accepts) as base64. Reply playback wraps
+// the PCM16 that Gemini TTS returns in a WAV header and plays it through a persistent HTMLAudioElement
+// (see below). No audio ever passes through our server.
 
 import { setAudioSessionType } from "./liveAudio";
 import { acquireMicStream } from "./mic";
@@ -12,53 +13,54 @@ function getAudioContext(): AudioContext {
   return new Ctor();
 }
 
-// A single AudioContext shared by every spoken voice-reply clip. iOS starts an AudioContext
-// "suspended" and only a USER GESTURE moves it to "running". The old approach — a brand-new context
-// per clip, closed when the clip ended — meant an auto-played reply (synthesized a few seconds after
-// the tap that triggered it) had no gesture to unlock its fresh context, so it played silently and
-// the user had to press "Play" on every reply. Keeping ONE context that stays "running" once unlocked
-// lets subsequent replies auto-play without their own tap. (Backgrounding the page suspends it again;
-// the next gesture — a "Play" tap or the mic press — re-unlocks it.)
-let sharedCtx: AudioContext | null = null;
-function sharedAudioContext(): AudioContext {
-  if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = getAudioContext();
-  return sharedCtx;
+// Voice replies play through ONE persistent HTMLAudioElement rather than the Web Audio API. Media
+// elements are the playback path iOS treats as first-class: they renegotiate the output route on
+// every play() (so they survive the device reconfiguration that microphone capture causes — a Web
+// Audio context from before/around a capture session can come out of it silently broken), and they
+// are categorized as media playback, sounding through the hardware Silent switch. Reusing one element
+// also carries iOS's play permission across clips: an element that has ever played inside a user
+// gesture may be replayed programmatically later, which is what lets a reply auto-play seconds after
+// the tap that triggered it (see unlockAudioPlayback).
+let replyEl: HTMLAudioElement | null = null;
+// The blob URL of the clip currently loaded into the element; null when the element is free. Guards
+// re-priming from clobbering an in-flight clip, and lets a stale handle detect it no longer owns the
+// element.
+let replyClipUrl: string | null = null;
+
+function replyAudioElement(): HTMLAudioElement {
+  if (!replyEl) {
+    replyEl = new Audio();
+    replyEl.preload = "auto";
+  }
+  return replyEl;
 }
 
-// Discard the shared context and start a fresh one. Used when the current context can no longer be
-// trusted to make sound (see refreshAudioPlayback and the watchdog in playPcm16Handle).
-function resetSharedAudioContext(): AudioContext {
-  if (sharedCtx && sharedCtx.state !== "closed") void sharedCtx.close();
-  sharedCtx = null;
-  return sharedAudioContext();
-}
-
-/**
- * Rebuild the shared playback context after microphone capture ends. Opening the mic (a voice
- * recording or a live call) makes iOS reconfigure the audio device — sample rate and route change for
- * capture — and an AudioContext created BEFORE that reconfiguration can come out of it broken: still
- * reporting "running", but with a frozen clock and silent output. Because it looks "running", resume()
- * is a no-op and it never heals, leaving every reply clip mute — even on an explicit Play tap. A fresh
- * context created after capture ends picks up the settled device config. Call this from within the
- * gesture that ends capture (the stop-recording / End-call tap) so the new context comes up unlocked
- * and the reply that follows can still auto-play.
- */
-export function refreshAudioPlayback(): void {
-  const ctx = resetSharedAudioContext();
-  if (ctx.state !== "running") void ctx.resume();
+// A tiny (10 ms) silent WAV used to prime the reply element inside a user gesture — audible playback
+// permission is granted to the element without the user hearing anything. Built lazily, reusing the
+// recorder's WAV encoder.
+let silentWavUri: string | null = null;
+function silentWav(): string {
+  if (!silentWavUri) {
+    silentWavUri = `data:audio/wav;base64,${arrayBufferToBase64(encodeWav(new Float32Array(160), 16000))}`;
+  }
+  return silentWavUri;
 }
 
 /**
- * Unlock spoken-reply playback on iOS. Creates (once) and resumes the shared AudioContext. Call it
- * SYNCHRONOUSLY from inside a user gesture (a click/tap/press handler, before any `await`) so iOS
- * grants the unlock; once unlocked the context stays "running", so later voice replies can auto-play
- * without a gesture of their own. Safe to call repeatedly, and a harmless no-op off iOS / when already
- * running. Best-effort: if the platform declines the resume, playback simply falls back to the manual
- * "Play" tap (which unlocks the same context), so no reply is ever left permanently silent.
+ * Unlock spoken-reply playback on iOS by playing a 10 ms silent clip through the persistent reply
+ * element. Call it SYNCHRONOUSLY from inside a user gesture (a click/tap handler, before any `await`):
+ * iOS grants play permission to the element it was gestured on, and that permission sticks, so a
+ * reply that lands seconds later can auto-play through the same element without a gesture of its own.
+ * Safe to call repeatedly; a no-op while a real clip owns the element (which implies it's already
+ * unlocked). Best-effort: if the platform still declines the later auto-play, the reply's "Play"
+ * button plays the same element directly inside its own tap, so no reply is ever left unplayable.
  */
 export function unlockAudioPlayback(): void {
-  const ctx = sharedAudioContext();
-  if (ctx.state !== "running") void ctx.resume();
+  if (replyClipUrl) return; // a clip is loaded/playing — don't replace its src
+  const el = replyAudioElement();
+  el.src = silentWav();
+  const p = el.play();
+  if (p) p.catch(() => {/* priming denied — the Play button remains the unlock path */});
 }
 
 export type Recorder = {
@@ -105,10 +107,6 @@ export async function startRecording(): Promise<Recorder> {
     stream.getTracks().forEach((t) => t.stop());
     void ctx.close();
     setAudioSessionType("auto"); // release the record session so a later reply plays back normally
-    // The capture that just ended may have left the pre-capture shared context broken (see
-    // refreshAudioPlayback). Rebuild it now — cleanup runs synchronously inside the stop-tap's
-    // gesture, so the fresh context comes up unlocked and the upcoming reply can auto-play.
-    refreshAudioPlayback();
   };
 
   return {
@@ -126,117 +124,97 @@ export async function startRecording(): Promise<Recorder> {
 }
 
 /**
- * Play base64 PCM16 (mono) through the shared, gesture-unlocked AudioContext and return a handle to
- * control it. Reusing ONE context (see {@link unlockAudioPlayback}) — rather than a fresh one per clip
- * — is what lets a reply auto-play on iOS: once the context has been resumed inside a gesture (the mic
- * press, or the first "Play" tap), it stays "running", so the next clip can start without its own tap.
- * `ended` resolves when playback finishes naturally OR is stopped (never on pause). `pause()`/`resume()`
- * suspend and continue the context clock, so playback picks back up at the exact same sample.
+ * Play base64 PCM16 (mono) as a voice reply through the persistent, gesture-primed reply element
+ * (see {@link unlockAudioPlayback}) and return a handle to control it. The PCM16 is wrapped in a WAV
+ * header (no re-encoding) and handed to the element as a blob URL — the element renegotiates the
+ * output route per play(), which is what makes replies audible again right after microphone capture,
+ * where a Web Audio context would come out silently broken.
  *
- * Only one reply clip plays at a time (the caller stops the prior handle before starting a new one), so
- * suspending the whole shared context to pause is safe. The context is deliberately left open when a
- * clip ends — only the source node is torn down — so it stays unlocked for whatever plays next.
+ * `ended` resolves when playback finishes naturally, is stopped, or fails to start (never on pause) —
+ * a failed auto-play (e.g. the element was never primed after a page reload) settles immediately, so
+ * the bubble falls back to its normal "Play" button, whose tap plays this same element inside a
+ * gesture. `pause()`/`resume()` map to the element's native pause/play, which keep position exactly.
+ * Only one reply clip plays at a time (the caller stops the prior handle before starting a new one).
  */
 export function playPcm16Handle(
   base64: string,
   sampleRate: number,
 ): { stop: () => void; pause: () => void; resume: () => void; ended: Promise<void> } {
-  const bytes = base64ToUint8(base64);
-  const samples = Math.floor(bytes.byteLength / 2);
-  const view = new DataView(bytes.buffer);
-  let ctx = sharedAudioContext();
-  // Resume in case this call is the unlocking gesture, or a previous clip left the context suspended
-  // (paused). Outside a gesture on a still-locked context this stays pending — the clip then plays once
-  // a later gesture unlocks the context, matching the old "first one is silent until you tap" behavior.
-  void ctx.resume();
-
-  // Decode + wire the clip against a given context, so the watchdog below can rebuild the whole
-  // chain on a fresh context if the current one turns out to be broken.
-  const makeSource = (c: AudioContext) => {
-    const buffer = c.createBuffer(1, samples, sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < samples; i++) channel[i] = view.getInt16(i * 2, true) / 32768;
-    const s = c.createBufferSource();
-    s.buffer = buffer;
-    s.connect(c.destination);
-    return s;
-  };
+  const el = replyAudioElement();
+  const url = URL.createObjectURL(pcm16ToWavBlob(base64ToUint8(base64), sampleRate));
+  replyClipUrl = url;
 
   let done = false;
-  // Mirrors the caller's pause/resume intent (independent of context state), so a watchdog rebuild
-  // doesn't audibly start a clip the user has paused.
-  let pauseRequested = false;
   let resolveEnded: () => void = () => {};
   const ended = new Promise<void>((resolve) => {
     resolveEnded = resolve;
   });
-  // Settle exactly once — on natural end OR an explicit stop — and tear down just the source, leaving
-  // the shared context open (and unlocked) for the next clip. Resolving here rather than relying on
-  // `onended` means a stop() while the context is suspended still settles `ended` immediately.
-  // `watchdog` is declared (const) below, after start(); finish only ever runs later — via onended,
-  // stop(), or the watchdog itself — so the closure never sees it uninitialized.
+  // This handle owns the element only while its own blob URL is loaded; a newer clip that replaced
+  // the src (the caller stops the old handle first, but late events can still race) must not have the
+  // element paused or its state clobbered from under it by a stale handle.
+  const ownsElement = () => el.currentSrc === url || el.src === url;
+  // Settle exactly once — natural end, stop(), or a start failure — then release the element and the
+  // blob URL. The element itself stays alive (and gesture-primed) for the next clip.
   const finish = () => {
     if (done) return;
     done = true;
-    clearTimeout(watchdog);
-    try {
-      src.disconnect();
-    } catch {
-      /* already disconnected */
+    if (ownsElement()) {
+      el.pause();
+      el.onended = null;
+      el.onerror = null;
+      replyClipUrl = null;
     }
+    URL.revokeObjectURL(url);
     resolveEnded();
   };
-  let src = makeSource(ctx);
-  src.onended = finish;
-  src.start();
 
-  // Zombie watchdog. Mic capture reconfigures iOS's audio device, and a context from before that
-  // reconfiguration can come back broken — "running" with a frozen clock and silent output — which
-  // resume() can't heal (see refreshAudioPlayback). A genuinely running context advances its clock
-  // every few ms, so a clock that hasn't moved shortly after start() means this clip will never be
-  // heard: rebuild it once on a fresh shared context. Inside a gesture (the Play tap) the fresh
-  // context is unlocked and sounds immediately; outside one it waits for the next gesture exactly
-  // like any locked context. A merely-locked (suspended) context also trips this, harmlessly: the
-  // rebuilt clip is equally pending, just on a fresh context.
-  const startClock = ctx.currentTime;
-  const watchdog = setTimeout(() => {
-    if (done || ctx.currentTime !== startClock) return; // finished or genuinely progressing
-    try {
-      src.onended = null;
-      src.stop();
-      src.disconnect();
-    } catch {
-      /* discarding the broken source — best-effort */
-    }
-    ctx = resetSharedAudioContext();
-    void ctx.resume();
-    src = makeSource(ctx);
-    src.onended = finish;
-    src.start();
-    if (pauseRequested) void ctx.suspend(); // user paused during the silent window — stay paused
-  }, 400);
+  el.onended = finish;
+  el.onerror = finish;
+  el.src = url;
+  const p = el.play();
+  // A rejected play (not primed / platform veto) settles `ended` right away: the caller's playing
+  // state clears and the bubble's "Play" button becomes the gesture that retries this clip fresh.
+  if (p) p.catch(finish);
 
   return {
-    stop: () => {
-      try {
-        src.stop();
-      } catch {
-        /* already stopped */
-      }
-      finish();
-    },
-    // Suspend/resume the shared context — playback halts and later continues from the exact sample.
-    // State-guarded so redundant calls are no-ops, and skipped once the clip has finished.
+    stop: finish,
+    // Native element pause/resume — position is kept by the element, so resume continues exactly
+    // where pause left off. Guarded so calls after finish (or from a stale handle) are no-ops.
     pause: () => {
-      pauseRequested = true;
-      if (!done && ctx.state === "running") void ctx.suspend();
+      if (!done && ownsElement()) el.pause();
     },
     resume: () => {
-      pauseRequested = false;
-      if (!done && ctx.state === "suspended") void ctx.resume();
+      if (!done && ownsElement()) {
+        const rp = el.play();
+        if (rp) rp.catch(() => {/* resume declined — stays paused; the next tap retries */});
+      }
     },
     ended,
   };
+}
+
+// Wrap little-endian PCM16 bytes in a 44-byte WAV header (mono). No re-encoding — the payload is
+// used as-is, matching the header the recorder writes in encodeWav.
+function pcm16ToWavBlob(pcmBytes: Uint8Array, sampleRate: number): Blob {
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + pcmBytes.byteLength, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, pcmBytes.byteLength, true);
+  return new Blob([header, pcmBytes as BlobPart], { type: "audio/wav" });
 }
 
 /**
