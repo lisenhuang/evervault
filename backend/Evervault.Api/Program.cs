@@ -80,6 +80,12 @@ builder.Services.AddScoped<IAiKeyService, AiKeyService>();
 builder.Services.AddScoped<KeyFailoverRunner>();
 builder.Services.AddScoped<AgentService>();
 
+// Server-side voice-message reply audio: one singleton that is both the injectable status registry and
+// the hosted background worker, so a spoken reply is synthesized off the request thread and survives the
+// browser tab being backgrounded (iOS Safari kills in-page TTS the moment the tab is suspended).
+builder.Services.AddSingleton<VoiceReplySynthesizer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<VoiceReplySynthesizer>());
+
 // Agent tools (the only execution surface for the chat).
 builder.Services.AddScoped<IAiTool, ListMemoriesTool>();
 builder.Services.AddScoped<IAiTool, GetMemoryTool>();
