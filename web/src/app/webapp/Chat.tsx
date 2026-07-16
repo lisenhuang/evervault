@@ -9,7 +9,7 @@ import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { playPcm16Handle, startRecording, type Recorder } from "./lib/audio";
+import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
@@ -712,6 +712,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startVoice() {
+    // The mic press is a user gesture, and it's the earliest one in the voice-message flow — unlock
+    // spoken-reply playback now (synchronously, before the awaited getUserMedia) so the reply that
+    // lands seconds later can auto-play on iOS instead of waiting for a "Play" tap. Best-effort: if the
+    // platform declines here, the reply's own "Play" button unlocks the same shared context on tap.
+    unlockAudioPlayback();
     try {
       recorderRef.current = await startRecording();
       setVoiceState("recording");
