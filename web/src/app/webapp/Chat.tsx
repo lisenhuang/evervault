@@ -205,6 +205,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     });
   }, []);
 
+  // Stop any spoken reply that's currently playing or paused and clear the player state. Starting a
+  // recording or a call calls this first, for two reasons: the assistant's voice should go quiet as
+  // the user starts talking, and — crucially — pause is implemented by SUSPENDING the shared audio
+  // context (see playPcm16Handle), the very thing unlockAudioPlayback() resumes. Without stopping the
+  // clip first, tapping the mic while a reply is paused/playing would resume and replay that reply
+  // instead of cleanly starting a new recording.
+  const stopReplyAudio = useCallback(() => {
+    playingAudioRef.current?.stop();
+    playingAudioRef.current = null;
+    setAudioPlaying(null);
+    setAudioSessionType("auto");
+  }, []);
+
   // Realtime voice call (Live API)
   const [callState, setCallState] = useState<LiveState | null>(null);
   const [callMuted, setCallMuted] = useState(false);
@@ -712,6 +725,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startVoice() {
+    // Silence any spoken reply first — otherwise the unlockAudioPlayback() resume() just below would
+    // restart a paused/playing reply (pause == suspending the shared context) instead of starting a
+    // fresh recording. Must run before the unlock, and synchronously (no await) so the gesture holds.
+    stopReplyAudio();
     // The mic press is a user gesture, and it's the earliest one in the voice-message flow — unlock
     // spoken-reply playback now (synchronously, before the awaited getUserMedia) so the reply that
     // lands seconds later can auto-play on iOS instead of waiting for a "Play" tap. Best-effort and
@@ -827,12 +844,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // in-memory only, so dropping it here is all it takes for it to disappear from the chatbox.
   function deleteMessage(m: ChatMessage) {
     // If this message's spoken clip is the one loaded in the player, stop it — its bubble is leaving.
-    if (audioPlaying?.id === m.id) {
-      playingAudioRef.current?.stop();
-      playingAudioRef.current = null;
-      setAudioPlaying(null);
-      setAudioSessionType("auto");
-    }
+    if (audioPlaying?.id === m.id) stopReplyAudio();
     setMessages((cur) => cur.filter((x) => x.id !== m.id));
     // Drop a pending reply that quoted the now-deleted message.
     setReplyTo((r) => (r?.id === m.id ? null : r));
@@ -875,6 +887,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startCall() {
+    stopReplyAudio(); // silence any spoken reply before the call takes over the audio path
     setCallError("");
     setCallIdleClosed(false);
     setIdleEndedOpen(false); // a new/reconnected call supersedes any lingering idle-timeout modal
