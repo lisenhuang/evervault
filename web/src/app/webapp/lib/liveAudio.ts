@@ -5,6 +5,8 @@
 //    and can be cleared instantly for barge-in (when the user interrupts the model).
 // All audio stays in the browser — nothing is sent to our server.
 
+import { acquireMicStream } from "./mic";
+
 type AudioCtor = typeof AudioContext;
 function makeCtx(): AudioContext {
   const Ctor: AudioCtor =
@@ -61,7 +63,8 @@ export class MicStreamer {
 
   async start(onChunk: (base64Pcm16: string) => void): Promise<void> {
     setAudioSessionType("play-and-record");
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    // Throws a typed MicError (see mic.ts) so startCall can show an accurate mic message.
+    this.stream = await acquireMicStream({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     this.ctx = makeCtx();

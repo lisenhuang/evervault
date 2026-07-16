@@ -31,7 +31,7 @@ import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
-import { friendlyAiError } from "./lib/aiError";
+import { friendlyAiError, micErrorMessage } from "./lib/aiError";
 import { reportAiError } from "./lib/errorReport";
 import { runWithSuspensionRetry } from "./lib/suspensionRetry";
 import type { ChatMessage, ReplyRef } from "./types";
@@ -714,18 +714,24 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   async function startVoice() {
     // The mic press is a user gesture, and it's the earliest one in the voice-message flow — unlock
     // spoken-reply playback now (synchronously, before the awaited getUserMedia) so the reply that
-    // lands seconds later can auto-play on iOS instead of waiting for a "Play" tap. Best-effort: if the
-    // platform declines here, the reply's own "Play" button unlocks the same shared context on tap.
-    unlockAudioPlayback();
+    // lands seconds later can auto-play on iOS instead of waiting for a "Play" tap. Best-effort and
+    // isolated in its own try/catch so an unlock hiccup can never bubble up as a mic error, and so the
+    // very next statement — startRecording — is still the first `await` of the gesture (iOS drops the
+    // mic request if another async step runs before it).
+    try {
+      unlockAudioPlayback();
+    } catch {
+      /* playback unlock is best-effort; the reply's "Play" button unlocks the context on tap */
+    }
     try {
       recorderRef.current = await startRecording();
       setVoiceState("recording");
-    } catch {
+    } catch (e) {
       setVoiceState("idle");
-      setMessages((cur) => [
-        ...cur,
-        { id: uid(), role: "assistant", text: t.chat.micBlocked, error: true },
-      ]);
+      // startRecording throws a typed MicError; micErrorMessage turns each reason into specific,
+      // actionable copy (unsupported browser, insecure context, blocked, no device, in use).
+      const text = micErrorMessage(e, t) ?? t.chat.micGeneric;
+      setMessages((cur) => [...cur, { id: uid(), role: "assistant", text, error: true }]);
     }
   }
 
@@ -930,6 +936,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       setCallEchoProne(session.echoProne);
       setCallHalfDuplex(session.halfDuplex);
     } catch (e) {
+      // A mic-acquisition failure (denied / unsupported browser / no device) gets its own specific
+      // message rather than the generic "something went wrong" — and isn't reported as an AI error.
+      const micMsg = micErrorMessage(e, t);
+      if (micMsg) {
+        setCallError(micMsg);
+        setCallState("error");
+        return;
+      }
       const fe = friendlyAiError(e, t);
       reportAiError(fe, "call.start");
       // The CallBar status line is single-line, so collapse the bubble format's blank line.
