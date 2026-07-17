@@ -133,22 +133,12 @@ const EXTRACTION_SCHEMA: Schema = {
         required: ["category", "key"],
       },
     },
+    // Note: no `adds` here. New tasks are NEVER created by passive extraction — a task only lands on the
+    // list when the user explicitly confirms it via the in-chat add_task tool. The extractor may only
+    // update the status of tasks that already exist.
     tasks: {
       type: Type.OBJECT,
       properties: {
-        adds: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              details: { type: Type.STRING },
-              dueDate: { type: Type.STRING }, // "YYYY-MM-DD" or omitted
-              dueTime: { type: Type.STRING }, // "HH:mm" 24h or omitted
-            },
-            required: ["title"],
-          },
-        },
         completes: { type: Type.ARRAY, items: { type: Type.INTEGER } }, // ids of finished tasks
         dismisses: { type: Type.ARRAY, items: { type: Type.INTEGER } }, // ids of cancelled tasks
       },
@@ -178,18 +168,14 @@ const EXTRACTION_SYSTEM =
   "sentence. Also write a `summary`: 2-4 sentences, factual and in the third person, capturing what " +
   "this conversation was about plus any open follow-ups, so it can be recalled later — do not " +
   "attribute intentions to the user that they did not state.\n\n" +
-  "You ALSO maintain the user's structured TASK LIST. You are given the CURRENT LOCAL DATE/TIME and the " +
-  "user's CURRENT OPEN TASKS (each with a numeric id). Under `tasks.adds`, record NEW concrete to-dos, " +
-  "commitments, appointments, or deadlines the USER stated they intend or need to do: a short imperative " +
-  "`title` in the user's own language, optional `details`, and `dueDate` (YYYY-MM-DD) ONLY when the user " +
-  "gave or clearly implied one — resolve relative expressions ('tomorrow', 'next Friday', '明天', " +
-  "'周五', '내일') against the CURRENT LOCAL DATE; never guess a date that wasn't implied. Add `dueTime` " +
-  "(24-hour HH:mm) only when a clock time was stated. Do NOT re-add anything already in CURRENT OPEN " +
-  "TASKS (match by meaning, not exact wording). If the transcript shows an open task was finished, put " +
-  "its id in `tasks.completes`; if it was abandoned or cancelled, put its id in `tasks.dismisses`. " +
-  "Questions, hypotheticals, other people's tasks, and your own suggestions are NOT tasks. Division of " +
-  "labor: dated or actionable to-dos are TASKS, not open_loop facts; trigger-based reminders ('remind me " +
-  "to X when I say/do Y') stay open_loop FACTS, not tasks — never record the same item as both.\n\n" +
+  "You ALSO help maintain the user's structured TASK LIST, but ONLY to keep EXISTING tasks up to date — " +
+  "you must NEVER create new tasks here. New to-dos are added exclusively when the user explicitly " +
+  "confirms them in chat, never by this passive extraction. You are given the CURRENT LOCAL DATE/TIME and " +
+  "the user's CURRENT OPEN TASKS (each with a numeric id). If the transcript shows an open task was " +
+  "finished, put its id in `tasks.completes`; if it was abandoned or cancelled, put its id in " +
+  "`tasks.dismisses`. Do NOT add, invent, or re-list any task — leave brand-new to-dos out entirely, no " +
+  "matter how clearly the user stated them. Trigger-based reminders ('remind me to X when I say/do Y') " +
+  "stay open_loop FACTS, not tasks.\n\n" +
   "Return JSON only; if there is nothing durable to record, return an empty upserts array (still provide " +
   "the summary).";
 
@@ -252,9 +238,15 @@ export async function extractAndSyncProfile(opts: {
     const profileChanged = !!(delta.upserts?.length || delta.removes?.length);
     if (profileChanged) syncProfile(delta);
 
+    // Only ever apply status changes to tasks that already exist. Passive extraction must NEVER add a
+    // task to the list — new to-dos require the user's explicit confirmation via the in-chat add_task
+    // tool — so any `adds` the model returns despite the prompt/schema are dropped here.
     const tasks = result?.tasks;
-    const tasksChanged = !!(tasks?.adds?.length || tasks?.completes?.length || tasks?.dismisses?.length);
-    if (tasksChanged) syncTasks(tasks!, opts.conversationId);
+    const taskUpdates: TaskDelta | undefined = tasks
+      ? { completes: tasks.completes, dismisses: tasks.dismisses }
+      : undefined;
+    const tasksChanged = !!(taskUpdates?.completes?.length || taskUpdates?.dismisses?.length);
+    if (tasksChanged) syncTasks(taskUpdates!, opts.conversationId);
 
     if (!profileChanged && !tasksChanged) return null; // summary (if any) already upserted
     return { profileChanged, tasksChanged };
