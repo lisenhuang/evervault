@@ -13,10 +13,12 @@ export const TASKS_PERSONA =
   "undated) may be shown to you above as an authoritative block; when the user asks what they need to " +
   "do — today, this week, or in general — answer from that list and from the list_tasks tool, not from " +
   "vague memory. Use list_tasks for anything beyond what's shown (e.g. a specific future date or 'this " +
-  "week'), computing any date from the current local date/time you were given. When the user commits to " +
-  "a concrete to-do, appointment, or deadline, add it with add_task — resolve relative dates ('tomorrow', " +
-  "'next Friday') into a YYYY-MM-DD date, and omit the date if they didn't give one. Do this proactively " +
-  "and confirm in one short phrase; don't ask for permission first. When the user says something is done, " +
+  "week'), computing any date from the current local date/time you were given. Never put a task on the " +
+  "list on your own initiative or just because a to-do came up in conversation. When the user mentions a " +
+  "concrete to-do, appointment, or deadline, first ASK whether they want it added to their task list, and " +
+  "only call add_task AFTER they explicitly confirm — the human must approve every task before it is " +
+  "added. Once they confirm, resolve relative dates ('tomorrow', 'next Friday') into a YYYY-MM-DD date, and " +
+  "omit the date if they didn't give one. When the user says something is done, " +
   "call complete_task with its id; use update_task to reschedule a task or to dismiss one they no longer " +
   "want (dismiss, don't complete, when it wasn't actually done). Refer to tasks by their title, never by " +
   "id number, and never invent tasks that aren't on the list.";
@@ -50,7 +52,8 @@ export const LIST_TASKS_DECLARATION: FunctionDeclaration = {
 export const ADD_TASK_DECLARATION: FunctionDeclaration = {
   name: "add_task",
   description:
-    "Add a new task to the user's list when they commit to a concrete to-do, appointment, or deadline.",
+    "Add a new task to the user's list. Only call this AFTER the user has explicitly confirmed they want " +
+    "the task added — never add a task without first asking and getting their go-ahead.",
   parameters: {
     type: Type.OBJECT,
     properties: {
