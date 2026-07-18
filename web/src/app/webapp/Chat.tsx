@@ -192,11 +192,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [audioPlaying, setAudioPlaying] = useState<{ id: string; paused: boolean } | null>(null);
   const playAudioClip = useCallback((id: string, base64: string, sampleRate: number) => {
     playingAudioRef.current?.stop();
-    // iOS: route this clip to the "playback" audio session so it plays through the hardware Silent
-    // switch (like a music/podcast app). No-op off iOS. Released back to "auto" when the clip ends
-    // — and only by the handle that's still current, so replacing one clip with another (which
-    // re-pins "playback" just below) doesn't get reset out from under the new clip.
-    setAudioSessionType("playback");
+    // iOS: route this clip to the "transient-solo" audio session so it plays through the hardware
+    // Silent switch while only briefly interrupting other apps — Spotify etc. duck/pause and then
+    // resume when the clip ends, instead of being taken over for good (the old "playback" category
+    // occupied the iOS Now-Playing controls and left the other app unable to resume). No-op off iOS.
+    // Released back to "auto" when the clip ends — and only by the handle that's still current, so
+    // replacing one clip with another (which re-pins "transient-solo" just below) doesn't get reset
+    // out from under the new clip.
+    setAudioSessionType("transient-solo");
     const handle = playPcm16Handle(base64, sampleRate);
     playingAudioRef.current = handle;
     setAudioPlaying({ id, paused: false });
@@ -790,12 +793,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const asstId = uid();
     try {
       const { base64, mimeType, seconds } = await rec.stop();
-      // rec.stop() released the mic and reset the session to "auto". Pin it to "playback" now and
-      // hold it there through the reply, so the reply clip plays under a stable media session (and
-      // through the Silent switch). Then retry the one-shot unlock — still within the stop tap's
-      // activation window, and the first moment after capture where a prime can actually reach
-      // "playing" (a no-op if some earlier gesture already unlocked the element).
-      setAudioSessionType("playback");
+      // rec.stop() released the mic and reset the session to "auto". Pin it to "transient-solo" now
+      // and hold it there through the reply, so the reply clip plays under a stable media session
+      // (through the Silent switch, and only ducking/pausing other apps rather than occupying them).
+      // Then retry the one-shot unlock — still within the stop tap's activation window, and the first
+      // moment after capture where a prime can actually reach "playing" (a no-op if some earlier
+      // gesture already unlocked the element).
+      setAudioSessionType("transient-solo");
       unlockAudioPlayback();
       // A blink-quick tap-tap captures no usable speech. Sent anyway, the transcription model answers
       // the silence with its own prompt ("Please provide the audio file…"), which lands in the user's

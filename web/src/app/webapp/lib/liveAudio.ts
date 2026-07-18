@@ -30,8 +30,12 @@ export function isIOS(): boolean {
  * audio session category WebKit routes the page's audio through:
  *  - "play-and-record": pinned before mic capture to keep iOS on the speaker-friendly call category
  *    for the whole call.
- *  - "playback": media playback (like a music/podcast app) that plays through the hardware Silent
- *    switch — used so a spoken AI reply is still audible when the phone is on silent.
+ *  - "transient-solo": a short "assistant speaking" clip — the navigation-prompt / Siri category.
+ *    Plays through the hardware Silent switch (so a spoken AI reply is audible on silent) but only
+ *    TEMPORARILY interrupts other apps' audio: Spotify etc. duck/pause while the reply speaks and
+ *    resume when it ends, instead of being taken over for good the way a "playback" media session
+ *    would (which occupied the iOS Now-Playing controls and left the other app unable to resume).
+ *    Used for spoken AI replies and voice previews.
  *  - "auto": lets WebKit decide; for Web Audio output that lands on an ambient-style category the
  *    Silent switch mutes. Restoring "auto" after a call/clip releases the override, so later media
  *    playback isn't stuck at call volume/routing (WebKit keeps a non-"auto" type as a hard override
@@ -43,8 +47,8 @@ export function isIOS(): boolean {
  */
 // Starts as "auto" — the platform default — so a first set to "auto" is already a no-op and can't
 // reconfigure (and momentarily interrupt) audio that is just starting.
-let currentAudioSessionType: "play-and-record" | "playback" | "auto" = "auto";
-export function setAudioSessionType(type: "play-and-record" | "playback" | "auto") {
+let currentAudioSessionType: "play-and-record" | "transient-solo" | "auto" = "auto";
+export function setAudioSessionType(type: "play-and-record" | "transient-solo" | "auto") {
   if (!isIOS()) return;
   if (type === currentAudioSessionType) return; // already on this category — don't reconfigure
   try {
