@@ -30,11 +30,13 @@ export function isIOS(): boolean {
  * audio session category WebKit routes the page's audio through:
  *  - "play-and-record": pinned before mic capture to keep iOS on the speaker-friendly call category
  *    for the whole call.
- *  - "transient-solo": a short "assistant speaking" clip — the navigation-prompt / Siri category.
- *    Plays through the hardware Silent switch (so a spoken AI reply is audible on silent) but only
- *    TEMPORARILY interrupts other apps' audio: Spotify etc. duck/pause while the reply speaks and
- *    resume when it ends, instead of being taken over for good the way a "playback" media session
- *    would (which occupied the iOS Now-Playing controls and left the other app unable to resume).
+ *  - "playback": media playback (like a music/podcast app) that plays through the hardware Silent
+ *    switch — used so a spoken AI reply is audible even when the phone is on silent. Being heard on
+ *    silent is the top priority for replies, and only "playback"/"play-and-record" sound through the
+ *    switch (the politer "transient-solo"/"ambient" categories are muted by it on iOS). The tradeoff
+ *    iOS bundles in: this category interrupts other apps' audio (Spotify, podcasts) while the clip
+ *    plays and binds the system Now-Playing transport to us. We restore "auto" the instant the clip
+ *    ends — and mark the MediaSession idle (below) — to hand control back as best the platform allows.
  *    Used for spoken AI replies and voice previews.
  *  - "auto": lets WebKit decide; for Web Audio output that lands on an ambient-style category the
  *    Silent switch mutes. Restoring "auto" after a call/clip releases the override, so later media
@@ -47,8 +49,8 @@ export function isIOS(): boolean {
  */
 // Starts as "auto" — the platform default — so a first set to "auto" is already a no-op and can't
 // reconfigure (and momentarily interrupt) audio that is just starting.
-let currentAudioSessionType: "play-and-record" | "transient-solo" | "auto" = "auto";
-export function setAudioSessionType(type: "play-and-record" | "transient-solo" | "auto") {
+let currentAudioSessionType: "play-and-record" | "playback" | "auto" = "auto";
+export function setAudioSessionType(type: "play-and-record" | "playback" | "auto") {
   if (!isIOS()) return;
   if (type === currentAudioSessionType) return; // already on this category — don't reconfigure
   try {
@@ -56,6 +58,19 @@ export function setAudioSessionType(type: "play-and-record" | "transient-solo" |
     if (nav.audioSession) {
       nav.audioSession.type = type;
       currentAudioSessionType = type;
+    }
+  } catch {
+    /* experimental API — ignore */
+  }
+  // Best-effort: keep the iOS Now-Playing transport (Control Center / lock screen) in sync so it's
+  // released the moment our clip ends. "playback" binds that transport to our audio element, which is
+  // why the system play button could replay our clip instead of resuming the other app (e.g. Spotify);
+  // marking the MediaSession idle on the way back to "auto" tells iOS we're no longer the active
+  // player, giving the other app the best chance to reclaim the controls. Pure metadata hint — no-op
+  // where unsupported, and it never affects Silent-switch audibility (that's the audioSession type).
+  try {
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = type === "playback" ? "playing" : "none";
     }
   } catch {
     /* experimental API — ignore */

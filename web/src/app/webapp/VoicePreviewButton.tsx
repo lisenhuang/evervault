@@ -75,10 +75,10 @@ export default function VoicePreviewButton({ voice }: { voice: string }) {
       // (Must be "true"/"false": the backend binds this to a bool, which rejects "1" with a 400.)
       // No model param: the backend falls back to the default-model sample (the pre-generated one).
       const url = `/api/voice-samples/${encodeURIComponent(voice)}?inline=true`;
-      // iOS: play the sample through the "transient-solo" audio session so it's audible even with the
-      // hardware Silent switch on, while only briefly ducking/pausing other apps rather than taking
-      // them over (no-op off iOS); released back to "auto" when it ends/stops/errors.
-      setAudioSessionType("transient-solo");
+      // iOS: play the sample through the "playback" audio session so it's audible even with the
+      // hardware Silent switch on (audible-on-silent is the priority; no-op off iOS); released back to
+      // "auto" when it ends/stops/errors, which also drops the iOS Now-Playing transport.
+      setAudioSessionType("playback");
       const handle = playAudioUrlHandle(url);
       handleRef.current = handle;
       await handle.started; // rejects on load/play error (e.g. 502 all-keys-failed)
