@@ -83,8 +83,11 @@ export function unlockAudioPlayback(): void {
 }
 
 export type Recorder = {
-  /** `seconds` is the captured duration — callers gate on it so a blink-quick tap-tap isn't sent. */
-  stop: () => Promise<{ base64: string; mimeType: string; seconds: number }>;
+  /** `seconds` is the captured duration — callers gate on it so a blink-quick tap-tap isn't sent.
+   *  `voicedSeconds` is how much of that clip carried speech-level energy — callers gate on it to drop
+   *  a silent recording (nothing said, only room tone) before it reaches the transcription model, which
+   *  otherwise hallucinates a short phrase out of near-silence. */
+  stop: () => Promise<{ base64: string; mimeType: string; seconds: number; voicedSeconds: number }>;
   cancel: () => void;
 };
 
@@ -134,7 +137,12 @@ export async function startRecording(): Promise<Recorder> {
       cleanup();
       const down = downsample(merged, inRate, 16000);
       const wav = encodeWav(down, 16000);
-      return { base64: arrayBufferToBase64(wav), mimeType: "audio/wav", seconds: down.length / 16000 };
+      return {
+        base64: arrayBufferToBase64(wav),
+        mimeType: "audio/wav",
+        seconds: down.length / 16000,
+        voicedSeconds: voicedSeconds(down, 16000),
+      };
     },
     cancel() {
       cleanup();
@@ -440,6 +448,28 @@ export function playAudioUrlHandle(url: string): {
 }
 
 // --- encoding helpers ---
+
+// How much of a clip carries speech-level energy, in seconds. Used to reject a "silent" voice message
+// — one recorded with nothing said (or only room tone) — BEFORE it reaches the transcription model,
+// which otherwise invents a plausible short phrase ("Hi.", "Thank you.") out of near-silence. Slides a
+// 30 ms window over the 16 kHz clip and sums the windows whose RMS clears a speech threshold. The
+// threshold sits above typical room-tone/mic-noise floors but well below even quietly-spoken speech, so
+// a soft real message still registers while true silence reads as ~0. Absolute (not peak-relative), so a
+// silent clip can't normalize its own noise floor up into "voiced".
+const VOICED_WINDOW_SAMPLES = 480; // 30 ms at 16 kHz
+const VOICED_RMS_THRESHOLD = 0.008; // ~ -42 dBFS
+function voicedSeconds(samples: Float32Array, sampleRate: number): number {
+  let voicedWindows = 0;
+  for (let start = 0; start + VOICED_WINDOW_SAMPLES <= samples.length; start += VOICED_WINDOW_SAMPLES) {
+    let sumSq = 0;
+    for (let i = 0; i < VOICED_WINDOW_SAMPLES; i++) {
+      const s = samples[start + i];
+      sumSq += s * s;
+    }
+    if (Math.sqrt(sumSq / VOICED_WINDOW_SAMPLES) >= VOICED_RMS_THRESHOLD) voicedWindows++;
+  }
+  return (voicedWindows * VOICED_WINDOW_SAMPLES) / sampleRate;
+}
 
 function mergeFloat32(chunks: Float32Array[]): Float32Array {
   let len = 0;

@@ -101,6 +101,7 @@ const zh: Messages = {
     micInUse: "麦克风正被其他应用占用。请关闭该应用后重试。",
     micGeneric: "无法访问麦克风，请重试。",
     recordingTooShort: "录音太短，未能发送。请点击麦克风说话，说完后再点停止。",
+    noSpeechDetected: "没有听到任何语音。请点击麦克风说话，说完后再点停止。",
     aiUnreachable: "服务器暂时无法连接，请稍后再试。",
     aiBusy: "AI 当前请求较多，请稍后再试。",
     aiFailedGeneric: "出了点问题，请重试。",
