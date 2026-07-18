@@ -47,6 +47,13 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 // and transcribing/answering near-empty audio produces nonsense that derails the conversation.
 const MIN_VOICE_MESSAGE_SECONDS = 0.5;
 
+// A recording can clear the duration gate yet still hold no speech — the user tapped record, said
+// nothing (or the mic caught only room tone), then tapped stop. Fed that near-silence, the transcription
+// model hallucinates a plausible short phrase ("Hi.", "Thank you.") instead of returning empty, which
+// lands in the user's bubble and gets answered. Require at least this much speech-level audio (see
+// voicedSeconds in audio.ts) before sending; below it, drop the clip with a hint like the too-short case.
+const MIN_VOICED_SECONDS = 0.15;
+
 // One attachment as a Gemini part: images/PDFs go inline; extracted documents go as delimited text.
 function fileToPart(f: PreparedFile) {
   if (f.kind === "text") {
@@ -792,7 +799,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
     const asstId = uid();
     try {
-      const { base64, mimeType, seconds } = await rec.stop();
+      const { base64, mimeType, seconds, voicedSeconds } = await rec.stop();
       // rec.stop() released the mic and reset the session to "auto". Pin it to "playback" now and hold
       // it there through the reply, so the reply clip plays under a stable media session and through
       // the Silent switch (audible-on-silent is the priority). Then retry the one-shot unlock — still
@@ -807,6 +814,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         setMessages((cur) => [
           ...cur,
           { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true },
+        ]);
+        return; // finally() below resets the composer state
+      }
+      // Long enough, but the mic caught no speech (nothing said / only room tone). Drop it rather than
+      // let the transcription model invent words out of the silence — and the assistant answer them.
+      if (voicedSeconds < MIN_VOICED_SECONDS) {
+        setMessages((cur) => [
+          ...cur,
+          { id: uid(), role: "assistant", text: t.chat.noSpeechDetected, error: true },
         ]);
         return; // finally() below resets the composer state
       }
