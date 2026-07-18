@@ -125,7 +125,7 @@ export default function GoogleAuthForm() {
             value={clientSecret}
             onChange={setClientSecret}
             placeholder={secretConfigured ? "••••••••" : ""}
-            help="Same Credentials screen. Stored encrypted; not required for sign-in itself, kept for completeness."
+            help="Same Credentials screen. Stored encrypted. Not needed for sign-in itself, but REQUIRED for the in-chat Gmail connection (the OAuth code exchange)."
           />
           <Field
             label="Allowed email domain (optional)"
@@ -148,12 +148,18 @@ export default function GoogleAuthForm() {
             <Button onClick={save} disabled={busy}>
               Save
             </Button>
-            {origin && (
-              <span className="text-xs text-black/55 dark:text-white/55">
-                Authorized JS origin to add in Google: <code>{origin}</code>
-              </span>
-            )}
           </div>
+          {origin && (
+            <div className="space-y-1 text-xs text-black/55 dark:text-white/55">
+              <div>
+                Authorized JS origin to add in Google: <code>{origin}</code>
+              </div>
+              <div>
+                Authorized redirect URI to add (for the in-chat Gmail connection):{" "}
+                <code>{origin}/api/chat/gmail/oauth/callback</code>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -213,6 +219,32 @@ export default function GoogleAuthForm() {
           <li>
             End users get their own free Gemini key at <code>aistudio.google.com/apikey</code> and paste it in
             the chat — it stays in their browser only.
+          </li>
+        </ol>
+      </Card>
+
+      <Card title="Gmail connection (in-chat)" subtitle="Extra setup so users can let the assistant read their Gmail. Users connect only by asking in the chat — there is no settings button.">
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-black/70 dark:text-white/70">
+          <li>
+            <strong>Enable the Gmail API</strong>: APIs &amp; Services → Library → search “Gmail API” → Enable.
+          </li>
+          <li>
+            On the consent screen’s <strong>Data access / Scopes</strong>, add{" "}
+            <code>https://www.googleapis.com/auth/gmail.readonly</code> (a <em>restricted</em> scope).
+          </li>
+          <li>
+            On the same OAuth Web client, under <strong>Authorized redirect URIs</strong>, add{" "}
+            <code>{origin ? `${origin}/api/chat/gmail/oauth/callback` : "https://<your-host>/api/chat/gmail/oauth/callback"}</code>{" "}
+            (exact match; separate list from the JS origins).
+          </li>
+          <li>
+            Make sure the <strong>Client secret</strong> above is filled in — the Gmail flow needs it.
+          </li>
+          <li>
+            While the app’s publishing status is <em>Testing</em>, only <strong>Test users</strong> can connect
+            (max 100) and Google expires their access after ~7 days, so they must reconnect weekly. Going public
+            with a Gmail scope requires Google’s restricted-scope verification plus a paid CASA security
+            assessment — until then, stay in Testing.
           </li>
         </ol>
       </Card>

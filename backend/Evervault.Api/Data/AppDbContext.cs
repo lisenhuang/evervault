@@ -25,6 +25,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<AiCallLog> AiCallLogs => Set<AiCallLog>();
     public DbSet<Suggestion> Suggestions => Set<Suggestion>();
     public DbSet<SuggestionImage> SuggestionImages => Set<SuggestionImage>();
+    public DbSet<GmailConnection> GmailConnections => Set<GmailConnection>();
+    public DbSet<GmailMessage> GmailMessages => Set<GmailMessage>();
 
     // Data Protection keys persisted here so cookies (and the encrypted R2 secret) survive
     // container restarts with zero configuration.
@@ -174,6 +176,36 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         {
             e.Property(i => i.ObjectKey).HasMaxLength(400);
             e.Property(i => i.Mime).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<GmailConnection>(e =>
+        {
+            e.Property(c => c.GmailEmail).HasMaxLength(320);
+            e.Property(c => c.GmailSub).HasMaxLength(64);
+            e.Property(c => c.GrantedScopes).HasMaxLength(512);
+            e.Property(c => c.Status).HasMaxLength(16);
+            e.Property(c => c.PendingState).HasMaxLength(64);
+            e.Property(c => c.PendingCodeVerifier).HasMaxLength(128);
+            e.Property(c => c.LastHistoryId).HasMaxLength(32);
+            e.Property(c => c.LastSyncError).HasMaxLength(500);
+            // One Gmail grant per end-user; the callback and every tool call resolve by user id.
+            e.HasIndex(c => c.EndUserId).IsUnique();
+        });
+
+        modelBuilder.Entity<GmailMessage>(e =>
+        {
+            e.Property(m => m.GmailId).HasMaxLength(32);
+            e.Property(m => m.ThreadId).HasMaxLength(32);
+            e.Property(m => m.FromAddr).HasMaxLength(320);
+            e.Property(m => m.FromName).HasMaxLength(256);
+            e.Property(m => m.ToAddr).HasMaxLength(1000);
+            e.Property(m => m.Subject).HasMaxLength(500);
+            e.Property(m => m.Snippet).HasMaxLength(500);
+            e.Property(m => m.Category).HasMaxLength(32);
+            // Upsert anchor: sync passes are idempotent per (user, gmail message).
+            e.HasIndex(m => new { m.EndUserId, m.GmailId }).IsUnique();
+            // Digest window, newest-first listing, and the per-user retention delete.
+            e.HasIndex(m => new { m.EndUserId, m.InternalDate });
         });
     }
 }

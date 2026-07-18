@@ -16,8 +16,10 @@ export type ChatMessage = {
    * "voice" = the user spoke / the assistant has spoken audio attached.
    * "image" = the user attached at least one image (see `files`).
    * "call"  = a centered summary chip logged when a realtime call ends (see `durationSec`).
+   * "gmailConnect" = the in-chat Connect Gmail card, placed by the request_gmail_access tool.
+   *   `text` stays empty so the message never enters model contents or memory recording.
    */
-  kind?: "text" | "voice" | "image" | "call";
+  kind?: "text" | "voice" | "image" | "call" | "gmailConnect";
   /** For kind "call": seconds the user spent on the just-ended realtime call. */
   durationSec?: number;
   /** Spoken reply audio (PCM16 base64) for assistant messages, when produced. */

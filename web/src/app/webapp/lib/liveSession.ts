@@ -13,6 +13,7 @@ import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
+import { GMAIL_PERSONA_VOICE, GMAIL_READ_TOOL_DECLARATIONS, isGmailTool, runGmailTool } from "./gmailTools";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
@@ -119,6 +120,9 @@ export class LiveSession {
     private agendaBlock?: string,
     // The user's chosen response-style directive for live calls ("" when they left it on default).
     private styleInstruction?: string,
+    // The [Gmail] status + recent-email block, passed only when the admin has the feature configured.
+    // Its presence also gates the email read tools + persona (connecting stays text-chat-only).
+    private emailBlock?: string,
   ) {}
 
   async start(cb: LiveCallbacks): Promise<void> {
@@ -254,6 +258,7 @@ export class LiveSession {
           {
             functionDeclarations: [
               ...(this.memoryEnabled ? [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] : []),
+              ...(this.emailBlock ? GMAIL_READ_TOOL_DECLARATIONS : []),
               RECORD_SUGGESTION_DECLARATION,
             ],
           },
@@ -264,8 +269,10 @@ export class LiveSession {
           this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
           this.memoryEnabled && this.agendaBlock ? this.agendaBlock : "",
           this.memoryEnabled && this.recentContext ? this.recentContext : "",
+          this.emailBlock ?? "",
           this.memoryEnabled ? MEMORY_PERSONA : "",
           this.memoryEnabled ? TASKS_PERSONA : "",
+          this.emailBlock ? GMAIL_PERSONA_VOICE : "",
           SUGGESTION_PERSONA,
           SYSTEM_INSTRUCTION,
           // The user's chosen response style for calls (empty on default) — layered after the base
@@ -480,11 +487,15 @@ export class LiveSession {
           const name = c.name ?? "";
           const args = c.args ?? {};
           // No image attachments during a voice call, so record_suggestion runs without screenshots.
+          // Gmail runs hook-less: no connect card exists mid-call, so even a stray
+          // request_gmail_access resolves to "use the text chat" instead of breaking the loop.
           return isSuggestionTool(name)
             ? runSuggestionTool(args)
-            : isTaskTool(name)
-              ? runTaskTool(name, args)
-              : runRecallTool(args);
+            : isGmailTool(name)
+              ? runGmailTool(name, args)
+              : isTaskTool(name)
+                ? runTaskTool(name, args)
+                : runRecallTool(args);
         }),
       );
       this.session?.sendToolResponse({

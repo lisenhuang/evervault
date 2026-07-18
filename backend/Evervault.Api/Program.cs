@@ -61,6 +61,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<IGmailOAuthService, GmailOAuthService>();
 builder.Services.AddScoped<IErrorReportService, ErrorReportService>();
 builder.Services.AddScoped<IAiCallLogService, AiCallLogService>();
 
@@ -85,6 +86,11 @@ builder.Services.AddScoped<AgentService>();
 // browser tab being backgrounded (iOS Safari kills in-page TTS the moment the tab is suspended).
 builder.Services.AddSingleton<VoiceReplySynthesizer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<VoiceReplySynthesizer>());
+
+// Background Gmail sync: singleton-and-hosted (like VoiceReplySynthesizer) so GmailController can
+// poke it for an immediate first sync right after a user connects.
+builder.Services.AddSingleton<GmailSyncService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<GmailSyncService>());
 
 // Agent tools (the only execution surface for the chat).
 builder.Services.AddScoped<IAiTool, ListMemoriesTool>();

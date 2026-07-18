@@ -24,6 +24,8 @@ import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA, type SuggestionImage } from "./lib/suggestionTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
+import { getEmailDigest, getGmailStatus, renderEmailBlock, type EmailDigest, type GmailStatus } from "./lib/gmail";
+import { GMAIL_PERSONA, GMAIL_TOOL_DECLARATIONS, isGmailTool, runGmailTool } from "./lib/gmailTools";
 import { store } from "./lib/store";
 import { styleDirective, type ResponseStyle, type StyleSurface } from "./lib/responseStyle";
 import { getSettings, putSettings } from "./lib/settings";
@@ -306,6 +308,22 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     tasksRef.current = await getTasks("open");
   }, []);
 
+  // Gmail connection status + the recent-email digest, injected into every turn like the agenda.
+  // Fetched on mount and event-refreshed (connect card / disconnect tool), plus a lazy TTL refresh
+  // at turn start — the only writers are this tab's own card and tools, so events cover the common
+  // case and the TTL catches background-sync drift without ever blocking a turn.
+  const gmailStatusRef = useRef<GmailStatus | null>(null);
+  const emailDigestRef = useRef<EmailDigest | null>(null);
+  const gmailFetchedAtRef = useRef(0);
+  const GMAIL_TTL_MS = 5 * 60 * 1000;
+
+  const refreshGmail = useCallback(async () => {
+    const status = await getGmailStatus();
+    gmailStatusRef.current = status;
+    emailDigestRef.current = status.connected ? await getEmailDigest() : null;
+    gmailFetchedAtRef.current = Date.now();
+  }, []);
+
   // Distil new turns into the profile (fire-and-forget; never blocks chat). `minNew` guards against
   // extracting tiny fragments — a closing conversation needs one exchange, an idle tick needs more.
   const runExtraction = useCallback(async (minNew = 2) => {
@@ -400,8 +418,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
     void refreshProfile();
     void refreshTasks();
+    void refreshGmail();
     return () => { settingsActiveRef.current = false; };
-  }, [loadConfig, loadSettings, refreshProfile, refreshTasks]);
+  }, [loadConfig, loadSettings, refreshProfile, refreshTasks, refreshGmail]);
 
   // Distil the conversation when the user backgrounds or leaves the tab — a natural "conversation end".
   useEffect(() => {
@@ -586,6 +605,24 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // developers doesn't depend on memory. It attaches whatever screenshots the user just shared.
     const runSuggestion = (args: Record<string, unknown>) =>
       runSuggestionTool(args, () => sharedSuggestionImages(messagesRef.current));
+    // Gmail: refresh the cached status/digest lazily when stale (non-blocking — this turn renders
+    // from the cache, the next one is fresh). Tools/persona are only offered when the admin has the
+    // feature configured, so the model never proposes something that can't work.
+    if (Date.now() - gmailFetchedAtRef.current > GMAIL_TTL_MS) void refreshGmail();
+    const gmailOn = !!gmailStatusRef.current?.available;
+    const runGmail = (name: string, args: Record<string, unknown>) =>
+      runGmailTool(name, args, {
+        // The card lands BELOW the streaming reply bubble, so "click the button below" reads right.
+        // Idempotent: a suspension-retry can re-run request_gmail_access, and the card has no delete
+        // affordance, so never stack a second one right after the first.
+        showConnectCard: () =>
+          setMessages((cur) =>
+            cur[cur.length - 1]?.kind === "gmailConnect"
+              ? cur
+              : [...cur, { id: uid(), role: "assistant", text: "", kind: "gmailConnect" }],
+          ),
+        onStatusChanged: () => void refreshGmail(),
+      });
     // When the admin's primary text model isn't Gemini, run the turn server-side — but only for
     // all-text conversations: inline media (images / PDFs / voice clips, replayed in history) needs
     // Gemini's multimodal input, so those turns stay on the direct proxy path.
@@ -599,6 +636,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const sys = [
         renderProfileBlock(profileFactsRef.current),
         renderAgendaBlock(tasksRef.current),
+        gmailOn ? renderEmailBlock(gmailStatusRef.current, emailDigestRef.current) : null,
         langDirective,
         styleDir,
         CONFIDENTIALITY,
@@ -606,28 +644,50 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         MEMORY_PERSONA,
         TASKS_PERSONA,
         SUGGESTION_PERSONA,
+        gmailOn ? GMAIL_PERSONA : null,
         currentTimeContext(),
       ]
         .filter(Boolean)
         .join("\n\n");
       const tools = [
-        { functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS, RECORD_SUGGESTION_DECLARATION] },
+        {
+          functionDeclarations: [
+            RECALL_MEMORY_DECLARATION,
+            ...TASK_TOOL_DECLARATIONS,
+            RECORD_SUGGESTION_DECLARATION,
+            ...(gmailOn ? GMAIL_TOOL_DECLARATIONS : []),
+          ],
+        },
       ];
       const runTool = (name: string, args: Record<string, unknown>) =>
         isSuggestionTool(name)
           ? runSuggestion(args)
-          : isTaskTool(name)
-            ? runTaskTool(name, args, () => void refreshTasks())
-            : runRecallTool(args);
+          : isGmailTool(name)
+            ? runGmail(name, args)
+            : isTaskTool(name)
+              ? runTaskTool(name, args, () => void refreshTasks())
+              : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
     } else {
-      const sys = [langDirective, styleDir, CONFIDENTIALITY, CAPABILITY_BOUNDS, SUGGESTION_PERSONA, currentTimeContext()]
+      const sys = [
+        gmailOn ? renderEmailBlock(gmailStatusRef.current, emailDigestRef.current) : null,
+        langDirective,
+        styleDir,
+        CONFIDENTIALITY,
+        CAPABILITY_BOUNDS,
+        SUGGESTION_PERSONA,
+        gmailOn ? GMAIL_PERSONA : null,
+        currentTimeContext(),
+      ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = [{ functionDeclarations: [RECORD_SUGGESTION_DECLARATION] }];
-      const runTool = (name: string, args: Record<string, unknown>) => runSuggestion(args);
+      const tools = [
+        { functionDeclarations: [RECORD_SUGGESTION_DECLARATION, ...(gmailOn ? GMAIL_TOOL_DECLARATIONS : [])] },
+      ];
+      const runTool = (name: string, args: Record<string, unknown>) =>
+        isGmailTool(name) ? runGmail(name, args) : runSuggestion(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -966,6 +1026,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
     const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
+    // Email context is captured at connect like the agenda (a long call won't refresh it — the
+    // search_emails tool gives freshness mid-call). Only passed when the feature is configured.
+    if (Date.now() - gmailFetchedAtRef.current > GMAIL_TTL_MS) await refreshGmail();
+    const emailBlock = gmailStatusRef.current?.available
+      ? renderEmailBlock(gmailStatusRef.current, emailDigestRef.current) ?? undefined
+      : undefined;
     const session = new LiveSession(
       liveModel,
       voice,
@@ -975,6 +1041,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       lang,
       agendaBlock,
       styleDirective(liveStyle),
+      emailBlock,
     );
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
@@ -1172,6 +1239,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               audioPaused={audioPlaying?.paused ?? false}
               onReply={setReplyTo}
               onDelete={setPendingDelete}
+              onGmailConnected={() => void refreshGmail()}
               scrollSignal={!!callState}
             />
           )}

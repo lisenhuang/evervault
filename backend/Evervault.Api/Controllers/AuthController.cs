@@ -22,13 +22,16 @@ public class AuthController : ControllerBase
     private readonly IGoogleAuthService _google;
     private readonly AppDbContext _db;
     private readonly IStorageService _storage;
+    private readonly IGmailOAuthService _gmail;
     private readonly ILogger<AuthController> _log;
 
-    public AuthController(IGoogleAuthService google, AppDbContext db, IStorageService storage, ILogger<AuthController> log)
+    public AuthController(IGoogleAuthService google, AppDbContext db, IStorageService storage,
+        IGmailOAuthService gmail, ILogger<AuthController> log)
     {
         _google = google;
         _db = db;
         _storage = storage;
+        _gmail = gmail;
         _log = log;
     }
 
@@ -120,9 +123,22 @@ public class AuthController : ControllerBase
             _log.LogWarning(ex, "Failed to purge stored audio for deleted user {UserId}", uid);
         }
 
+        // Gmail: best-effort revoke at Google first (a live grant must not survive the account),
+        // then the hard-guarantee row deletes below cover the case where revoke/network fails.
+        try
+        {
+            await _gmail.DisconnectAsync(uid, HttpContext.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to revoke Gmail grant for deleted user {UserId}", uid);
+        }
+
         await _db.ChatMemories.Where(m => m.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserMemoryFacts.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserTasks.Where(t => t.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.GmailMessages.Where(m => m.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.GmailConnections.Where(c => c.EndUserId == uid).ExecuteDeleteAsync();
         await _db.EndUsers.Where(u => u.Id == uid).ExecuteDeleteAsync();
 
         await HttpContext.SignOutAsync(Scheme);
