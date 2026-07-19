@@ -148,7 +148,8 @@ const ja: Messages = {
     closed: "通話が終了しました",
     idleClosedHint: "しばらく発言がなかったので、時間を節約するために通話を終了しました。もう一度話すには電話ボタンをタップしてください。",
     idleEndedTitle: "通話が終了しました",
-    idleEndedBody: "1分ほど発言がなかったので、時間を節約するために通話を終了しました。続きから再開しますか？",
+    idleEndedBody: (minutes: number) =>
+      `${minutes}分ほど発言がなかったので、時間を節約するために通話を終了しました。続きから再開しますか？`,
     reconnect: "再接続",
     dismiss: "閉じる",
     unmute: "ミュート解除",

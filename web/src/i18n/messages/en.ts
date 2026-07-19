@@ -148,7 +148,8 @@ const en = {
     closed: "Call ended",
     idleClosedHint: "It went quiet for a while, so I ended the call to save your minutes. Tap the phone to call again.",
     idleEndedTitle: "Call ended",
-    idleEndedBody: "You went quiet for about a minute, so I ended the call. Want to pick up where we left off?",
+    idleEndedBody: (minutes: number) =>
+      `You went quiet for about ${minutes === 1 ? "a minute" : `${minutes} minutes`}, so I ended the call. Want to pick up where we left off?`,
     reconnect: "Reconnect",
     dismiss: "Dismiss",
     unmute: "Unmute",

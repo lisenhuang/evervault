@@ -62,7 +62,9 @@ public class ChatAiController : ControllerBase
         @"^v1beta/models/[^/:]+:(generateContent|streamGenerateContent|embedContent|batchEmbedContents)$",
         RegexOptions.Compiled);
 
-    public record WebappConfigDto(string TextModel, string AudioModel, string LiveModel, string DefaultVoice, bool ServerChat);
+    public record WebappConfigDto(
+        string TextModel, string AudioModel, string LiveModel, string DefaultVoice, bool ServerChat,
+        int LiveIdleTimeoutSeconds);
     public record LiveTokenDto(string Token, string? ExpiresAt);
 
     /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks).
@@ -70,14 +72,17 @@ public class ChatAiController : ControllerBase
     /// it's what the browser calls directly through the pooled-key proxy for transcription, TTS, embeddings,
     /// and memory extraction. <c>ServerChat</c> tells the client that the admin's primary text model is NOT
     /// Gemini (e.g. ChatGPT), so text turns should go through <c>POST text</c>, where the server holds the
-    /// credentials and runs primary→fallback. The model id itself is deliberately not exposed.</summary>
+    /// credentials and runs primary→fallback. The model id itself is deliberately not exposed.
+    /// <c>LiveIdleTimeoutSeconds</c> is the admin's auto-hang-up window for an idle live call (0 = never);
+    /// it's additive, so an older client that ignores it just keeps its built-in 60s default.</summary>
     [HttpGet("config")]
     public async Task<ActionResult<WebappConfigDto>> Config()
     {
         var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
         return Ok(new WebappConfigDto(
             WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
-            WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider));
+            WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider,
+            WebappAiDefaults.LiveIdle(c)));
     }
 
     // --- Server-side voice-message reply audio ---

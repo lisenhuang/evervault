@@ -32,11 +32,13 @@ public class AiChatController : ControllerBase
     public record WebappAiConfigDto(
         string TextModel, string AudioModel, string LiveModel, string DefaultVoice,
         string TextProvider, string? TextReasoning,
-        string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning);
+        string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning,
+        int LiveIdleTimeoutSeconds);
     public record WebappAiConfigInput(
         string? TextModel, string? AudioModel, string? LiveModel, string? DefaultVoice,
         string? TextProvider, string? TextReasoning,
-        string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning);
+        string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning,
+        int? LiveIdleTimeoutSeconds);
 
     /// <summary>Live model list for a provider (free/paid + pricing where exposed). Goes through failover.
     /// <paramref name="kind"/> = "chat" (default) or "embedding".</summary>
@@ -164,6 +166,16 @@ public class AiChatController : ControllerBase
     [HttpPut("webapp-config")]
     public async Task<ActionResult<WebappAiConfigDto>> PutWebappConfig([FromBody] WebappAiConfigInput input)
     {
+        // 0 = never auto-hang-up; anything else must fall inside the allowed window. Null = not sent
+        // (an older admin page), so the stored value is left alone.
+        if (input.LiveIdleTimeoutSeconds is int idle && idle != 0 &&
+            (idle < WebappAiDefaults.MinLiveIdleSeconds || idle > WebappAiDefaults.MaxLiveIdleSeconds))
+            return BadRequest(new
+            {
+                error = $"The call idle timeout must be 0 (never) or between {WebappAiDefaults.MinLiveIdleSeconds} " +
+                        $"and {WebappAiDefaults.MaxLiveIdleSeconds} seconds.",
+            });
+
         var c = await _db.WebappAiConfigs.FirstOrDefaultAsync();
         var existing = c is not null;
         c ??= new WebappAiConfig();
@@ -176,6 +188,7 @@ public class AiChatController : ControllerBase
         c.TextFallbackProvider = MergeText(input.TextFallbackProvider, c.TextFallbackProvider);
         c.TextFallbackModel = MergeText(input.TextFallbackModel, c.TextFallbackModel);
         c.TextFallbackReasoning = MergeReasoning(input.TextFallbackReasoning, c.TextFallbackReasoning);
+        if (input.LiveIdleTimeoutSeconds is not null) c.LiveIdleTimeoutSeconds = input.LiveIdleTimeoutSeconds;
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.WebappAiConfigs.Add(c);
         await _db.SaveChangesAsync();
@@ -185,7 +198,8 @@ public class AiChatController : ControllerBase
     private static WebappAiConfigDto WebappDto(WebappAiConfig? c) => new(
         WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
         WebappAiDefaults.TextProviderOf(c), c?.TextReasoning,
-        c?.TextFallbackProvider, c?.TextFallbackModel, c?.TextFallbackReasoning);
+        c?.TextFallbackProvider, c?.TextFallbackModel, c?.TextFallbackReasoning,
+        WebappAiDefaults.LiveIdle(c));
 
     // null → keep existing (older clients omit the field); ""/whitespace → clear to null; else trimmed value.
     private static string? MergeText(string? incoming, string? current) =>

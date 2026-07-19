@@ -149,7 +149,8 @@ const zh: Messages = {
     closed: "通话已结束",
     idleClosedHint: "有一段时间没有说话,已为你结束通话以节省时长。想再次通话请点击电话按钮。",
     idleEndedTitle: "通话已结束",
-    idleEndedBody: "大约一分钟没有说话,已为你结束通话以节省时长。要从刚才的地方继续吗?",
+    idleEndedBody: (minutes: number) =>
+      `大约 ${minutes} 分钟没有说话,已为你结束通话以节省时长。要从刚才的地方继续吗?`,
     reconnect: "重新连接",
     dismiss: "关闭",
     unmute: "取消静音",

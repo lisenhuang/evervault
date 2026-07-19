@@ -17,6 +17,22 @@ import type {
 } from "./aiTypes";
 import { Badge, Banner, Button, Card, Field, Select, TextArea } from "./ui";
 import { PREBUILT_VOICES } from "../webapp/lib/voices";
+import { DEFAULT_LIVE_IDLE_SEC } from "../webapp/lib/store";
+
+// How long a live call may sit in user silence before it hangs itself up. Whole minutes only — the
+// copy shown to the user is phrased in minutes — plus an explicit "never" (0) for admins who'd rather
+// a call stay open until the user ends it. Values are seconds, matching the API.
+const LIVE_IDLE_OPTIONS: { sec: number; label: string }[] = [
+  { sec: 60, label: "1 minute" },
+  { sec: 120, label: "2 minutes" },
+  { sec: 180, label: "3 minutes" },
+  { sec: 300, label: "5 minutes" },
+  { sec: 600, label: "10 minutes" },
+  { sec: 900, label: "15 minutes" },
+  { sec: 1800, label: "30 minutes" },
+  { sec: 3600, label: "1 hour" },
+  { sec: 0, label: "Never — only the user ends the call" },
+];
 
 export default function AiKeysForm() {
   const [data, setData] = useState<AiKeysDto>({ gemini: [], openRouter: [] });
@@ -219,6 +235,8 @@ function WebappModelsCard() {
   const [audioModel, setAudioModel] = useState("");
   const [liveModel, setLiveModel] = useState("");
   const [voice, setVoice] = useState("");
+  // Idle auto-hang-up window for live calls, in seconds ("0" = never). Held as a string for <Select>.
+  const [liveIdle, setLiveIdle] = useState(String(DEFAULT_LIVE_IDLE_SEC));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "success" | "info"; text: string } | null>(null);
 
@@ -264,6 +282,7 @@ function WebappModelsCard() {
         setAudioModel(d.audioModel);
         setLiveModel(d.liveModel);
         setVoice(d.defaultVoice);
+        setLiveIdle(String(d.liveIdleTimeoutSeconds ?? DEFAULT_LIVE_IDLE_SEC));
       }
       if (oauthRes.ok) {
         const s = await oauthRes.json();
@@ -289,6 +308,7 @@ function WebappModelsCard() {
         audioModel,
         liveModel,
         defaultVoice: voice,
+        liveIdleTimeoutSeconds: Number(liveIdle),
       }),
     });
     setBusy(false);
@@ -307,6 +327,11 @@ function WebappModelsCard() {
     .map((m) => ({ provider: "gemini", id: m.id, name: m.name }));
   const audioOptions = withCurrent(chatModels.filter((m) => /tts/i.test(m.id)), audioModel);
   const liveOptions = withCurrent(liveModels, liveModel);
+  // A value set directly through the API needn't be one of our presets; surface it so the select never
+  // renders blank and silently rewrites the stored setting on the next save.
+  const idleOptions = LIVE_IDLE_OPTIONS.some((o) => String(o.sec) === liveIdle)
+    ? LIVE_IDLE_OPTIONS
+    : [...LIVE_IDLE_OPTIONS, { sec: Number(liveIdle), label: `${liveIdle} seconds` }];
 
   // Pick the reasoning valid for a newly chosen ChatGPT model (keep the current one if still supported).
   function reasoningForOpenAiModel(modelId: string, current: string): string {
@@ -337,7 +362,8 @@ function WebappModelsCard() {
       normReason(fbReasoning) !== normReason(cfg.textFallbackReasoning) ||
       audioModel !== cfg.audioModel ||
       liveModel !== cfg.liveModel ||
-      voice !== cfg.defaultVoice);
+      voice !== cfg.defaultVoice ||
+      Number(liveIdle) !== cfg.liveIdleTimeoutSeconds);
 
   return (
     <Card
@@ -416,6 +442,23 @@ function WebappModelsCard() {
           </div>
           <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
             Real-time hands-free calls (the call button). Needs a Live-API model.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-medium">End an idle call after</span>
+          <div className="mt-1">
+            <Select value={liveIdle} onChange={setLiveIdle} disabled={busy}>
+              {idleOptions.map((o) => (
+                <option key={o.sec} value={String(o.sec)}>{o.label}</option>
+              ))}
+            </Select>
+          </div>
+          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+            How long a call may sit in silence before it hangs up on its own. Only the user&rsquo;s quiet
+            time counts — the timer resets whenever either side is speaking, so a long answer or an active
+            back-and-forth never ends the call. A live call bills for the whole time it stays open, so
+            &ldquo;Never&rdquo; means an abandoned call keeps spending your quota until the tab closes.
           </span>
         </label>
 

@@ -34,6 +34,12 @@ public class WebappAiConfig
     public string? AudioModel { get; set; }
     public string? LiveModel { get; set; }
     public string? DefaultVoice { get; set; }
+
+    /// <summary>How long a live voice call may sit in user silence before it auto-hangs-up, in seconds.
+    /// A Live socket bills for the whole time it's open, so this caps an abandoned call. 0 = never hang up
+    /// (the call runs until the user ends it). Null (legacy rows) = <see cref="WebappAiDefaults.LiveIdleSeconds"/>.</summary>
+    public int? LiveIdleTimeoutSeconds { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -47,10 +53,29 @@ public static class WebappAiDefaults
     public const string Voice = "Kore";
     public const string GeminiProvider = "gemini";
 
+    /// <summary>Default auto-hang-up window for an idle live call (1 minute), matching the value the
+    /// client hard-coded before this became configurable — so unset rows behave exactly as before.</summary>
+    public const int LiveIdleSeconds = 60;
+
+    /// <summary>Upper bound the admin may set (2 hours). Guards against a typo leaving a billed Live
+    /// socket open effectively forever; "never" is expressed as 0, not a huge number.</summary>
+    public const int MaxLiveIdleSeconds = 7200;
+
+    /// <summary>Lower bound (30s). Anything shorter would cut off a user mid-thought.</summary>
+    public const int MinLiveIdleSeconds = 30;
+
     public static string Text(WebappAiConfig? c) => Or(c?.TextModel, TextModel);
     public static string Audio(WebappAiConfig? c) => Or(c?.AudioModel, AudioModel);
     public static string Live(WebappAiConfig? c) => Or(c?.LiveModel, LiveModel);
     public static string VoiceOf(WebappAiConfig? c) => Or(c?.DefaultVoice, Voice);
+
+    /// <summary>The idle auto-hang-up window in seconds, clamped to the allowed range. 0 means never.</summary>
+    public static int LiveIdle(WebappAiConfig? c)
+    {
+        var v = c?.LiveIdleTimeoutSeconds ?? LiveIdleSeconds;
+        if (v <= 0) return 0;
+        return Math.Clamp(v, MinLiveIdleSeconds, MaxLiveIdleSeconds);
+    }
 
     /// <summary>Provider of the primary text model, normalized. Legacy rows (null) are Gemini.</summary>
     public static string TextProviderOf(WebappAiConfig? c) => Norm(c?.TextProvider) ?? GeminiProvider;

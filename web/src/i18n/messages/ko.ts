@@ -148,7 +148,8 @@ const ko: Messages = {
     closed: "통화 종료",
     idleClosedHint: "한동안 말이 없어서 시간을 아끼기 위해 통화를 종료했어요. 다시 통화하려면 전화 버튼을 누르세요.",
     idleEndedTitle: "통화 종료",
-    idleEndedBody: "1분 정도 말이 없어서 시간을 아끼기 위해 통화를 종료했어요. 이어서 다시 시작할까요?",
+    idleEndedBody: (minutes: number) =>
+      `${minutes}분 정도 말이 없어서 시간을 아끼기 위해 통화를 종료했어요. 이어서 다시 시작할까요?`,
     reconnect: "다시 연결",
     dismiss: "닫기",
     unmute: "음소거 해제",

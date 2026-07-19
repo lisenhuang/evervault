@@ -162,6 +162,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [textModel, setTextModel] = useState(store.getTextModel());
   const [audioModel, setAudioModel] = useState(store.getAudioModel());
   const [liveModel, setLiveModel] = useState(store.getLiveModel());
+  // Admin-set idle auto-hang-up window for live calls, in seconds (0 = never). Seeded from the local
+  // cache so the very first call of a session doesn't fall back to the built-in default.
+  const [liveIdleSec, setLiveIdleSec] = useState(store.getLiveIdleSec());
   // The admin's primary text model isn't Gemini (e.g. ChatGPT): text turns go through the backend's
   // /api/chat/ai/text instead of the direct Gemini proxy. Session-only (re-read on every mount) and
   // defaults to false, so an old backend or a failed config fetch keeps the plain Gemini path.
@@ -340,11 +343,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (!res.ok) return;
       const cfg = (await res.json()) as {
         textModel: string; audioModel: string; liveModel: string; defaultVoice: string; serverChat?: boolean;
+        liveIdleTimeoutSeconds?: number;
       };
       if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
       if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
       if (cfg.liveModel) { store.setLiveModel(cfg.liveModel); setLiveModel(cfg.liveModel); }
       if (cfg.defaultVoice && !store.getVoiceChosen()) { store.setVoice(cfg.defaultVoice); setVoice(cfg.defaultVoice); }
+      // 0 = "never auto-hang-up", so check for a number rather than truthiness. An older backend that
+      // doesn't send the field leaves the cached/default window in place.
+      if (typeof cfg.liveIdleTimeoutSeconds === "number" && cfg.liveIdleTimeoutSeconds >= 0) {
+        store.setLiveIdleSec(cfg.liveIdleTimeoutSeconds);
+        setLiveIdleSec(cfg.liveIdleTimeoutSeconds);
+      }
       setServerChat(!!cfg.serverChat);
     } catch {
       /* keep the defaults */
@@ -975,6 +985,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       lang,
       agendaBlock,
       styleDirective(liveStyle),
+      liveIdleSec,
     );
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
@@ -1274,6 +1285,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
 
       <CallEndedModal
         open={idleEndedOpen}
+        idleSeconds={liveIdleSec}
         onReconnect={() => {
           setIdleEndedOpen(false);
           void startCall(); // resume the conversation on a fresh Live socket

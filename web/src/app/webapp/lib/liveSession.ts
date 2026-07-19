@@ -25,9 +25,10 @@ export type LiveCallbacks = {
   onTurnComplete: () => void;
   onError: (msg: string) => void;
   /**
-   * The call auto-closed because the user went silent for the whole idle window (see IDLE_TIMEOUT_MS)
-   * on their turn to speak — e.g. they fell asleep mid-conversation. Fires just before the "closed"
-   * state so the UI can explain why the call ended rather than looking like a plain hang-up.
+   * The call auto-closed because the user went silent for the whole idle window (admin-configured —
+   * see DEFAULT_IDLE_TIMEOUT_SEC) on their turn to speak — e.g. they fell asleep mid-conversation.
+   * Fires just before the "closed" state so the UI can explain why the call ended rather than looking
+   * like a plain hang-up.
    */
   onIdleTimeout?: () => void;
 };
@@ -49,7 +50,11 @@ const MAX_RECONNECTS = 6;
 // or fell asleep mid-conversation — we close the call for them instead of burning tokens on nothing.
 // Only the user's silent time counts: the window resets whenever the user or the model is speaking,
 // so a long model monologue or an active back-and-forth never trips it.
-const IDLE_TIMEOUT_MS = 60_000;
+//
+// The window is admin-configurable (GET /api/chat/ai/config -> liveIdleTimeoutSeconds, surfaced in
+// /admin/ai-keys), passed into the constructor in seconds; 0 disables the auto-hang-up entirely. This
+// is the fallback used when the config hasn't loaded yet, and matches the long-standing 1-minute default.
+const DEFAULT_IDLE_TIMEOUT_SEC = 60;
 // How often to check the idle window. Sub-second precision isn't needed — a coarse tick keeps the
 // timer cheap and the close fires within a second of the threshold.
 const IDLE_CHECK_MS = 1_000;
@@ -103,7 +108,7 @@ export class LiveSession {
   private tokenAttempt = 0;
   /**
    * Wall-clock of the last moment the conversation was audibly active — either party speaking. The
-   * idle monitor closes the call once this is IDLE_TIMEOUT_MS in the past (see markVoiceActivity /
+   * idle monitor closes the call once this is `idleTimeoutMs` in the past (see markVoiceActivity /
    * startIdleMonitor). 0 until the monitor starts.
    */
   private lastVoiceActivityMs = 0;
@@ -119,7 +124,14 @@ export class LiveSession {
     private agendaBlock?: string,
     // The user's chosen response-style directive for live calls ("" when they left it on default).
     private styleInstruction?: string,
+    // Admin-configured idle auto-hang-up window, in seconds. 0 = never hang up on silence.
+    private idleTimeoutSec: number = DEFAULT_IDLE_TIMEOUT_SEC,
   ) {}
+
+  /** The idle window in ms, or 0 when the admin turned the auto-hang-up off. */
+  private get idleTimeoutMs(): number {
+    return this.idleTimeoutSec > 0 ? this.idleTimeoutSec * 1000 : 0;
+  }
 
   async start(cb: LiveCallbacks): Promise<void> {
     this.cb = cb;
@@ -193,16 +205,18 @@ export class LiveSession {
    * Start watching for an abandoned call. On each tick, if the model isn't currently speaking and no
    * reconnect is in flight, and the user has been silent for the whole idle window, hang up on their
    * behalf. Idempotent-ish: any existing timer is cleared first so a resume never stacks two monitors.
+   * A window of 0 means the admin disabled the auto-hang-up, so no monitor runs at all.
    */
   private startIdleMonitor() {
     this.stopIdleMonitor();
+    if (this.idleTimeoutMs <= 0) return;
     this.markVoiceActivity();
     this.idleTimer = setInterval(() => {
       if (this.stopped || this.fatal) return;
       // While the model is talking or a socket swap is underway, it's not the user's silent turn —
       // keep the window fresh so those spans never count toward the timeout.
       if (this.modelTurnActive || this.reconnecting) return this.markVoiceActivity();
-      if (Date.now() - this.lastVoiceActivityMs >= IDLE_TIMEOUT_MS) this.handleIdleTimeout();
+      if (Date.now() - this.lastVoiceActivityMs >= this.idleTimeoutMs) this.handleIdleTimeout();
     }, IDLE_CHECK_MS);
   }
 
@@ -217,7 +231,7 @@ export class LiveSession {
   private handleIdleTimeout() {
     if (this.stopped) return;
     this.stopIdleMonitor();
-    console.info("[live] no user speech for", IDLE_TIMEOUT_MS, "ms — auto-closing the idle call");
+    console.info("[live] no user speech for", this.idleTimeoutMs, "ms — auto-closing the idle call");
     this.cb.onIdleTimeout?.();
     this.cb.onState("closed");
     void this.stop();

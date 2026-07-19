@@ -8,6 +8,9 @@ import { normalizeStyle, type ResponseStyle, type StyleSurface } from "./respons
 const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
 const LIVE_MODEL = "ev:liveModel";
+// Admin-set auto-hang-up window for an idle live call, in seconds ("0" = never). Cached so a call
+// started before the config fetch resolves still uses the admin's value rather than the built-in 60s.
+const LIVE_IDLE_SEC = "ev:liveIdleSec";
 const VOICE = "ev:voice";
 const MEMORY_ON = "ev:memoryOn";
 const NOTICE_SEEN = "ev:memoryNoticeSeen";
@@ -38,6 +41,8 @@ export const DEFAULT_TEXT_MODEL = "gemini-flash-lite-latest";
 export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
 export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 export const DEFAULT_VOICE = "Kore";
+/** Fallback idle auto-hang-up window (seconds) before the server's config arrives. */
+export const DEFAULT_LIVE_IDLE_SEC = 60;
 
 function get(key: string): string {
   if (typeof localStorage === "undefined") return "";
@@ -56,6 +61,14 @@ export const store = {
   setAudioModel: (v: string) => set(AUDIO_MODEL, v),
   getLiveModel: () => get(LIVE_MODEL) || DEFAULT_LIVE_MODEL,
   setLiveModel: (v: string) => set(LIVE_MODEL, v),
+  // 0 is a meaningful value here ("never hang up"), so an explicit "0" must survive the round trip —
+  // hence the isFinite check rather than the `|| default` idiom used for the string settings above.
+  getLiveIdleSec: () => {
+    const raw = get(LIVE_IDLE_SEC);
+    const sec = Number(raw);
+    return raw !== "" && Number.isFinite(sec) && sec >= 0 ? sec : DEFAULT_LIVE_IDLE_SEC;
+  },
+  setLiveIdleSec: (v: number) => set(LIVE_IDLE_SEC, String(v)),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
   // Whether the user has explicitly picked a voice — so the admin's default only applies before they do.

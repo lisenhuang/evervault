@@ -6,17 +6,20 @@ import { useT } from "@/i18n/LanguageProvider";
 
 /**
  * Shown after a live voice call auto-ends because the user went silent for the whole idle window
- * (see IDLE_TIMEOUT_MS in liveSession.ts). Explains that the hang-up was intentional — not a dropped
+ * (admin-configured; see liveSession.ts). Explains that the hang-up was intentional — not a dropped
  * connection — and offers a one-tap Reconnect to resume the conversation. Matches ConfirmDialog's
  * centered-overlay pattern (no native dialogs — see web/CLAUDE.md): Escape and backdrop-click dismiss,
  * the Reconnect button takes focus on open, and both entrances reuse the app's shared motion tokens.
  */
 export default function CallEndedModal({
   open,
+  idleSeconds,
   onReconnect,
   onClose,
 }: {
   open: boolean;
+  /** The idle window that elapsed, in seconds — shown to the user rounded to whole minutes. */
+  idleSeconds: number;
   onReconnect: () => void;
   onClose: () => void;
 }) {
@@ -57,7 +60,9 @@ export default function CallEndedModal({
         </div>
 
         <h2 className="mt-4 text-lg font-semibold">{t.call.idleEndedTitle}</h2>
-        <p className="mt-2 text-sm text-black/60 dark:text-white/60">{t.call.idleEndedBody}</p>
+        <p className="mt-2 text-sm text-black/60 dark:text-white/60">
+          {t.call.idleEndedBody(Math.max(1, Math.round(idleSeconds / 60)))}
+        </p>
 
         <div className="mt-6 flex flex-col gap-2">
           <button
