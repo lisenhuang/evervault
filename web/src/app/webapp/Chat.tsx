@@ -185,6 +185,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
+  // Starting a new chat clears the current one from the screen for good, so we ask first — but only
+  // when there's actually something to lose (see the New chat handler).
+  const [confirmNewChat, setConfirmNewChat] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -1122,19 +1125,26 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // message from being sent mid-response.
   const composerBusy = streaming || messages.some((m) => m.pendingAudio);
 
+  // Clear the screen and begin a fresh conversation. The old messages are only ever shown client-side,
+  // so this is the point of no return for them — call it from the confirm dialog, not straight from the
+  // button, whenever the chat has content (see onNewChat below).
+  function startNewChat() {
+    if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
+    setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're clearing
+    void runExtraction(2); // distil the conversation we're leaving before clearing it
+    setMessages([]);
+    setReplyTo(null); // a quote from the old chat has nothing to point at anymore
+    conversationIdRef.current = uid();
+    extractCursorRef.current = 0;
+  }
+
   return (
     <div className="app-shell flex flex-row bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <Sidebar
         user={user}
-        onNewChat={() => {
-          if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
-          setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're clearing
-          void runExtraction(2); // distil the conversation we're leaving before clearing it
-          setMessages([]);
-          setReplyTo(null); // a quote from the old chat has nothing to point at anymore
-          conversationIdRef.current = uid();
-          extractCursorRef.current = 0;
-        }}
+        // An empty chat has nothing to lose, so starting a new one is a no-op worth doing silently.
+        // Once there are messages, clearing them is irreversible — confirm first.
+        onNewChat={() => (messages.length === 0 ? startNewChat() : setConfirmNewChat(true))}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
         onDeleteAccount={() => {
@@ -1229,6 +1239,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onChangeTextStyle={pickTextStyle}
         onChangeVoiceStyle={pickVoiceStyle}
         onChangeLiveStyle={pickLiveStyle}
+      />
+
+      <ConfirmDialog
+        open={confirmNewChat}
+        title={t.chat.newChatTitle}
+        message={t.chat.newChatMessage}
+        confirmLabel={t.chat.newChatConfirm}
+        cancelLabel={t.common.cancel}
+        onClose={() => setConfirmNewChat(false)}
+        onConfirm={() => {
+          setConfirmNewChat(false);
+          startNewChat();
+        }}
       />
 
       <ConfirmDialog
