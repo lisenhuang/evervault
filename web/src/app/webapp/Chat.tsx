@@ -21,6 +21,8 @@ import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
+import { FILE_TOOL_DECLARATIONS, FILES_PERSONA, isFileTool, runFileTool } from "./lib/fileTools";
+import { fetchChatFileContent, type StoredFileMeta, uploadChatFile } from "./lib/filesApi";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA, type SuggestionImage } from "./lib/suggestionTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
@@ -118,14 +120,28 @@ function replyContext(r: ReplyRef): string {
 
 function toContents(msgs: ChatMessage[]): Content[] {
   return msgs
-    .filter((m) => (m.text || m.files?.length) && !m.error)
+    .filter((m) => {
+      if (m.error) return false;
+      // A file-offer card ("I found invoice.pdf — Send it?") is UI, not conversation: neither side
+      // said it, and replaying it would make the model think the exchange happened. Drop it entirely.
+      if (m.kind === "fileOffer") return false;
+      // Attachments only count as content on the USER side. An assistant message's `files` is a copy
+      // it handed back after the user tapped Send, and those parts are deliberately NOT replayed
+      // below — so a file-only assistant message would otherwise survive this filter and then produce
+      // an empty `parts` array, which the API rejects.
+      return m.role === "user" ? !!(m.text || m.files?.length) : !!m.text;
+    })
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      // Replay attached files inline so follow-up questions about a picture/document keep working.
       parts: [
         // The quoted-message marker precedes the text so the model reads the reply in context.
         ...(m.replyTo ? [{ text: replyContext(m.replyTo) }] : []),
-        ...(m.files ?? []).map(fileToPart),
+        // Replay attached files inline so follow-up questions about a picture/document keep working —
+        // but only the user's. A file the assistant delivered must never come back as inlineData under
+        // role "model": Gemini rejects media in model output, it re-spends the inline budget on bytes
+        // the model already described in words, and it would silently flip an otherwise all-text
+        // conversation off the neutral server-chat path (see contentsAreTextOnly in serverChat.ts).
+        ...(m.role === "user" ? (m.files ?? []).map(fileToPart) : []),
         ...(m.text ? [{ text: m.text }] : []),
       ],
     }));
@@ -580,6 +596,44 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     };
   }, [ensureVoiceReplyAudio]);
 
+  // --- Stored files: the assistant offers one, the user decides whether it lands in the chat ---
+
+  // The `send_file` tool found a stored file and wants to give it back. This does NOT deliver it: it
+  // posts a confirmation card into the chat, and nothing is fetched until the user taps Send (see
+  // sendStoredFile). The model's optional `note` becomes the card's caption; without one the card just
+  // carries its own label, and the model's reply ("I found your invoice…") reads as the sentence above it.
+  //
+  // Idempotent per file: runWithSuspensionRetry re-runs the WHOLE turn after an iOS tab suspension, tool
+  // calls included, and it only resets the assistant message's text — cards appended by the first attempt
+  // survive. Without this guard the user comes back to the same file offered twice.
+  const offerFile = useCallback((meta: StoredFileMeta, note?: string) => {
+    setMessages((cur) =>
+      cur.some((m) => m.kind === "fileOffer" && m.fileRef?.id === meta.id)
+        ? cur
+        : [...cur, { id: uid(), role: "assistant", text: note ?? "", kind: "fileOffer", fileRef: meta }],
+    );
+  }, []);
+
+  // The user tapped Send on an offer card. Pull the stored bytes back down and turn the card itself
+  // into a normal assistant message carrying the file, so it renders exactly like a fresh attachment
+  // (thumbnail + lightbox, or a chip). Clearing `kind`/`fileRef` is what retires the card; on a failed
+  // fetch the same message becomes a plain error line, so the card can't be left stuck mid-send.
+  const sendStoredFile = useCallback(
+    async (messageId: string, fileId: number) => {
+      const pf = await fetchChatFileContent(fileId);
+      setMessages((cur) =>
+        cur.map((m) =>
+          m.id !== messageId
+            ? m
+            : pf
+              ? { ...m, kind: undefined, fileRef: null, files: [pf] }
+              : { ...m, kind: undefined, fileRef: null, error: true, text: t.message.fileUnavailable },
+        ),
+      );
+    },
+    [t],
+  );
+
   async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
     let acc = "";
     const onDelta = (delta: string) => {
@@ -617,6 +671,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
         MEMORY_PERSONA,
+        FILES_PERSONA,
         TASKS_PERSONA,
         SUGGESTION_PERSONA,
         currentTimeContext(),
@@ -624,14 +679,26 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         .filter(Boolean)
         .join("\n\n");
       const tools = [
-        { functionDeclarations: [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS, RECORD_SUGGESTION_DECLARATION] },
+        {
+          functionDeclarations: [
+            RECALL_MEMORY_DECLARATION,
+            ...TASK_TOOL_DECLARATIONS,
+            ...FILE_TOOL_DECLARATIONS,
+            RECORD_SUGGESTION_DECLARATION,
+          ],
+        },
       ];
+      // The last arm is a fallthrough, not a name match — recall_memory is whatever didn't match
+      // above. So every new tool family needs its own explicit arm ahead of it, or its calls get
+      // silently answered by a memory search.
       const runTool = (name: string, args: Record<string, unknown>) =>
         isSuggestionTool(name)
           ? runSuggestion(args)
           : isTaskTool(name)
             ? runTaskTool(name, args, () => void refreshTasks())
-            : runRecallTool(args);
+            : isFileTool(name)
+              ? runFileTool(name, args, offerFile)
+              : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -737,9 +804,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // Record the turn so past attachments can be recalled: each file becomes a memory line that
         // states the user *sent* a file (type + name) plus whatever content we can extract — image
         // description, audio transcript, PDF summary, or the file's text (a second generateContent
-        // call per binary file). The first image itself also goes to R2. This way the AI always
-        // remembers a file was sent and what it contained, even if it can't produce the file back.
-        // Best-effort — never blocks the chat.
+        // call per binary file). The first image itself also goes to R2. And the files themselves are
+        // now kept (see uploadChatFile below), so the AI doesn't just remember that a file was sent —
+        // it can find it again and hand the actual file back. Best-effort — never blocks the chat.
         void (async () => {
           const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
           const userContent =
@@ -752,6 +819,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             ],
             images[0] ? { imageBase64: images[0].base64, imageMime: images[0].mimeType } : undefined,
           );
+          // Store every attachment durably, each with its own memory line as the searchable
+          // description + a vector, so find_files/send_file can retrieve it later. Gated on memoryOn
+          // exactly as recordTextTurns is — file recall is part of memory, not a separate opt-in.
+          if (memoryOn) {
+            await Promise.all(
+              files.map(async (f, i) => {
+                const desc = lines[i];
+                const embedding = (await embedDocument(desc)) ?? undefined;
+                await uploadChatFile(conversationIdRef.current, f, desc, embedding);
+              }),
+            );
+          }
         })();
       } else {
         void recordTextTurns([
@@ -1193,6 +1272,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               audioPaused={audioPlaying?.paused ?? false}
               onReply={setReplyTo}
               onDelete={setPendingDelete}
+              onSendFile={sendStoredFile}
               scrollSignal={!!callState}
             />
           )}

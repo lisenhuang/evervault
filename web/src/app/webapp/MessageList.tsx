@@ -1,14 +1,28 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileAudio, FileText, Mic, PhoneOff, Play, Reply, Sparkles, Volume2 } from "lucide-react";
+import {
+  FileAudio,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  Paperclip,
+  PhoneOff,
+  Play,
+  Reply,
+  Send,
+  Sparkles,
+  Volume2,
+} from "lucide-react";
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import type { ChatMessage, ReplyRef } from "./types";
-import { formatDuration } from "./lib/time";
-import { formatSize } from "./lib/files";
+import { formatDuration, formatMemoryDate } from "./lib/time";
+import { formatSize, type PreparedFile } from "./lib/files";
+import type { StoredFileMeta } from "./lib/filesApi";
 import { useT } from "@/i18n/LanguageProvider";
 
 const md: Components = {
@@ -94,6 +108,7 @@ export default function MessageList({
   audioPaused,
   onReply,
   onDelete,
+  onSendFile,
   scrollSignal,
 }: {
   messages: ChatMessage[];
@@ -108,6 +123,9 @@ export default function MessageList({
   onReply: (m: ChatMessage) => void;
   /** Remove a message from the chat (via the long-press / right-click menu). */
   onDelete: (m: ChatMessage) => void;
+  /** Confirm a "fileOffer" card: fetch the stored file back and turn that card into a real message
+   *  carrying the file. Nothing reaches the chat until this runs — tapping Send *is* the send. */
+  onSendFile: (messageId: string, fileId: number) => void;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
   // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
   scrollSignal?: unknown;
@@ -164,6 +182,16 @@ export default function MessageList({
               <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
             </span>
           </div>
+        ) : m.kind === "fileOffer" && m.fileRef ? (
+          // The assistant found a stored file and is asking before handing it over. Kept ahead of the
+          // user/assistant split on purpose: an unhandled kind falls through to AssistantMessage and
+          // would render as an empty bubble.
+          <FileOfferCard
+            key={m.id}
+            note={m.text}
+            file={m.fileRef}
+            onSend={() => onSendFile(m.id, m.fileRef!.id)}
+          />
         ) : m.role === "user" ? (
           <div
             key={m.id}
@@ -177,47 +205,12 @@ export default function MessageList({
             >
               {m.replyTo && <QuotedReply r={m.replyTo} onJump={jumpTo} />}
               {m.files && m.files.length > 0 && (
-                <div className={`flex flex-col gap-1.5 ${m.text ? "mb-2" : ""}`}>
-                  {m.files.map((f) =>
-                    f.kind === "image" ? (
-                      <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => {
-                          const imgs = m.files!.filter((x) => x.kind === "image");
-                          openLightbox(
-                            imgs.map((x) => ({
-                              src: `data:${x.mimeType};base64,${x.base64}`,
-                              alt: t.message.imageAlt,
-                            })),
-                            imgs.findIndex((x) => x.id === f.id),
-                          );
-                        }}
-                        aria-label={t.message.viewImage}
-                        className="block cursor-zoom-in overflow-hidden rounded-xl transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={`data:${f.mimeType};base64,${f.base64}`}
-                          alt={t.message.imageAlt}
-                          className="max-h-64 w-full object-contain"
-                        />
-                      </button>
-                    ) : (
-                      <span key={f.id} className="flex items-center gap-2 rounded-xl bg-white/15 px-3 py-2">
-                        {f.kind === "audio" ? (
-                          <FileAudio size={16} className="shrink-0 opacity-90" aria-hidden="true" />
-                        ) : (
-                          <FileText size={16} className="shrink-0 opacity-90" aria-hidden="true" />
-                        )}
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-medium" title={f.name}>{f.name}</span>
-                          <span className="block text-[10px] opacity-75">{formatSize(f.size)}</span>
-                        </span>
-                      </span>
-                    ),
-                  )}
-                </div>
+                <Attachments
+                  files={m.files}
+                  tone="user"
+                  className={m.text ? "mb-2" : ""}
+                  onOpenImage={openLightbox}
+                />
               )}
               {m.kind === "voice" ? (
                 m.text ? (
@@ -352,10 +345,14 @@ function AssistantMessage({
     if (text) onReveal();
   }, [text, onReveal]);
 
+  // A confirmed file offer becomes an assistant message whose whole content is the file — often with
+  // no text at all. That reply is finished, not pending, so it must never fall into the dots below.
+  const hasFiles = !!m.files?.length;
+
   // While `pendingAudio` is set the text has streamed in but is deliberately withheld until the
   // spoken audio is ready — keep the bubble on the "typing"/speaking dots as if the reply is still
   // being prepared, so text never races ahead of the voice.
-  if ((!text || m.pendingAudio) && !m.error) {
+  if ((!text || m.pendingAudio) && !m.error && !hasFiles) {
     if (!typingDots) return null; // silent grace period — the reply may land before "typing" ever shows
     return (
       <div className="flex items-start gap-3">
@@ -379,11 +376,18 @@ function AssistantMessage({
         onOpen={(x, y) => onOpenMenu(m, x, y)}
         className={`${BUBBLE_CLS} [-webkit-touch-callout:none] [@media(hover:none)]:select-none`}
       >
-        <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={allowInlineImages} components={mdComponents}>
-            {text}
-          </ReactMarkdown>
-        </div>
+        {text && (
+          <div className={m.error ? "text-red-600 dark:text-red-400" : ""}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={allowInlineImages} components={mdComponents}>
+              {text}
+            </ReactMarkdown>
+          </div>
+        )}
+        {/* A file the assistant handed back after the user confirmed an offer card — same chips and
+            lightbox as the user's own attachments, toned for the light bubble. */}
+        {m.files && m.files.length > 0 && (
+          <Attachments files={m.files} tone="assistant" className={text ? "mt-2" : ""} onOpenImage={onOpenImage} />
+        )}
         {m.audio && (
           <button
             onClick={() => onPlayAudio(m)}
@@ -504,6 +508,159 @@ function Pressable({
       onTouchCancel={clear}
     >
       {children}
+    </div>
+  );
+}
+
+/**
+ * Attachments hanging off a bubble: images render inline and open the full-screen gallery of *this*
+ * bubble's images, everything else is a name + size chip. Shared by both sides — the files a user
+ * sent, and a stored file the assistant handed back after a confirmed offer — so the only difference
+ * is tone: translucent white on the blue user bubble, tinted neutral on the assistant's light one.
+ */
+function Attachments({
+  files,
+  tone,
+  className,
+  onOpenImage,
+}: {
+  files: PreparedFile[];
+  /** Which bubble these sit in, which decides the chip and focus-ring colors. */
+  tone: "user" | "assistant";
+  /** Spacing against the bubble's text, which sits below on the user side and above on the assistant's. */
+  className?: string;
+  onOpenImage: (images: LightboxImage[], index: number) => void;
+}) {
+  const t = useT();
+  const user = tone === "user";
+  return (
+    <div className={`flex flex-col gap-1.5 ${className ?? ""}`}>
+      {files.map((f) =>
+        f.kind === "image" ? (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => {
+              const imgs = files.filter((x) => x.kind === "image");
+              onOpenImage(
+                imgs.map((x) => ({ src: `data:${x.mimeType};base64,${x.base64}`, alt: t.message.imageAlt })),
+                imgs.findIndex((x) => x.id === f.id),
+              );
+            }}
+            aria-label={t.message.viewImage}
+            className={`block cursor-zoom-in overflow-hidden rounded-xl transition hover:opacity-95 focus:outline-none focus-visible:ring-2 ${
+              user ? "focus-visible:ring-white/70" : "focus-visible:ring-blue-500/60"
+            }`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`data:${f.mimeType};base64,${f.base64}`}
+              alt={t.message.imageAlt}
+              className="max-h-64 w-full object-contain"
+            />
+          </button>
+        ) : (
+          <span
+            key={f.id}
+            className={`flex items-center gap-2 rounded-xl px-3 py-2 ${
+              user ? "bg-white/15" : "bg-black/5 dark:bg-white/10"
+            }`}
+          >
+            {f.kind === "audio" ? (
+              <FileAudio size={16} className={`shrink-0 ${user ? "opacity-90" : "opacity-55"}`} aria-hidden="true" />
+            ) : (
+              <FileText size={16} className={`shrink-0 ${user ? "opacity-90" : "opacity-55"}`} aria-hidden="true" />
+            )}
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium" title={f.name}>{f.name}</span>
+              <span className={`block text-[10px] ${user ? "opacity-75" : "text-black/45 dark:text-white/45"}`}>
+                {formatSize(f.size)}
+              </span>
+            </span>
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** The icon that stands in for a stored file on the offer card, by what kind of file it is. */
+const FILE_KIND_ICONS = {
+  image: ImageIcon,
+  audio: FileAudio,
+  pdf: FileText,
+  text: FileText,
+} as const;
+
+/**
+ * The confirmation card the assistant posts when `send_file` finds a file the user asked for. Nothing
+ * has been sent yet: the card names the file and waits: **Send** hands it to `onSendFile`, which fetches
+ * the bytes back and replaces this card with a real message carrying the file; **Not now** just drops
+ * the card. Styled as an assistant bubble (avatar, same chrome) so it reads as EverVault holding
+ * something out rather than a system notice.
+ */
+function FileOfferCard({
+  note,
+  file,
+  onSend,
+}: {
+  /** The model's short line about the file, shown above it when it wrote one. */
+  note: string;
+  file: StoredFileMeta;
+  onSend: () => void;
+}) {
+  const t = useT();
+  const [dismissed, setDismissed] = useState(false);
+  // Set on tap and never cleared: the caller owns the round-trip and replaces this message with the
+  // delivered file (or an error) as soon as it settles, so the card unmounts either way. The spinner
+  // only has to outlive the fetch — a 10MB PDF is not instant — not the card.
+  const [sending, setSending] = useState(false);
+  if (dismissed) return null;
+
+  const Icon = FILE_KIND_ICONS[file.kind];
+  return (
+    <div className="flex items-start gap-3">
+      <AiAvatar />
+      <div className={BUBBLE_CLS}>
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-black/50 dark:text-white/50">
+          <Paperclip size={13} aria-hidden="true" />
+          {t.message.fileOffer}
+        </div>
+        {note && <p className="mt-1.5 whitespace-pre-wrap">{note}</p>}
+        <div className="mt-2 flex items-center gap-2.5 rounded-xl bg-black/5 px-3 py-2.5 dark:bg-white/10">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-black/55 shadow-sm dark:bg-white/10 dark:text-white/60">
+            <Icon size={17} aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-medium" title={file.name}>{file.name}</span>
+            <span className="block text-[10px] text-black/45 dark:text-white/45">
+              {formatSize(file.sizeBytes)} <span aria-hidden="true">·</span> {formatMemoryDate(file.createdAt)}
+            </span>
+          </span>
+        </div>
+        <div className="mt-2.5 flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={sending}
+            onClick={() => {
+              setSending(true);
+              onSend();
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
+          >
+            {sending ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Send size={13} aria-hidden="true" />}
+            {t.message.sendFile}
+          </button>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={() => setDismissed(true)}
+            className="rounded-full px-3 py-1.5 text-xs font-medium text-black/55 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/55 dark:hover:bg-white/10"
+          >
+            {t.message.notNow}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

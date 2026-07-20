@@ -192,6 +192,10 @@ const ko: Messages = {
     jumpToMessage: "원본 메시지로 이동",
     deleteTitle: "메시지를 삭제할까요?",
     deleteConfirmMessage: "이 메시지가 채팅에서 삭제됩니다.",
+    fileOffer: "이 파일을 찾았어요",
+    sendFile: "보내기",
+    notNow: "나중에",
+    fileUnavailable: "파일을 불러오지 못했습니다.",
   },
   settings: {
     title: "설정",

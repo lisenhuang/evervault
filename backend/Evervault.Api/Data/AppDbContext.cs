@@ -19,6 +19,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<EndUser> EndUsers => Set<EndUser>();
     public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();
     public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
+    public DbSet<ChatFile> ChatFiles => Set<ChatFile>();
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
     public DbSet<UserTask> UserTasks => Set<UserTask>();
     public DbSet<ErrorReport> ErrorReports => Set<ErrorReport>();
@@ -92,6 +93,27 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(m => m.EndUserId);
             e.HasIndex(m => new { m.EndUserId, m.ConversationId });
             e.HasIndex(m => new { m.EndUserId, m.Kind });
+        });
+
+        modelBuilder.Entity<ChatFile>(e =>
+        {
+            // Half-precision embedding of the file's Description. Dimensionless at the model level; the same
+            // runtime step as ChatMemories (ChatMemoryVectorIndex) pins it to the locked dimension and builds
+            // the HNSW cosine index — an HNSW index needs a fixed dimension, unknown here. No legacy
+            // full-precision column: nothing was ever deployed reading one from this table.
+            e.Property(f => f.EmbeddingHalf).HasColumnType("halfvec");
+            e.Property(f => f.FileName).HasMaxLength(255);
+            e.Property(f => f.Kind).HasMaxLength(16);
+            e.Property(f => f.Mime).HasMaxLength(128);
+            e.Property(f => f.ObjectKey).HasMaxLength(400);
+            e.Property(f => f.Sha256).HasMaxLength(64);
+            e.Property(f => f.ConversationId).HasMaxLength(64);
+            // Description is unbounded (text) — it's the searchable body (transcript / summary), not a label.
+            e.HasIndex(f => f.EndUserId);
+            // Listing + the newest-first fallbacks in file search.
+            e.HasIndex(f => new { f.EndUserId, f.CreatedAt });
+            // Upload dedupe: same user re-sending the identical bytes under the same name.
+            e.HasIndex(f => new { f.EndUserId, f.Sha256 });
         });
 
         modelBuilder.Entity<UserMemoryFact>(e =>

@@ -3,20 +3,22 @@ using Microsoft.EntityFrameworkCore;
 namespace Evervault.Api.Data;
 
 /// <summary>
-/// Builds the ANN index for chat-memory embeddings. The embedding dimension is chosen by the admin at
-/// runtime (<see cref="Models.EmbeddingConfig"/>), so it can't live in a static EF migration — an HNSW
-/// index requires a fixed dimension. This runs after migrations on startup, and again whenever the admin
+/// Builds the ANN indexes for the two embedded tables — <c>ChatMemories</c> (recall) and <c>ChatFiles</c>
+/// (file search). The embedding dimension is chosen by the admin at runtime
+/// (<see cref="Models.EmbeddingConfig"/>), so it can't live in a static EF migration — an HNSW index
+/// requires a fixed dimension. This runs after migrations on startup, and again whenever the admin
 /// locks the dimension. It:
 /// <list type="number">
 /// <item>backfills <c>EmbeddingHalf</c> from any legacy full-precision <c>Embedding</c> values;</item>
-/// <item>pins the <c>halfvec</c> column to the locked dimension (needed before it can be indexed);</item>
-/// <item>creates the HNSW cosine index.</item>
+/// <item>pins each <c>halfvec</c> column to the locked dimension (needed before it can be indexed);</item>
+/// <item>creates the HNSW cosine indexes.</item>
 /// </list>
 /// Idempotent and best-effort: any failure is logged and never blocks startup or the request.
 /// </summary>
 public static class ChatMemoryVectorIndex
 {
     private const string IndexName = "IX_ChatMemories_EmbeddingHalf_hnsw";
+    private const string FilesIndexName = "IX_ChatFiles_EmbeddingHalf_hnsw";
 
     public static async Task EnsureAsync(AppDbContext db, ILogger? logger = null, CancellationToken ct = default)
     {
@@ -51,11 +53,26 @@ public static class ChatMemoryVectorIndex
                  END $$;
                  """, ct);
 
-            logger?.LogInformation("Chat-memory HNSW index ensured (halfvec, dim {Dim}).", dim);
+            // Same treatment for ChatFiles.EmbeddingHalf (the find_files vector lane). No backfill step —
+            // this table never had a full-precision column to copy from.
+            await db.Database.ExecuteSqlRawAsync(
+                $"""
+                 DO $$
+                 BEGIN
+                     IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'i' AND relname = '{FilesIndexName}') THEN
+                         ALTER TABLE "ChatFiles" ALTER COLUMN "EmbeddingHalf"
+                             TYPE halfvec({dim}) USING "EmbeddingHalf"::halfvec({dim});
+                         CREATE INDEX "{FilesIndexName}" ON "ChatFiles"
+                             USING hnsw ("EmbeddingHalf" halfvec_cosine_ops);
+                     END IF;
+                 END $$;
+                 """, ct);
+
+            logger?.LogInformation("Chat-memory and chat-file HNSW indexes ensured (halfvec, dim {Dim}).", dim);
         }
         catch (Exception ex)
         {
-            logger?.LogWarning("Chat-memory vector index not ensured: {Message}", ex.Message);
+            logger?.LogWarning("Chat-memory/chat-file vector indexes not ensured: {Message}", ex.Message);
         }
     }
 }

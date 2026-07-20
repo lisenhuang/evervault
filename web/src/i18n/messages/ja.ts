@@ -192,6 +192,10 @@ const ja: Messages = {
     jumpToMessage: "元のメッセージへ移動",
     deleteTitle: "メッセージを削除しますか？",
     deleteConfirmMessage: "このメッセージはチャットから削除されます。",
+    fileOffer: "このファイルが見つかりました",
+    sendFile: "送信",
+    notNow: "今はしない",
+    fileUnavailable: "そのファイルを読み込めませんでした。",
   },
   settings: {
     title: "設定",

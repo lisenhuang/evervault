@@ -264,6 +264,25 @@ public class StorageService : IStorageService
         } while (continuationToken is not null);
     }
 
+    public async Task DeleteObjectAsync(string key, CancellationToken ct = default)
+    {
+        var r = await ResolveClientAsync();
+        if (r is null) return;
+        using var client = r.Value.Client;
+        try
+        {
+            await client.DeleteObjectAsync(new DeleteObjectRequest
+            {
+                BucketName = r.Value.Bucket,
+                Key = key,
+            }, ct);
+        }
+        catch (AmazonS3Exception)
+        {
+            // Already gone (or not visible to this token) — deleting is idempotent from the caller's view.
+        }
+    }
+
     private static IAmazonS3 BuildClient(
         string accountId, string accessKeyId, string secret, string? endpoint, string region, string? jurisdiction)
     {

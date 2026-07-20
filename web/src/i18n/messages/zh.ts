@@ -193,6 +193,10 @@ const zh: Messages = {
     jumpToMessage: "跳转到原消息",
     deleteTitle: "删除这条消息？",
     deleteConfirmMessage: "这条消息将从聊天中移除。",
+    fileOffer: "我找到了这个文件",
+    sendFile: "发送",
+    notNow: "暂时不用",
+    fileUnavailable: "无法加载该文件。",
   },
   settings: {
     title: "设置",

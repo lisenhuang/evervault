@@ -193,6 +193,10 @@ const en = {
     jumpToMessage: "Jump to the original message",
     deleteTitle: "Delete message?",
     deleteConfirmMessage: "This message will be removed from the chat.",
+    fileOffer: "I found this file",
+    sendFile: "Send",
+    notNow: "Not now",
+    fileUnavailable: "That file couldn't be loaded.",
   },
   settings: {
     title: "Settings",

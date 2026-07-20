@@ -12,6 +12,7 @@ import { EchoLoopback } from "./echoLoopback";
 import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
+import { FILE_TOOL_DECLARATIONS, isFileTool, runFileTool } from "./fileTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
@@ -262,12 +263,15 @@ export class LiveSession {
         sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
         contextWindowCompression: { slidingWindow: {} },
         // The record_suggestion tool is always available (forwarding feedback doesn't need memory);
-        // when memory is on, also give the model recall_memory + the task tools and a persona that knows
-        // it has memory + a task list, so it can search past chats and manage tasks mid-call.
+        // when memory is on, also give the model recall_memory + the task tools + the file tools and a
+        // persona that knows it has memory + a task list, so it can search past chats, manage tasks and
+        // look up files the user sent, mid-call.
         tools: [
           {
             functionDeclarations: [
-              ...(this.memoryEnabled ? [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS] : []),
+              ...(this.memoryEnabled
+                ? [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS, ...FILE_TOOL_DECLARATIONS]
+                : []),
               RECORD_SUGGESTION_DECLARATION,
             ],
           },
@@ -485,8 +489,10 @@ export class LiveSession {
     // that follows resumes from the stored handle; we just log how much runway it gave us.
     if (m.goAway) console.info("[live] server goAway; will resume", m.goAway.timeLeft);
 
-    // The model asked to search memory or manage tasks: run the tool(s) and send the results back.
-    // Live always populates the call `id`, which sendToolResponse must echo so the model can match it.
+    // The model asked to search memory, manage tasks or look up a file: run the tool(s) and send the
+    // results back. Live always populates the call `id`, which sendToolResponse must echo so the model
+    // can match it. Note the dispatch chain ends in a FALLTHROUGH to recall — anything without its own
+    // arm above becomes a memory search — so each tool family needs its explicit arm here.
     if (m.toolCall?.functionCalls?.length) {
       const calls = m.toolCall.functionCalls;
       const results = await Promise.all(
@@ -494,11 +500,16 @@ export class LiveSession {
           const name = c.name ?? "";
           const args = c.args ?? {};
           // No image attachments during a voice call, so record_suggestion runs without screenshots.
+          // The file tools run without an onOffer callback: a call has no chat UI to tap, so send_file
+          // comes back with "only in the text chat" while find_files still works — she can tell the
+          // user she has the file and offer to hand it over once they're back in the chat.
           return isSuggestionTool(name)
             ? runSuggestionTool(args)
             : isTaskTool(name)
               ? runTaskTool(name, args)
-              : runRecallTool(args);
+              : isFileTool(name)
+                ? runFileTool(name, args)
+                : runRecallTool(args);
         }),
       );
       this.session?.sendToolResponse({

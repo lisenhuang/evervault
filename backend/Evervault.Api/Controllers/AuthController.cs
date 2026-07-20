@@ -101,26 +101,32 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>Permanently delete the signed-in user's account and ALL data derived from it:
-    /// chat memories, the memory profile, stored audio blobs, and the account row itself. The
-    /// session cookie is cleared so the browser is signed out. Irreversible.</summary>
+    /// chat memories, the memory profile, tasks, the durable chat files (rows + blobs), every stored
+    /// audio/image blob, and the account row itself. Chat files are retained forever otherwise, so this
+    /// is the only path that removes them. The session cookie is cleared so the browser is signed out.
+    /// Irreversible.</summary>
     [HttpDelete("account")]
     [Authorize(AuthenticationSchemes = Scheme)]
     public async Task<IActionResult> DeleteAccount()
     {
         var uid = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
-        // Best-effort blob purge first: audio lives under chat-audio/{uid}/. If storage is
+        // Best-effort blob purge first: push-to-talk audio under chat-audio/{uid}/, turn images under
+        // chat-images/{uid}/, and the durable attachments under chat-files/{uid}/. If storage is
         // unconfigured or errors, still delete the DB rows so the account is truly gone.
         try
         {
             await _storage.DeleteByPrefixAsync($"chat-audio/{uid}/", HttpContext.RequestAborted);
+            await _storage.DeleteByPrefixAsync($"chat-images/{uid}/", HttpContext.RequestAborted);
+            await _storage.DeleteByPrefixAsync($"chat-files/{uid}/", HttpContext.RequestAborted);
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Failed to purge stored audio for deleted user {UserId}", uid);
+            _log.LogWarning(ex, "Failed to purge stored blobs for deleted user {UserId}", uid);
         }
 
         await _db.ChatMemories.Where(m => m.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.ChatFiles.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserMemoryFacts.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserTasks.Where(t => t.EndUserId == uid).ExecuteDeleteAsync();
         await _db.EndUsers.Where(u => u.Id == uid).ExecuteDeleteAsync();
