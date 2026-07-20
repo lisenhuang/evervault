@@ -118,6 +118,11 @@ const ja: Messages = {
     deleteAccountKeyword: "削除",
     deleteAccountConfirm: "完全に削除",
     deleteAccountError: "アカウントの削除中に問題が発生しました。もう一度お試しください。",
+    textSize: "文字サイズ",
+    textSizeDecrease: "文字を小さく",
+    textSizeIncrease: "文字を大きく",
+    textSizeReset: "文字サイズを100%に戻す",
+    textSizeValue: (percent: number) => `文字サイズ ${percent}%`,
   },
   composer: {
     recording: "録音中… 終わったら停止ボタンをタップしてください。",

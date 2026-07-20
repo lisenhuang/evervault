@@ -119,6 +119,11 @@ const en = {
     deleteAccountKeyword: "CONFIRM",
     deleteAccountConfirm: "Delete forever",
     deleteAccountError: "Something went wrong deleting your account. Please try again.",
+    textSize: "Text size",
+    textSizeDecrease: "Decrease text size",
+    textSizeIncrease: "Increase text size",
+    textSizeReset: "Reset text size to 100%",
+    textSizeValue: (percent: number) => `Text size ${percent}%`,
   },
   composer: {
     recording: "Recording… tap the stop button when you're done.",

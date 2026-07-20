@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FileAudio,
   FileText,
@@ -32,7 +32,7 @@ const md: Components = {
   li: (props) => <li className="mb-0.5" {...props} />,
   a: (props) => <a className="underline underline-offset-2" target="_blank" rel="noreferrer" {...props} />,
   pre: (props) => (
-    <pre className="mb-2 overflow-x-auto rounded-lg bg-black/80 p-3 text-xs text-white dark:bg-black/60" {...props} />
+    <pre className="mb-2 overflow-x-auto rounded-lg bg-black/80 p-3 chat-text-sm text-white dark:bg-black/60" {...props} />
   ),
   code: ({ className, children, ...props }) => {
     const isBlock = /language-/.test(className ?? "");
@@ -87,7 +87,7 @@ const rowFlashCls = (flashing: boolean) =>
 const EQ_DELAYS = ["-0.6s", "-0.4s", "-0.2s"];
 function EqualizerBars() {
   return (
-    <span className="flex h-3 items-center gap-0.5" aria-hidden="true">
+    <span className="flex h-[1em] items-center gap-0.5" aria-hidden="true">
       {EQ_DELAYS.map((d) => (
         <span
           key={d}
@@ -109,6 +109,7 @@ export default function MessageList({
   onReply,
   onDelete,
   onSendFile,
+  scale,
   scrollSignal,
 }: {
   messages: ChatMessage[];
@@ -126,6 +127,8 @@ export default function MessageList({
   /** Confirm a "fileOffer" card: fetch the stored file back and turn that card into a real message
    *  carrying the file. Nothing reaches the chat until this runs — tapping Send *is* the send. */
   onSendFile: (messageId: string, fileId: number) => void;
+  /** The user's chat text size (1 = 100%), set from the mobile header's A− / % / A+ control. */
+  scale: number;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
   // mounts/unmounts and shrinks the scroll area, which would otherwise clip the last message.
   scrollSignal?: unknown;
@@ -170,13 +173,22 @@ export default function MessageList({
   }, []);
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6">
+    // The transcript is the one surface the user's text-size control scales: `chat-text` is the
+    // anchor (the 14px the bubbles used to hard-code, times --chat-scale) and everything below
+    // either inherits it or sizes itself in `em` against it. Chrome — the header, composer, call
+    // bar, avatars, and the menu/lightbox overlays — keeps its own fixed sizes on purpose, so
+    // bigger text buys reading area instead of eating it. The cast is required: @types/react has
+    // no index signature for custom properties.
+    <div
+      className="chat-text mx-auto w-full max-w-3xl space-y-5 px-4 py-6"
+      style={{ "--chat-scale": scale } as CSSProperties}
+    >
       {messages.map((m) =>
         m.kind === "call" ? (
           // Centered system chip logged when a realtime call ends — shows how long it lasted.
           <div key={m.id} className="flex justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
-              <PhoneOff size={13} aria-hidden="true" />
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 chat-text-sm font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
+              <PhoneOff size={13} className="h-[1.08em] w-[1.08em]" aria-hidden="true" />
               {t.message.callEnded}
               <span aria-hidden="true">·</span>
               <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
@@ -201,7 +213,7 @@ export default function MessageList({
             <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />
             <Pressable
               onOpen={(x, y) => openMenu(m, x, y)}
-              className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none"
+              className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none"
             >
               {m.replyTo && <QuotedReply r={m.replyTo} onJump={jumpTo} />}
               {m.files && m.files.length > 0 && (
@@ -215,12 +227,12 @@ export default function MessageList({
               {m.kind === "voice" ? (
                 m.text ? (
                   <span className="flex items-start gap-1.5">
-                    <Mic size={14} className="mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
+                    <Mic size={14} className="chat-icon mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
                     <span className="whitespace-pre-wrap">{m.text}</span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 italic opacity-90">
-                    <Mic size={14} aria-hidden="true" /> {t.message.voiceMessage}
+                    <Mic size={14} className="chat-icon" aria-hidden="true" /> {t.message.voiceMessage}
                   </span>
                 )
               ) : (
@@ -359,9 +371,9 @@ function AssistantMessage({
         <AiAvatar />
         <div className={BUBBLE_CLS}>
           <span className="flex items-center gap-1 py-1" aria-label="Assistant is typing" role="status">
-            <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
-            <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
-            <span className="h-2 w-2 animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
+            <span className="h-[0.571em] w-[0.571em] animate-bounce rounded-full bg-black/40 [animation-delay:-0.3s] dark:bg-white/40" />
+            <span className="h-[0.571em] w-[0.571em] animate-bounce rounded-full bg-black/40 [animation-delay:-0.15s] dark:bg-white/40" />
+            <span className="h-[0.571em] w-[0.571em] animate-bounce rounded-full bg-black/40 dark:bg-white/40" />
           </span>
         </div>
       </div>
@@ -394,7 +406,7 @@ function AssistantMessage({
             aria-label={
               audioState === "playing" ? t.message.pauseReply : audioState === "paused" ? t.message.resumeReply : t.message.playReply
             }
-            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 text-xs font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 chat-text-sm font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
           >
             {audioState === "playing" ? (
               <>
@@ -402,11 +414,11 @@ function AssistantMessage({
               </>
             ) : audioState === "paused" ? (
               <>
-                <Play size={13} /> {t.message.resumeReply}
+                <Play size={13} className="chat-icon" /> {t.message.resumeReply}
               </>
             ) : (
               <>
-                <Volume2 size={13} /> {t.message.playReply}
+                <Volume2 size={13} className="chat-icon" /> {t.message.playReply}
               </>
             )}
           </button>
@@ -567,13 +579,13 @@ function Attachments({
             }`}
           >
             {f.kind === "audio" ? (
-              <FileAudio size={16} className={`shrink-0 ${user ? "opacity-90" : "opacity-55"}`} aria-hidden="true" />
+              <FileAudio size={16} className={`h-[1.14em] w-[1.14em] shrink-0 ${user ? "opacity-90" : "opacity-55"}`} aria-hidden="true" />
             ) : (
-              <FileText size={16} className={`shrink-0 ${user ? "opacity-90" : "opacity-55"}`} aria-hidden="true" />
+              <FileText size={16} className={`h-[1.14em] w-[1.14em] shrink-0 ${user ? "opacity-90" : "opacity-55"}`} aria-hidden="true" />
             )}
             <span className="min-w-0">
-              <span className="block truncate text-xs font-medium" title={f.name}>{f.name}</span>
-              <span className={`block text-[10px] ${user ? "opacity-75" : "text-black/45 dark:text-white/45"}`}>
+              <span className="block truncate chat-text-sm font-medium" title={f.name}>{f.name}</span>
+              <span className={`block chat-text-2xs ${user ? "opacity-75" : "text-black/45 dark:text-white/45"}`}>
                 {formatSize(f.size)}
               </span>
             </span>
@@ -622,8 +634,8 @@ function FileOfferCard({
     <div className="flex items-start gap-3">
       <AiAvatar />
       <div className={BUBBLE_CLS}>
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-black/50 dark:text-white/50">
-          <Paperclip size={13} aria-hidden="true" />
+        <div className="flex items-center gap-1.5 chat-text-sm font-semibold text-black/50 dark:text-white/50">
+          <Paperclip size={13} className="chat-icon" aria-hidden="true" />
           {t.message.fileOffer}
         </div>
         {note && <p className="mt-1.5 whitespace-pre-wrap">{note}</p>}
@@ -632,8 +644,8 @@ function FileOfferCard({
             <Icon size={17} aria-hidden="true" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium" title={file.name}>{file.name}</span>
-            <span className="block text-[10px] text-black/45 dark:text-white/45">
+            <span className="block truncate chat-text-sm font-medium" title={file.name}>{file.name}</span>
+            <span className="block chat-text-2xs text-black/45 dark:text-white/45">
               {formatSize(file.sizeBytes)} <span aria-hidden="true">·</span> {formatMemoryDate(file.createdAt)}
             </span>
           </span>
@@ -646,16 +658,16 @@ function FileOfferCard({
               setSending(true);
               onSend();
             }}
-            className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-3.5 py-1.5 chat-text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
           >
-            {sending ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Send size={13} aria-hidden="true" />}
+            {sending ? <Loader2 size={13} className="chat-icon animate-spin" aria-hidden="true" /> : <Send size={13} className="chat-icon" aria-hidden="true" />}
             {t.message.sendFile}
           </button>
           <button
             type="button"
             disabled={sending}
             onClick={() => setDismissed(true)}
-            className="rounded-full px-3 py-1.5 text-xs font-medium text-black/55 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/55 dark:hover:bg-white/10"
+            className="rounded-full px-3 py-1.5 chat-text-sm font-medium text-black/55 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/55 dark:hover:bg-white/10"
           >
             {t.message.notNow}
           </button>
@@ -674,10 +686,10 @@ function QuotedReply({ r, onJump }: { r: ReplyRef; onJump: (id: string) => void 
       title={t.message.jumpToMessage}
       className="mb-2 block w-full rounded-lg border-l-2 border-white/70 bg-white/15 px-2.5 py-1.5 text-left transition hover:bg-white/25"
     >
-      <span className="block text-[11px] font-semibold text-white/95">
+      <span className="block chat-text-xs font-semibold text-white/95">
         {r.role === "user" ? t.message.you : t.message.assistantName}
       </span>
-      <span className="line-clamp-2 block text-xs text-white/80">{r.text || t.message.voiceMessage}</span>
+      <span className="line-clamp-2 block chat-text-sm text-white/80">{r.text || t.message.voiceMessage}</span>
     </button>
   );
 }
@@ -717,4 +729,4 @@ function AiAvatar() {
 }
 
 const BUBBLE_CLS =
-  "max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-white/10 dark:bg-neutral-900";
+  "max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 shadow-sm dark:border-white/10 dark:bg-neutral-900";

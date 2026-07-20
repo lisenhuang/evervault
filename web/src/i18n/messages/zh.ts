@@ -119,6 +119,11 @@ const zh: Messages = {
     deleteAccountKeyword: "删除",
     deleteAccountConfirm: "永久删除",
     deleteAccountError: "删除账号时出错，请重试。",
+    textSize: "字号",
+    textSizeDecrease: "缩小字号",
+    textSizeIncrease: "放大字号",
+    textSizeReset: "恢复默认字号（100%）",
+    textSizeValue: (percent: number) => `字号 ${percent}%`,
   },
   composer: {
     recording: "正在录音…完成后点击停止按钮。",

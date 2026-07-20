@@ -36,6 +36,12 @@ const STYLE_PENDING: Record<StyleSurface, string> = {
 // signs in). Comparing this to the signed-in user lets us clear the cache on a real account change while
 // preserving it across a same-user reload or a transient auth blip.
 const STYLE_OWNER = "ev:styleCacheOwner";
+// Chat text size: the multiplier behind the A− / % / A+ stepper in the mobile header. Deliberately
+// per-BROWSER and never synced to the account (unlike the response styles above): text size is a
+// property of the screen, not of the person — 150% on a phone is right, the same value on a 27"
+// monitor is absurd — so pushing it up to /api/chat/settings would let one tap on a phone blow up
+// the desktop transcript.
+const CHAT_SCALE = "ev:chatScale";
 
 export const DEFAULT_TEXT_MODEL = "gemini-flash-lite-latest";
 export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
@@ -43,6 +49,10 @@ export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 export const DEFAULT_VOICE = "Kore";
 /** Fallback idle auto-hang-up window (seconds) before the server's config arrives. */
 export const DEFAULT_LIVE_IDLE_SEC = 60;
+
+/** The chat text-size ladder, smallest first. 10% steps: fine enough that no tap overshoots. */
+export const CHAT_SCALE_STEPS = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5] as const;
+export const DEFAULT_CHAT_SCALE = 1;
 
 function get(key: string): string {
   if (typeof localStorage === "undefined") return "";
@@ -69,6 +79,14 @@ export const store = {
     return raw !== "" && Number.isFinite(sec) && sec >= 0 ? sec : DEFAULT_LIVE_IDLE_SEC;
   },
   setLiveIdleSec: (v: number) => set(LIVE_IDLE_SEC, String(v)),
+  // Chat text size. Snapped to a known step rather than merely parsed, so a corrupt or
+  // out-of-range value (hand-edited storage, or a ladder that changes in a later release) can
+  // never render the transcript at some unusable size — it just falls back to 100%.
+  getChatScale: () => {
+    const v = Number(get(CHAT_SCALE));
+    return (CHAT_SCALE_STEPS as readonly number[]).includes(v) ? v : DEFAULT_CHAT_SCALE;
+  },
+  setChatScale: (v: number) => set(CHAT_SCALE, v === DEFAULT_CHAT_SCALE ? "" : String(v)),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
   // Whether the user has explicitly picked a voice — so the admin's default only applies before they do.

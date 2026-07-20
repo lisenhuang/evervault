@@ -76,6 +76,72 @@
   }
 }
 
+/* --- Chat text size (the A− / % / A+ stepper in the /webapp mobile header) ------------------
+   One knob: --chat-scale, a unitless multiplier set as an inline style on the message-list
+   root. `chat-text` is the single scale ANCHOR — it reproduces the 14px the bubbles used to
+   hard-code (text-sm), multiplied — and everything in the transcript either inherits it or
+   sizes itself in `em` against it, so the whole conversation scales as one.
+   Deliberately OUTSIDE the scaled surface: the empty-state greeting (its own 24/14px
+   hierarchy, and it vanishes on the first message), the composer and call bar (chrome whose
+   fixed heights are load-bearing for the keyboard-pinned .app-shell), and the message menu /
+   image lightbox (transient overlays that set an explicit size on every text node). */
+@utility chat-text {
+  font-size: calc(0.875rem * var(--chat-scale, 1));
+  /* text-sm's own ratio. UNITLESS, so it already tracks the scaled font-size — multiplying it
+     by --chat-scale as well would apply the scale twice. */
+  line-height: calc(1.25 / 0.875);
+}
+
+/* The control is mobile-only, so the scale is mobile-only too. Without this, a desktop user who
+   narrows the window below md, taps A+, then widens it again is trapped: the header holding the
+   only control is md:hidden, but the stored scale would still apply — with no way to undo it
+   short of clearing site data. Desktop pins back to 100% and uses browser zoom instead. */
+@media (width >= 48rem) {
+  .chat-text {
+    font-size: 0.875rem;
+  }
+}
+
+/* em companions for the explicitly-smaller text inside the transcript. They resolve against the
+   scaled 14px anchor, so each reproduces today's exact pixel size at 100% and scales with it
+   after. Written as `12 / 14 * 1em` rather than a rounded decimal so the intent — "12px in a
+   14px context" — stays readable. Only meaningful inside .chat-text. */
+@utility chat-text-sm {
+  font-size: calc(12 / 14 * 1em); /* was text-xs */
+  line-height: calc(1 / 0.75);
+}
+@utility chat-text-xs {
+  /* was text-[11px]; like the arbitrary value it replaces, it sets no line-height and inherits
+     the bubble's ratio — setting one here would shift the rhythm. */
+  font-size: calc(11 / 14 * 1em);
+}
+@utility chat-text-2xs {
+  font-size: calc(10 / 14 * 1em); /* was text-[10px] */
+}
+
+/* Icons and dots that sit inline with scaled text. The class beats lucide's width/height
+   attributes, so the glyph tracks the text instead of desyncing as it grows. */
+@utility chat-icon {
+  width: 1em;
+  height: 1em;
+}
+
+/* iOS Safari zooms the whole page when a focused field's font-size is under 16px. The
+   auto-focused input in the delete-account dialog was the worst case: once zoomed, the fixed
+   .app-shell relayouts to the zoomed subregion (visualViewport reports the zoomed frame) and
+   the dialog's own buttons can end up off-screen. Unlayered on purpose — Tailwind emits every
+   utility inside @layer utilities, and unlayered declarations outrank all layered ones, so this
+   beats text-sm without !important. max() guarantees the 16px threshold while still growing if
+   the root font-size is enlarged. Coarse pointer only, so desktop keeps its denser 14px fields;
+   a field that must be larger opts out with Tailwind's `text-lg!`. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: max(16px, 1rem);
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

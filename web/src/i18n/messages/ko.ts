@@ -118,6 +118,11 @@ const ko: Messages = {
     deleteAccountKeyword: "삭제",
     deleteAccountConfirm: "영구 삭제",
     deleteAccountError: "계정 삭제 중 문제가 발생했습니다. 다시 시도해 주세요.",
+    textSize: "글자 크기",
+    textSizeDecrease: "글자 작게",
+    textSizeIncrease: "글자 크게",
+    textSizeReset: "글자 크기를 100%로 되돌리기",
+    textSizeValue: (percent: number) => `글자 크기 ${percent}%`,
   },
   composer: {
     recording: "녹음 중… 끝나면 정지 버튼을 누르세요.",

@@ -8,6 +8,7 @@ import CallEndedModal from "./CallEndedModal";
 import Composer, { type VoiceState } from "./Composer";
 import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
+import TextSizeControl from "./TextSizeControl";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
 import { embedDocument } from "./lib/embed";
@@ -186,6 +187,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // defaults to false, so an old backend or a failed config fetch keeps the plain Gemini path.
   const [serverChat, setServerChat] = useState(false);
   const [voice, setVoice] = useState(store.getVoice());
+  // Chat text size, stepped from the mobile header's A− / % / A+ control. Per-browser (see the
+  // store), and applied to the transcript only — chrome keeps its own sizes, so growing the text
+  // buys reading area instead of eating it. Reading localStorage in the initialiser is safe here:
+  // Chat only ever mounts client-side, after the auth check resolves (see page.tsx).
+  const [chatScale, setChatScale] = useState(store.getChatScale());
   // Response-style presets, chosen separately per surface (text / spoken voice reply / live call).
   // Default ("default") injects no directive, so an untouched preference keeps the built-in tone.
   const [textStyle, setTextStyle] = useState<ResponseStyle>(store.getTextStyle());
@@ -449,6 +455,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   function pickVoice(v: string) {
     store.setVoice(v);
     setVoice(v);
+  }
+
+  function pickChatScale(v: number) {
+    store.setChatScale(v);
+    setChatScale(v);
   }
 
   // Persist + apply a response-style choice. Each surface is independent (the model reads its own style
@@ -1245,7 +1256,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             <Menu size={18} />
           </button>
           <MessageCircle size={18} className="shrink-0" aria-hidden="true" />
-          <span className="font-semibold">EverVault</span>
+          {/* min-w-0 + truncate so the wordmark yields rather than pushing the text-size control
+              off the edge on a 320px screen. */}
+          <span className="min-w-0 truncate font-semibold">EverVault</span>
+          {/* Mobile-only: on a laptop the browser's own zoom is better and always at hand. */}
+          <TextSizeControl value={chatScale} onChange={pickChatScale} />
         </header>
 
         <main className="flex-1 overflow-y-auto">
@@ -1265,6 +1280,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           ) : (
             <MessageList
               messages={messages}
+              scale={chatScale}
               userName={user.name}
               userPicture={user.picture}
               onPlayAudio={playAudio}
