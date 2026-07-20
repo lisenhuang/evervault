@@ -2,6 +2,7 @@
 
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownToLine,
   FileAudio,
   FileText,
   Image as ImageIcon,
@@ -11,7 +12,6 @@ import {
   PhoneOff,
   Play,
   Reply,
-  Send,
   Sparkles,
   Volume2,
 } from "lucide-react";
@@ -19,9 +19,11 @@ import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markd
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
+import FilePreview from "./FilePreview";
 import type { ChatMessage, ReplyRef } from "./types";
 import { formatDuration, formatMemoryDate } from "./lib/time";
-import { formatSize, type PreparedFile } from "./lib/files";
+import { formatSize, openFileInNewTab, type PreparedFile } from "./lib/files";
+import { isIOS } from "./lib/liveAudio";
 import type { StoredFileMeta } from "./lib/filesApi";
 import { useT } from "@/i18n/LanguageProvider";
 
@@ -125,7 +127,8 @@ export default function MessageList({
   /** Remove a message from the chat (via the long-press / right-click menu). */
   onDelete: (m: ChatMessage) => void;
   /** Confirm a "fileOffer" card: fetch the stored file back and turn that card into a real message
-   *  carrying the file. Nothing reaches the chat until this runs — tapping Send *is* the send. */
+   *  carrying the file. Nothing reaches the chat until this runs — tapping the confirm button *is*
+   *  the send. */
   onSendFile: (messageId: string, fileId: number) => void;
   /** The user's chat text size (1 = 100%), set from the mobile header's A− / % / A+ control. */
   scale: number;
@@ -156,6 +159,21 @@ export default function MessageList({
     (images: LightboxImage[], index: number) => setLightbox({ images, index }),
     [],
   );
+
+  // Tapping a non-image attachment chip opens the same full-screen preview from either bubble (the
+  // `Attachments` component below is shared by both sides), so the state lives here next to the
+  // lightbox's and only one <FilePreview> is ever mounted.
+  // The one exception is a PDF on iOS: WebKit renders an iframed PDF as a blank panel, so the tap
+  // hands the file straight to the system viewer instead. That has to happen inside this handler —
+  // i.e. still within the original tap — or Safari treats the navigation as unprompted and blocks it.
+  const [preview, setPreview] = useState<PreparedFile | null>(null);
+  const openFile = useCallback((f: PreparedFile) => {
+    if (isIOS() && f.kind === "pdf") {
+      openFileInNewTab(f);
+      return;
+    }
+    setPreview(f);
+  }, []);
 
   // Tapping a quote scrolls to the original message and briefly tints it.
   const [flashId, setFlashId] = useState<string | null>(null);
@@ -222,6 +240,7 @@ export default function MessageList({
                   tone="user"
                   className={m.text ? "mb-2" : ""}
                   onOpenImage={openLightbox}
+                  onOpenFile={openFile}
                 />
               )}
               {m.kind === "voice" ? (
@@ -251,6 +270,7 @@ export default function MessageList({
             onReveal={followReveal}
             onOpenMenu={openMenu}
             onOpenImage={openLightbox}
+            onOpenFile={openFile}
             onReply={onReply}
           />
         ),
@@ -279,6 +299,8 @@ export default function MessageList({
           onClose={() => setLightbox(null)}
         />
       )}
+      {/* Keyed on the file so opening a different attachment remounts it with its own object URL. */}
+      {preview && <FilePreview key={preview.id} file={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 }
@@ -301,6 +323,7 @@ function AssistantMessage({
   onReveal,
   onOpenMenu,
   onOpenImage,
+  onOpenFile,
   onReply,
 }: {
   m: ChatMessage;
@@ -312,6 +335,8 @@ function AssistantMessage({
   onOpenMenu: (m: ChatMessage, x: number, y: number) => void;
   /** Open the full-screen viewer for an image the assistant embedded in its reply. */
   onOpenImage: (images: LightboxImage[], index: number) => void;
+  /** Open the preview for a non-image file the assistant handed back. */
+  onOpenFile: (f: PreparedFile) => void;
   onReply: (m: ChatMessage) => void;
 }) {
   const t = useT();
@@ -395,10 +420,16 @@ function AssistantMessage({
             </ReactMarkdown>
           </div>
         )}
-        {/* A file the assistant handed back after the user confirmed an offer card — same chips and
-            lightbox as the user's own attachments, toned for the light bubble. */}
+        {/* A file the assistant handed back after the user confirmed an offer card — same chips,
+            lightbox and preview as the user's own attachments, toned for the light bubble. */}
         {m.files && m.files.length > 0 && (
-          <Attachments files={m.files} tone="assistant" className={text ? "mt-2" : ""} onOpenImage={onOpenImage} />
+          <Attachments
+            files={m.files}
+            tone="assistant"
+            className={text ? "mt-2" : ""}
+            onOpenImage={onOpenImage}
+            onOpenFile={onOpenFile}
+          />
         )}
         {m.audio && (
           <button
@@ -526,15 +557,17 @@ function Pressable({
 
 /**
  * Attachments hanging off a bubble: images render inline and open the full-screen gallery of *this*
- * bubble's images, everything else is a name + size chip. Shared by both sides — the files a user
- * sent, and a stored file the assistant handed back after a confirmed offer — so the only difference
- * is tone: translucent white on the blue user bubble, tinted neutral on the assistant's light one.
+ * bubble's images, everything else is a name + size chip that opens the file preview. Shared by both
+ * sides — the files a user sent, and a stored file the assistant handed back after a confirmed offer
+ * — so both are tappable from one place, and the only difference is tone: translucent white on the
+ * blue user bubble, tinted neutral on the assistant's light one.
  */
 function Attachments({
   files,
   tone,
   className,
   onOpenImage,
+  onOpenFile,
 }: {
   files: PreparedFile[];
   /** Which bubble these sit in, which decides the chip and focus-ring colors. */
@@ -542,6 +575,8 @@ function Attachments({
   /** Spacing against the bubble's text, which sits below on the user side and above on the assistant's. */
   className?: string;
   onOpenImage: (images: LightboxImage[], index: number) => void;
+  /** Open the full-screen preview for a PDF / document / audio chip. */
+  onOpenFile: (f: PreparedFile) => void;
 }) {
   const t = useT();
   const user = tone === "user";
@@ -572,10 +607,19 @@ function Attachments({
             />
           </button>
         ) : (
-          <span
+          // A chip the user can tap to actually read the file (see FilePreview) — `text-left` because
+          // a <button> would otherwise center the name and size the inner spans lay out as blocks.
+          <button
             key={f.id}
-            className={`flex items-center gap-2 rounded-xl px-3 py-2 ${
-              user ? "bg-white/15" : "bg-black/5 dark:bg-white/10"
+            type="button"
+            onClick={() => onOpenFile(f)}
+            /* The name goes in the label too: a bare "Open file" would override the visible name and
+               size, leaving a screen reader to announce every chip in a bubble identically. */
+            aria-label={`${t.message.viewFile}: ${f.name}`}
+            className={`flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left transition focus:outline-none focus-visible:ring-2 ${
+              user
+                ? "bg-white/15 hover:bg-white/25 focus-visible:ring-white/70"
+                : "bg-black/5 hover:bg-black/10 focus-visible:ring-blue-500/60 dark:bg-white/10 dark:hover:bg-white/15"
             }`}
           >
             {f.kind === "audio" ? (
@@ -589,7 +633,7 @@ function Attachments({
                 {formatSize(f.size)}
               </span>
             </span>
-          </span>
+          </button>
         ),
       )}
     </div>
@@ -606,10 +650,11 @@ const FILE_KIND_ICONS = {
 
 /**
  * The confirmation card the assistant posts when `send_file` finds a file the user asked for. Nothing
- * has been sent yet: the card names the file and waits: **Send** hands it to `onSendFile`, which fetches
- * the bytes back and replaces this card with a real message carrying the file; **Not now** just drops
- * the card. Styled as an assistant bubble (avatar, same chrome) so it reads as EverVault holding
- * something out rather than a system notice.
+ * has been sent yet: the card names the file and waits: confirming hands it to `onSendFile`, which
+ * fetches the bytes back and replaces this card with a real message carrying the file; **Not now**
+ * just drops the card. Styled as an assistant bubble (avatar, same chrome) so it reads as EverVault
+ * holding something out rather than a system notice. The confirm button carries a downward arrow, not
+ * the composer's paper plane: the file is coming *to* the user, and the plane read as sending it away.
  */
 function FileOfferCard({
   note,
@@ -660,7 +705,7 @@ function FileOfferCard({
             }}
             className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-3.5 py-1.5 chat-text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
           >
-            {sending ? <Loader2 size={13} className="chat-icon animate-spin" aria-hidden="true" /> : <Send size={13} className="chat-icon" aria-hidden="true" />}
+            {sending ? <Loader2 size={13} className="chat-icon animate-spin" aria-hidden="true" /> : <ArrowDownToLine size={13} className="chat-icon" aria-hidden="true" />}
             {t.message.sendFile}
           </button>
           <button

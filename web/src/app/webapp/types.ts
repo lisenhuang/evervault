@@ -19,7 +19,7 @@ export type ChatMessage = {
    * "call"  = a centered summary chip logged when a realtime call ends (see `durationSec`).
    * "fileOffer" = a confirmation card the assistant posts when it has found a stored file the user
    *   asked for (see `fileRef`). The file is *not* in the chat yet — it's only sent, replacing this
-   *   card with a normal message carrying `files`, once the user taps Send.
+   *   card with a normal message carrying `files`, once the user confirms on that card.
    */
   kind?: "text" | "voice" | "image" | "call" | "fileOffer";
   /** For kind "call": seconds the user spent on the just-ended realtime call. */

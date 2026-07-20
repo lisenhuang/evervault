@@ -180,3 +180,49 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * How long an object URL stays alive after we're done with it, before we reclaim its memory. Long
+ * enough that a tab we just handed it to has loaded it, and that a dismissed preview can't yank the
+ * URL out from under a viewer the user opened from it. Shared by both handoff paths.
+ */
+export const HandoffRevokeMs = 60_000;
+
+/**
+ * A blob object URL for a prepared file's inline bytes, or `null` for kind "text" (its content is
+ * already in memory as a string — there is nothing to fetch). A blob URL, never a `data:` URL:
+ * Chrome blocks top-level navigation to `data:`, and a 10MB base64 string is far heavier to hand to
+ * an `<iframe>`/`<a>` than a blob the browser can stream.
+ *
+ * The caller owns the returned URL and **must** `URL.revokeObjectURL` it — one leaked 10MB PDF per
+ * preview adds up fast over a long session.
+ */
+export function fileObjectUrl(f: PreparedFile): string | null {
+  if (f.kind === "text" || !f.base64) return null;
+  const bin = atob(f.base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: f.mimeType }));
+}
+
+/**
+ * Hand a file straight to the browser/OS in a new tab. This is the iOS PDF path: WebKit refuses to
+ * render a PDF inside an `<iframe>`, so instead of showing a blank preview panel we push the blob at
+ * the system viewer. A synthesized anchor click rather than `window.open` — an anchor inherits the
+ * user's tap as its activation and isn't treated as a popup, which iOS Safari blocks readily.
+ */
+export function openFileInNewTab(f: PreparedFile): void {
+  const url = fileObjectUrl(f);
+  if (!url) return;
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Deliberately NOT revoked synchronously: the new tab hasn't fetched the blob yet, so revoking
+  // right after the click leaves it staring at a blank viewer. Give the handoff a generous window,
+  // then reclaim — by then the viewer holds its own copy of the bytes.
+  setTimeout(() => URL.revokeObjectURL(url), HandoffRevokeMs);
+}

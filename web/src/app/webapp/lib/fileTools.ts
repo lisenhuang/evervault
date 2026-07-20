@@ -2,9 +2,12 @@
 // the text chat (gemini.ts / Chat.tsx) and the realtime voice call (liveSession.ts) so both surfaces
 // expose the same capability. Reuses the /api/chat/files endpoints via filesApi.ts; no new network
 // code. `send_file` deliberately does NOT deliver anything on its own — it posts a confirmation card
-// into the chat and the user taps Send, so the file only ever leaves storage on a human action. That
-// card is chat-only UI, so during a live call `send_file` reports back that it isn't available there
-// (find_files still works, so she can say she has the file and offer to send it in the text chat).
+// into the chat which the user has to accept, so the file only ever leaves storage on a human action.
+// The model-facing strings below describe that card by what it does and never quote its button copy:
+// the card is localized (en/zh/ja/ko), so naming the English label would have the model tell a
+// Japanese user to tap a word their screen doesn't show. That card is chat-only UI, so during a live
+// call `send_file` reports back that it isn't available there (find_files still works, so she can say
+// she has the file and offer to send it in the text chat).
 
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { embedDocument } from "./embed";
@@ -26,10 +29,11 @@ export const FILES_PERSONA =
   "reply that says \"here it is\", \"sending it now\", or \"attached\" does NOTHING by itself. So when " +
   "they want a file back, you MUST call send_file in that same turn, and never claim you've sent, " +
   "attached, or resent anything unless you actually called the tool for it. " +
-  "send_file does not deliver the file either: it shows a confirmation card in the chat with a Send " +
-  "button, and the file is only handed over once the user taps it. So say you've FOUND the file and " +
-  "put it there for them to confirm — never that you've already sent it. Don't call send_file " +
-  "repeatedly for the same file; the card stays until they act on it. " +
+  "send_file does not deliver the file either: it shows a confirmation card in the chat, and the file " +
+  "is only handed over once the user accepts it on that card. Never quote or name the card's buttons " +
+  "— they are written in the user's own language, so just ask them to confirm and let them find it. " +
+  "So say you've FOUND the file and put it there for them to confirm — never that you've already " +
+  "sent it. Don't call send_file repeatedly for the same file; the card stays until they act on it. " +
   "When several files match, don't guess: name them briefly (file name and roughly when they were " +
   "sent) and ask which one they mean. If find_files comes back empty, say plainly that you don't have " +
   "it rather than inventing a file, describing one you never saw, or promising to look again later — " +
@@ -72,8 +76,10 @@ export const SEND_FILE_DECLARATION: FunctionDeclaration = {
   name: "send_file",
   description:
     "Offer one stored file back to the user. This does NOT send it — it shows a confirmation card in " +
-    "the chat and the user taps Send. Use the id from find_files. After calling, tell the user you've " +
-    "found the file and put it there to confirm; never say you've already sent it.",
+    "the chat which the user has to accept before the file is handed over. Use the id from " +
+    "find_files. After calling, tell the user you've found the file and put it there to confirm — " +
+    "never say you've already sent it, and never name the card's buttons (they're in the user's own " +
+    "language, not yours).",
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -163,7 +169,8 @@ export async function runFileTool(
       offered: true,
       note:
         "A confirmation card for this file is now shown in the chat. The file has NOT been sent yet — " +
-        "the user must tap Send. Tell them it's there for them to confirm; do not claim you already sent it.",
+        "the user must confirm it there. Tell them it's waiting for them to confirm, without naming the " +
+        "card's buttons (they're localized); do not claim you already sent it.",
     });
   }
 

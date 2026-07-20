@@ -198,9 +198,12 @@ const ja: Messages = {
     deleteTitle: "メッセージを削除しますか？",
     deleteConfirmMessage: "このメッセージはチャットから削除されます。",
     fileOffer: "このファイルが見つかりました",
-    sendFile: "送信",
+    sendFile: "送ってもらう",
     notNow: "今はしない",
     fileUnavailable: "そのファイルを読み込めませんでした。",
+    viewFile: "ファイルを開く",
+    openFile: "開く",
+    closeFile: "閉じる",
   },
   settings: {
     title: "設定",

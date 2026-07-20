@@ -199,9 +199,12 @@ const zh: Messages = {
     deleteTitle: "删除这条消息？",
     deleteConfirmMessage: "这条消息将从聊天中移除。",
     fileOffer: "我找到了这个文件",
-    sendFile: "发送",
+    sendFile: "发给我",
     notNow: "暂时不用",
     fileUnavailable: "无法加载该文件。",
+    viewFile: "打开文件",
+    openFile: "打开",
+    closeFile: "关闭",
   },
   settings: {
     title: "设置",

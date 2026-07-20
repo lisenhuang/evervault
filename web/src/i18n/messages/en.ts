@@ -199,9 +199,12 @@ const en = {
     deleteTitle: "Delete message?",
     deleteConfirmMessage: "This message will be removed from the chat.",
     fileOffer: "I found this file",
-    sendFile: "Send",
+    sendFile: "Send to me",
     notNow: "Not now",
     fileUnavailable: "That file couldn't be loaded.",
+    viewFile: "Open file",
+    openFile: "Open",
+    closeFile: "Close",
   },
   settings: {
     title: "Settings",

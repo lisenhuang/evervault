@@ -610,7 +610,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // --- Stored files: the assistant offers one, the user decides whether it lands in the chat ---
 
   // The `send_file` tool found a stored file and wants to give it back. This does NOT deliver it: it
-  // posts a confirmation card into the chat, and nothing is fetched until the user taps Send (see
+  // posts a confirmation card into the chat, and nothing is fetched until the user confirms it (see
   // sendStoredFile). The model's optional `note` becomes the card's caption; without one the card just
   // carries its own label, and the model's reply ("I found your invoice…") reads as the sentence above it.
   //
