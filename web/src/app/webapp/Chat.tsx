@@ -1222,6 +1222,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function startCall() {
+    // Claim the audio path synchronously, as the FIRST thing — before stopReplyAudio and before the
+    // awaited buildRecentContext (a memory search) below. A queued voice reply whose clip resolves
+    // during that await must not auto-play into the call that's spinning up; the gate in applyVoiceAudio
+    // reads this ref. buildRecentContext never throws (searchMemories swallows its own errors), and the
+    // callState effect keeps the ref truthful for every later transition, so an early failure can't
+    // leave it stuck on.
+    inCallRef.current = true;
     stopReplyAudio(); // silence any spoken reply before the call takes over the audio path
     setCallError("");
     setCallIdleClosed(false);
@@ -1250,10 +1257,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     );
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
-    // Mirror the ref synchronously (the sync effect runs a commit later): the call is taking over the
-    // audio path now, so any voice reply that resolves during connect must not auto-play over it.
-    inCallRef.current = true;
-    setCallState("connecting");
+    setCallState("connecting"); // inCallRef was already claimed synchronously at the top of startCall
     try {
       await session.start({
         onState: (s) => {
