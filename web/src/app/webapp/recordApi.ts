@@ -1,7 +1,7 @@
 // Same-origin helpers for the chat-memory API (record / recall / manage). Recording is fire-and-forget
 // so it never interferes with the chat. Only content + vectors are sent — the user's key stays local.
 
-import { api } from "./authApi";
+import { api, postJsonBeacon } from "./authApi";
 
 export type TurnItem = {
   role: "user" | "assistant";
@@ -24,6 +24,9 @@ export type MemoryHit = {
   hasImage: boolean;
   createdAt: string;
   distance: number | null;
+  /** Synthetic for a digest ("digest:2026-W29"), the real conversation otherwise. Absent when talking
+   *  to a server that predates it. */
+  conversationId?: string | null;
   // Hybrid-search relevance (higher = better); set on keyword/fused hits, null on pure-vector and
   // legacy paths (and absent when talking to an older server).
   score?: number | null;
@@ -31,10 +34,9 @@ export type MemoryHit = {
 
 export function recordTurn(conversationId: string, turns: TurnItem[]): void {
   if (turns.length === 0) return;
-  void api("/api/chat/memories", {
-    method: "POST",
-    body: JSON.stringify({ conversationId, turns }),
-  }).catch(() => {});
+  // Beacon-style so a turn recorded as the tab closes still lands; a turn carrying base64 audio or an
+  // image is too big for keepalive and falls back to a plain request (see postJsonBeacon).
+  void postJsonBeacon("/api/chat/memories", { conversationId, turns }).catch(() => {});
 }
 
 export async function searchMemories(
@@ -55,12 +57,21 @@ export async function searchMemories(
   return [];
 }
 
-/** Upsert the single episodic summary for a conversation (replaces any prior one). Fire-and-forget. */
-export function upsertSummary(conversationId: string, text: string, embedding?: number[]): void {
+/** Upsert the single episodic summary for a conversation (replaces any prior one). Fire-and-forget.
+ *  `kind` defaults to "summary"; "digest" writes a rolled-up period note and requires a synthetic
+ *  "digest:" conversation id (the server enforces both). */
+export function upsertSummary(
+  conversationId: string,
+  text: string,
+  embedding?: number[],
+  kind?: "summary" | "digest",
+): void {
   if (!text.trim()) return;
-  void api("/api/chat/memories/summary", {
-    method: "POST",
-    body: JSON.stringify({ conversationId, text, embedding }),
+  void postJsonBeacon("/api/chat/memories/summary", {
+    conversationId,
+    text,
+    embedding,
+    ...(kind ? { kind } : {}),
   }).catch(() => {});
 }
 

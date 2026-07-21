@@ -1,5 +1,6 @@
 import type { PreparedFile } from "./lib/files";
 import type { StoredFileMeta } from "./lib/filesApi";
+import type { ForgetItem } from "./lib/forgetTool";
 
 /** Snapshot of the message a reply quotes — enough to render the quote and locate the original. */
 export type ReplyRef = {
@@ -20,12 +21,17 @@ export type ChatMessage = {
    * "fileOffer" = a confirmation card the assistant posts when it has found a stored file the user
    *   asked for (see `fileRef`). The file is *not* in the chat yet — it's only sent, replacing this
    *   card with a normal message carrying `files`, once the user confirms on that card.
+   * "forgetOffer" = a confirmation card listing what the assistant would remove from memory (see
+   *   `forgetRef`). Nothing is deleted until the user accepts it here — the tap IS the deletion, so
+   *   the model can never remove anything on its own.
    */
-  kind?: "text" | "voice" | "image" | "call" | "fileOffer";
+  kind?: "text" | "voice" | "image" | "call" | "fileOffer" | "forgetOffer";
   /** For kind "call": seconds the user spent on the just-ended realtime call. */
   durationSec?: number;
   /** For kind "fileOffer": the stored file this offer card is for. */
   fileRef?: StoredFileMeta | null;
+  /** For kind "forgetOffer": the things that would be removed if the user accepts. */
+  forgetRef?: ForgetItem[] | null;
   /** Spoken reply audio (PCM16 base64) for assistant messages, when produced. */
   audio?: { base64: string; sampleRate: number } | null;
   /**

@@ -22,6 +22,8 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<ChatFile> ChatFiles => Set<ChatFile>();
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
     public DbSet<UserTask> UserTasks => Set<UserTask>();
+    public DbSet<UserState> UserStates => Set<UserState>();
+    public DbSet<UserLifeEvent> UserLifeEvents => Set<UserLifeEvent>();
     public DbSet<ErrorReport> ErrorReports => Set<ErrorReport>();
     public DbSet<AiCallLog> AiCallLogs => Set<AiCallLog>();
     public DbSet<Suggestion> Suggestions => Set<Suggestion>();
@@ -127,6 +129,25 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(f => new { f.EndUserId, f.Category, f.Key }).IsUnique();
         });
 
+        modelBuilder.Entity<UserLifeEvent>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(200);
+            e.Property(x => x.Details).HasMaxLength(1000);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.SourceConversationId).HasMaxLength(64);
+            // Injection query path: this user's open events, soonest first.
+            e.HasIndex(x => new { x.EndUserId, x.Status, x.EventDate });
+        });
+
+        modelBuilder.Entity<UserState>(e =>
+        {
+            e.Property(s => s.Key).HasMaxLength(40);
+            e.Property(s => s.Value).HasMaxLength(500);
+            e.HasIndex(s => s.EndUserId);
+            // Supersede anchor: re-extracting the same theme updates the row instead of piling up.
+            e.HasIndex(s => new { s.EndUserId, s.Key }).IsUnique();
+        });
+
         modelBuilder.Entity<UserTask>(e =>
         {
             e.Property(t => t.Title).HasMaxLength(200);
@@ -135,6 +156,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.Property(t => t.Status).HasMaxLength(16);
             e.Property(t => t.Source).HasMaxLength(16);
             e.Property(t => t.SourceConversationId).HasMaxLength(64);
+            e.Property(t => t.Recurrence).HasMaxLength(64);
             // Agenda query path: open tasks for a user, ordered by due date.
             e.HasIndex(t => new { t.EndUserId, t.Status, t.DueDate });
         });

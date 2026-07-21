@@ -4,7 +4,8 @@
 // extracted in the browser (the user's own Gemini key) or created by the in-chat task tools; the server
 // only stores and serves them. All writes are fire-and-forget and must never block the chat.
 
-import { api } from "../authApi";
+import { api, postJsonBeacon } from "../authApi";
+import { describeRecurrence, localDateStr, rollForward } from "./recurrence";
 
 export type Task = {
   id: number;
@@ -17,6 +18,12 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  /** Repeat rule token (see lib/recurrence.ts), or null/absent for a one-off. Optional so a response
+   * from a server that predates recurrence still parses. */
+  recurrence?: string | null;
+  /** When the latest occurrence of a repeating task was ticked off. A repeating row never sets
+   * `completedAt` — that would read as "finished for good". */
+  lastCompletedAt?: string | null;
 };
 
 export type TaskDelta = {
@@ -38,7 +45,14 @@ export async function getTasks(status = "open", take = 100): Promise<Task[]> {
 }
 
 export async function createTask(
-  t: { title: string; details?: string; dueDate?: string; dueTime?: string; conversationId?: string },
+  t: {
+    title: string;
+    details?: string;
+    dueDate?: string;
+    dueTime?: string;
+    recurrence?: string;
+    conversationId?: string;
+  },
   source: "user" | "ai",
 ): Promise<Task | null> {
   try {
@@ -52,7 +66,14 @@ export async function createTask(
 
 export async function patchTask(
   id: number,
-  patch: { title?: string; details?: string; dueDate?: string; dueTime?: string; status?: string },
+  patch: {
+    title?: string;
+    details?: string;
+    dueDate?: string;
+    dueTime?: string;
+    recurrence?: string;
+    status?: string;
+  },
 ): Promise<Task | null> {
   try {
     const res = await api(`/api/chat/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
@@ -63,13 +84,11 @@ export async function patchTask(
   return null;
 }
 
-/** Apply an extraction delta. Fire-and-forget, like syncProfile. */
+/** Apply an extraction delta. Fire-and-forget, like syncProfile. Beacon-style so a distillation kicked
+ * off by `pagehide` still lands after the tab is gone. */
 export function syncTasks(delta: TaskDelta, conversationId: string): void {
   if (!delta.adds?.length && !delta.completes?.length && !delta.dismisses?.length) return;
-  void api("/api/chat/tasks/sync", {
-    method: "POST",
-    body: JSON.stringify({ ...delta, conversationId }),
-  }).catch(() => {});
+  void postJsonBeacon("/api/chat/tasks/sync", { ...delta, conversationId }).catch(() => {});
 }
 
 export async function deleteTask(id: number): Promise<void> {
@@ -90,11 +109,40 @@ export async function clearTasks(): Promise<void> {
 
 // --- Local date helpers (the user's wall calendar, NOT UTC) ---
 
-/** Local "YYYY-MM-DD" for the given date. Built by hand rather than via toISOString(), which would
- * shift into UTC and land on the wrong day near midnight for non-UTC users. */
-export function localDateStr(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// Defined in ./recurrence (which needs it for every date it computes) and re-exported here, where
+// callers have always imported it from. One implementation, no drift, and no import cycle between the
+// two modules.
+export { localDateStr };
+
+// --- Recurrence catch-up ---
+
+/**
+ * Roll every overdue repeating task forward to its next occurrence, returning the updated list. This
+ * is the *only* recurrence clock: there is no timer and no server sweep, so it runs opportunistically
+ * whenever we refresh tasks — which is the sole moment it matters, since the reminder can only ever
+ * surface while the user is here.
+ *
+ * A row is only treated as moved once the server confirms the new date. `patchTask` swallows every
+ * error and returns null, and the API answers 200-with-the-old-date for a date it can't parse, so
+ * trusting the optimistic value would leave the agenda telling the model a chore is due today while
+ * the server still has it overdue — and would re-issue the same doomed PATCH on every refresh.
+ */
+export async function catchUpRecurring(tasks: Task[], today = localDateStr()): Promise<Task[]> {
+  const stale = tasks.filter(
+    (t) => t.status === "open" && t.recurrence && rollForward(t.recurrence, t.dueDate, today),
+  );
+  if (stale.length === 0) return tasks;
+
+  const moved = new Map<number, Task>();
+  await Promise.all(
+    stale.map(async (t) => {
+      const next = rollForward(t.recurrence, t.dueDate, today);
+      if (!next) return;
+      const saved = await patchTask(t.id, { dueDate: next });
+      if (saved && saved.dueDate === next) moved.set(t.id, saved);
+    }),
+  );
+  return moved.size === 0 ? tasks : tasks.map((t) => moved.get(t.id) ?? t);
 }
 
 // --- Injection: render the open tasks as a deterministic agenda block ---
@@ -121,7 +169,10 @@ export function renderAgendaBlock(tasks: Task[], now = new Date()): string | nul
     .filter((t) => !t.dueDate)
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
-  const line = (t: Task, suffix = "") => `- [#${t.id}] ${t.title}${t.dueTime ? ` at ${t.dueTime}` : ""}${suffix}`;
+  const line = (t: Task, suffix = "") => {
+    const repeat = t.recurrence ? ` (repeats ${describeRecurrence(t.recurrence)})` : "";
+    return `- [#${t.id}] ${t.title}${t.dueTime ? ` at ${t.dueTime}` : ""}${repeat}${suffix}`;
+  };
   const section = (heading: string, items: Task[], cap: number, mk: (t: Task) => string) => {
     if (items.length === 0) return [];
     const shown = items.slice(0, cap).map(mk);

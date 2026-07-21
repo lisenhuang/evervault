@@ -129,6 +129,11 @@ public class AuthController : ControllerBase
         await _db.ChatFiles.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserMemoryFacts.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserTasks.Where(t => t.EndUserId == uid).ExecuteDeleteAsync();
+        // EndUserId is a plain int with no foreign key, so nothing cascades — every per-user table has
+        // to be listed here by hand. Miss one and it survives account deletion as an intact orphan,
+        // which would also make the promise we tell users ("everything is erased") untrue.
+        await _db.UserStates.Where(s => s.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.UserLifeEvents.Where(e => e.EndUserId == uid).ExecuteDeleteAsync();
         await _db.EndUsers.Where(u => u.Id == uid).ExecuteDeleteAsync();
 
         await HttpContext.SignOutAsync(Scheme);

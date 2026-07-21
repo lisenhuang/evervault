@@ -3,6 +3,7 @@ using System;
 using Evervault.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using Pgvector;
 namespace Evervault.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260721052058_AddTaskRecurrence")]
+    partial class AddTaskRecurrence
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -744,54 +747,6 @@ namespace Evervault.Api.Migrations
                     b.ToTable("SuggestionImages");
                 });
 
-            modelBuilder.Entity("Evervault.Api.Models.UserLifeEvent", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Details")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<int>("EndUserId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateOnly?>("EventDate")
-                        .HasColumnType("date");
-
-                    b.Property<DateTimeOffset?>("FollowedUpAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SourceConversationId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EndUserId", "Status", "EventDate");
-
-                    b.ToTable("UserLifeEvents");
-                });
-
             modelBuilder.Entity("Evervault.Api.Models.UserMemoryFact", b =>
                 {
                     b.Property<int>("Id")
@@ -840,46 +795,6 @@ namespace Evervault.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("UserMemoryFacts");
-                });
-
-            modelBuilder.Entity("Evervault.Api.Models.UserState", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("EndUserId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Key")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<DateOnly?>("NotedOn")
-                        .HasColumnType("date");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EndUserId");
-
-                    b.HasIndex("EndUserId", "Key")
-                        .IsUnique();
-
-                    b.ToTable("UserStates");
                 });
 
             modelBuilder.Entity("Evervault.Api.Models.UserTask", b =>

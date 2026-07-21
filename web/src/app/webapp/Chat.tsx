@@ -19,14 +19,25 @@ import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
-import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./lib/persona";
+import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
+import {
+  applyForget,
+  FORGET_PERSONA,
+  FORGET_TOOL_DECLARATIONS,
+  isForgetTool,
+  runForgetTool,
+  type ForgetItem,
+} from "./lib/forgetTool";
+import { getStates, renderStateBlock, type UserState } from "./lib/state";
+import { getEvents, renderEventsBlock, type LifeEvent } from "./lib/events";
+import { maybeRollupDigests } from "./lib/digest";
 import { FILE_TOOL_DECLARATIONS, FILES_PERSONA, isFileTool, runFileTool } from "./lib/fileTools";
 import { fetchChatFileContent, type StoredFileMeta, uploadChatFile } from "./lib/filesApi";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA, type SuggestionImage } from "./lib/suggestionTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
-import { getTasks, renderAgendaBlock, type Task } from "./lib/tasks";
+import { catchUpRecurring, getTasks, localDateStr, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
 import { styleDirective, type ResponseStyle, type StyleSurface } from "./lib/responseStyle";
 import { getSettings, putSettings } from "./lib/settings";
@@ -145,6 +156,9 @@ function toContents(msgs: ChatMessage[]): Content[] {
       // A file-offer card ("I found invoice.pdf — Send it?") is UI, not conversation: neither side
       // said it, and replaying it would make the model think the exchange happened. Drop it entirely.
       if (m.kind === "fileOffer") return false;
+      // Same for a forget-confirmation card: it is UI, and replaying it would have the model believe
+      // the removal was already discussed and agreed.
+      if (m.kind === "forgetOffer") return false;
       // Attachments only count as content on the USER side. An assistant message's `files` is a copy
       // it handed back after the user tapped Send, and those parts are deliberately NOT replayed
       // below — so a file-only assistant message would otherwise survive this filter and then produce
@@ -335,8 +349,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // refreshed after each extraction. Refs (+ store getters) so the unload/idle handlers see live state.
   const profileFactsRef = useRef<Fact[]>([]);
   const tasksRef = useRef<Task[]>([]);
+  const statesRef = useRef<UserState[]>([]);
+  const eventsRef = useRef<LifeEvent[]>([]);
   const extractCursorRef = useRef(0); // messages already distilled into the profile this conversation
   const extractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A distillation is in flight. Guards the debounce, the end of a call and the tab-hide handler from
+  // racing each other; `extractRerunRef` remembers a request that arrived while one was running so it
+  // runs afterwards rather than being dropped.
+  const extractInFlightRef = useRef(false);
+  const extractRerunRef = useRef<{ minNew: number; maxTurns?: number } | null>(null);
+  // Civil day the recurrence catch-up last ran for, so a tab left open past midnight still rolls
+  // repeating tasks onto the new day before the next reply is composed.
+  const lastCatchUpDayRef = useRef<string>("");
 
   // --- Message store + serial send queue ---
   //
@@ -394,30 +418,99 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     profileFactsRef.current = await getProfile();
   }, []);
 
+  const refreshStates = useCallback(async () => {
+    if (!store.getMemoryOn()) return;
+    statesRef.current = await getStates();
+  }, []);
+
+  const refreshEvents = useCallback(async () => {
+    if (!store.getMemoryOn()) return;
+    eventsRef.current = await getEvents("open");
+  }, []);
+
   const refreshTasks = useCallback(async () => {
     if (!store.getMemoryOn()) return;
-    tasksRef.current = await getTasks("open");
+    // Rolling overdue repeating tasks forward happens here and nowhere else — there is no timer and no
+    // server sweep, so the refresh path IS the recurrence clock. That's enough because a reminder can
+    // only ever surface while the user is actually here.
+    const fresh = await getTasks("open");
+    tasksRef.current = fresh;
+    lastCatchUpDayRef.current = localDateStr();
+    tasksRef.current = await catchUpRecurring(fresh);
   }, []);
+
+  /** Re-run the recurrence catch-up if the civil day has changed since the last one — covers a tab
+   * left open across midnight, where nothing else would notice that "tomorrow" is now today. */
+  const catchUpIfNewDay = useCallback(async () => {
+    if (!store.getMemoryOn()) return;
+    if (lastCatchUpDayRef.current === localDateStr()) return;
+    await refreshTasks();
+  }, [refreshTasks]);
 
   // Distil new turns into the profile (fire-and-forget; never blocks chat). `minNew` guards against
   // extracting tiny fragments — a closing conversation needs one exchange, an idle tick needs more.
-  const runExtraction = useCallback(async (minNew = 2) => {
+  // `maxTurns` widens the window for a voice call, which emits far more (and far shorter) turns than
+  // typing does and would otherwise lose everything before the last 20.
+  const runExtraction = useCallback(async (minNew = 2, maxTurns?: number) => {
     if (!store.getMemoryOn()) return;
-    const transcript = messagesRef.current
-      .filter((m) => m.text && !m.error && !m.streaming)
-      .map((m) => ({ role: m.role, text: m.text }));
-    if (transcript.length - extractCursorRef.current < minNew) return;
-    extractCursorRef.current = transcript.length;
-    const delta = await extractAndSyncProfile({
-      model: store.getTextModel(),
-      conversationId: conversationIdRef.current,
-      currentFacts: profileFactsRef.current,
-      currentTasks: tasksRef.current,
-      transcript,
-    });
-    if (delta?.profileChanged) await refreshProfile();
-    if (delta?.tasksChanged) await refreshTasks();
-  }, [refreshProfile, refreshTasks]);
+    // Three triggers can now fire at once (the debounce, the end of a call, and the tab being
+    // hidden). Without a lock they race and each pays for its own extraction; but simply dropping
+    // the loser would silently skip the end-of-call distillation whenever the debounce beat it to
+    // the punch — the exact case this work exists to fix. So queue it and drain below instead.
+    if (extractInFlightRef.current) {
+      extractRerunRef.current = { minNew, maxTurns };
+      return;
+    }
+
+    const once = async (min: number, cap?: number) => {
+      // Trim-aware, matching how extractAndSyncProfile filters: a whitespace-only bubble (a live
+      // transcript can emit one) would otherwise be counted here but dropped there, drifting the
+      // cursor away from the window it indexes into.
+      const transcript = messagesRef.current
+        .filter((m) => m.text.trim() && !m.error && !m.streaming)
+        .map((m) => ({ role: m.role, text: m.text }));
+      if (transcript.length - extractCursorRef.current < min) return;
+      const sinceIndex = extractCursorRef.current;
+      extractCursorRef.current = transcript.length;
+      const delta = await extractAndSyncProfile({
+        model: store.getTextModel(),
+        conversationId: conversationIdRef.current,
+        currentFacts: profileFactsRef.current,
+        currentTasks: tasksRef.current,
+        currentEvents: eventsRef.current,
+        transcript,
+        sinceIndex,
+        maxTurns: cap,
+      });
+      // A failed call (offline, 429, bad JSON) must NOT count as distilled: the cursor was advanced
+      // optimistically above, so rewind it — otherwise one blip at the end of a long call marks the
+      // whole conversation done forever and it is never retried.
+      if (delta?.failed) {
+        extractCursorRef.current = Math.min(extractCursorRef.current, sinceIndex);
+        return;
+      }
+      if (delta?.profileChanged) await refreshProfile();
+      if (delta?.tasksChanged) await refreshTasks();
+      if (delta?.statesChanged) await refreshStates();
+      if (delta?.eventsChanged) await refreshEvents();
+      // Amortised narrative rollup: there is no scheduler, so a completed week gets its digest the
+      // next time a conversation is distilled. Detached — it must never delay the chat, and it
+      // swallows its own failures.
+      void maybeRollupDigests(store.getTextModel());
+    };
+
+    extractInFlightRef.current = true;
+    try {
+      let job: { minNew: number; maxTurns?: number } | null = { minNew, maxTurns };
+      while (job) {
+        await once(job.minNew, job.maxTurns);
+        job = extractRerunRef.current;
+        extractRerunRef.current = null;
+      }
+    } finally {
+      extractInFlightRef.current = false;
+    }
+  }, [refreshProfile, refreshTasks, refreshStates, refreshEvents]);
 
   const scheduleExtraction = useCallback(() => {
     if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
@@ -500,13 +593,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     store.setMemoryOn(true); // memory is always on; keep the persisted guard in sync
     void refreshProfile();
     void refreshTasks();
+    void refreshStates();
+    void refreshEvents();
     return () => { settingsActiveRef.current = false; };
-  }, [loadConfig, loadSettings, refreshProfile, refreshTasks]);
+  }, [loadConfig, loadSettings, refreshProfile, refreshTasks, refreshStates, refreshEvents]);
 
   // Distil the conversation when the user backgrounds or leaves the tab — a natural "conversation end".
   useEffect(() => {
     const onHide = () => {
       if (document.visibilityState === "hidden") void runExtraction(2);
+      // Coming back to a tab that was left open overnight: re-roll repeating tasks onto today.
+      else void catchUpIfNewDay();
     };
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", onHide);
@@ -515,7 +612,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       window.removeEventListener("pagehide", onHide);
       if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
     };
-  }, [runExtraction]);
+  }, [runExtraction, catchUpIfNewDay]);
 
   function pickVoice(v: string) {
     store.setVoice(v);
@@ -709,6 +806,46 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     [applyMessages],
   );
 
+  // The `forget_memories` tool wants to remove things from memory. Like offerFile this does NOT act:
+  // it posts a card listing exactly what would go, and the deletion happens only if the user taps it
+  // (see confirmForget). Same idempotency guard, keyed on the set of refs, so an iOS suspension replay
+  // can't stack two identical cards.
+  const offerForget = useCallback(
+    (items: ForgetItem[], note: string) => {
+      const sig = items.map((i) => i.ref).join(",");
+      applyMessages((cur) =>
+        cur.some((m) => m.kind === "forgetOffer" && (m.forgetRef ?? []).map((i) => i.ref).join(",") === sig)
+          ? cur
+          : [...cur, { id: uid(), role: "assistant", text: note, kind: "forgetOffer", forgetRef: items }],
+      );
+    },
+    [applyMessages],
+  );
+
+  // The user tapped the confirm button on a forget card — THIS is the deletion; nothing was removed
+  // before now. Facts are also tombstoned inside applyForget so the conversation in which they asked
+  // can't re-teach them on the next extraction. The card becomes a plain confirmation line either way.
+  const confirmForget = useCallback(
+    async (messageId: string, items: ForgetItem[]) => {
+      const facts = profileFactsRef.current.map((f) => ({ id: f.id, category: f.category, key: f.key }));
+      let removed = 0;
+      try {
+        removed = await applyForget(items, facts);
+      } catch {
+        /* fall through — the card still resolves, and nothing is silently left half-offered */
+      }
+      await refreshProfile();
+      applyMessages((cur) =>
+        cur.map((m) =>
+          m.id === messageId
+            ? { ...m, kind: undefined, forgetRef: null, text: removed > 0 ? t.message.forgetDone : t.message.fileUnavailable }
+            : m,
+        ),
+      );
+    },
+    [applyMessages, refreshProfile, t],
+  );
+
   // The user tapped Send on an offer card. Pull the stored bytes back down and turn the card itself
   // into a normal assistant message carrying the file, so it renders exactly like a fresh attachment
   // (thumbnail + lightbox, or a chip). Clearing `kind`/`fileRef` is what retires the card; on a failed
@@ -769,18 +906,25 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         ? streamServerChatWithTools(toNeutralMessages(contents), sys, tools, runTool)
         : streamTextWithTools(textModel, contents, sys, tools, runTool);
     if (memoryOn) {
+      // A tab open since yesterday still holds yesterday's agenda; roll repeating tasks onto today
+      // before the block below is rendered, or the model is told a chore is overdue when it is due now.
+      await catchUpIfNewDay();
       // Ground the reply in the durable profile (who the user is) + today's task agenda + persona +
       // current time. The agenda is re-rendered every turn, so task tool calls show up mid-conversation.
       const sys = [
         renderProfileBlock(profileFactsRef.current),
+        renderStateBlock(statesRef.current),
+        renderEventsBlock(eventsRef.current),
         renderAgendaBlock(tasksRef.current),
         langDirective,
         styleDir,
         CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
+        SAFETY_BOUNDS,
         MEMORY_PERSONA,
         FILES_PERSONA,
         TASKS_PERSONA,
+        FORGET_PERSONA,
         SUGGESTION_PERSONA,
         currentTimeContext(),
       ]
@@ -792,6 +936,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             RECALL_MEMORY_DECLARATION,
             ...TASK_TOOL_DECLARATIONS,
             ...FILE_TOOL_DECLARATIONS,
+            ...FORGET_TOOL_DECLARATIONS,
             RECORD_SUGGESTION_DECLARATION,
           ],
         },
@@ -808,7 +953,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               ? runFileTool(name, args, (meta, note) => {
                   if (isCurrent()) offerFile(meta, note);
                 })
-              : runRecallTool(args);
+              : isForgetTool(name)
+                ? runForgetTool(name, args, (items, note) => {
+                    if (isCurrent()) offerForget(items, note);
+                  })
+                : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -1241,6 +1390,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const durationSec = Math.floor((Date.now() - startedAt) / 1000);
     if (durationSec < 1) return;
     applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: "", kind: "call", durationSec }]);
+    // Hanging up is as much a "conversation end" as hiding the tab or starting a new chat, both of
+    // which already distil. Without this the only backstop is the 20s debounce armed by the last
+    // completed turn — which a continuous call keeps resetting, and which needs 4 new messages — so a
+    // short call could sit undistilled until the user happened to background the tab. This is the one
+    // idempotent per-call choke point (the End button and the server-close/idle effect both land
+    // here), so it fires exactly once. A call emits many short turns, hence the wider window.
+    void runExtraction(2, 60);
   }
 
   async function startCall() {
@@ -1256,20 +1412,27 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveAsstIdRef.current = null;
     liveUserTextRef.current = "";
     liveAsstTextRef.current = "";
+    // A call builds its agenda from the ref directly and never goes through the send path, so without
+    // this a voice-only user's weekend chore would still read as overdue-since-March in every call.
+    if (memoryOn) await catchUpIfNewDay();
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
+    const stateBlock = memoryOn ? renderStateBlock(statesRef.current) ?? undefined : undefined;
+    const eventsBlock = memoryOn ? renderEventsBlock(eventsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
     const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
-    const session = new LiveSession(
-      liveModel,
+    const session = new LiveSession({
+      model: liveModel,
       voice,
-      memoryOn,
+      memoryEnabled: memoryOn,
       profileBlock,
+      stateBlock,
+      eventsBlock,
       recentContext,
-      lang,
+      language: lang,
       agendaBlock,
-      styleDirective(liveStyle),
-      liveIdleSec,
-    );
+      styleInstruction: styleDirective(liveStyle),
+      idleTimeoutSec: liveIdleSec,
+    });
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
     // Mirror the ref synchronously (the sync effect runs a commit later): the call is taking over the
@@ -1478,6 +1641,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               onReply={setReplyTo}
               onDelete={setPendingDelete}
               onSendFile={sendStoredFile}
+              onForget={confirmForget}
               scrollSignal={!!callState}
             />
           )}

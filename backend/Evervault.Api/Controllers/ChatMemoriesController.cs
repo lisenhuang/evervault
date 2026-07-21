@@ -41,8 +41,13 @@ public class ChatMemoriesController : ControllerBase
     public record SearchRequest(float[]? Vector, string? Q, int K = 8, DateTimeOffset? Since = null, DateTimeOffset? Until = null, string? Kind = null);
     // Score is the fused hybrid-search relevance (higher = better); null on the pure-vector, newest-first,
     // and legacy-fallback paths. Added as a trailing optional field so existing clients/callers are unaffected.
-    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, bool HasImage, DateTimeOffset CreatedAt, double? Distance, double? Score = null);
-    public record SummaryRequest(string ConversationId, string Text, float[]? Embedding);
+    // ConversationId is appended LAST and defaulted: a previously-shipped client ignores the extra
+    // JSON property. It is what lets the browser tell which periods already have a digest — every
+    // construction site below must pass it, or that check silently sees null and regenerates forever.
+    public record MemoryHit(int Id, string Role, string Modality, string Kind, string Content, bool HasAudio, bool HasImage, DateTimeOffset CreatedAt, double? Distance, double? Score = null, string? ConversationId = null);
+    // Kind is appended LAST and optional, defaulting to the only value that existed before: a
+    // previously-shipped client simply never sends it and keeps writing conversation summaries.
+    public record SummaryRequest(string ConversationId, string Text, float[]? Embedding, string? Kind = null);
 
     /// <summary>The embedding policy the browser must embed with (its own key). enabled = locked + model set.</summary>
     [HttpGet("config")]
@@ -169,7 +174,7 @@ public class ChatMemoriesController : ControllerBase
                 .Where(m => m.EmbeddingHalf != null)
                 .OrderBy(m => m.EmbeddingHalf!.CosineDistance(qv))
                 .Take(k)
-                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, m.EmbeddingHalf!.CosineDistance(qv)))
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, m.EmbeddingHalf!.CosineDistance(qv), null, m.ConversationId))
                 .ToListAsync();
             return Ok(hits);
         }
@@ -180,7 +185,7 @@ public class ChatMemoriesController : ControllerBase
             var recent = await Scoped()
                 .OrderByDescending(m => m.CreatedAt)
                 .Take(k)
-                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null, null, m.ConversationId))
                 .ToListAsync();
             return Ok(recent);
         }
@@ -242,7 +247,7 @@ public class ChatMemoriesController : ControllerBase
                 .Where(m => EF.Functions.ILike(m.Content, $"%{q}%"))
                 .OrderByDescending(m => m.CreatedAt)
                 .Take(k)
-                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
+                .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null, null, m.ConversationId))
                 .ToListAsync();
             return Ok(fallback);
         }
@@ -255,6 +260,7 @@ public class ChatMemoriesController : ControllerBase
             {
                 m.Id, m.Role, m.Modality, m.Kind, m.Content,
                 HasAudio = m.AudioObjectKey != null, HasImage = m.ImageObjectKey != null, m.CreatedAt,
+                m.ConversationId,
             })
             .ToListAsync();
 
@@ -264,7 +270,7 @@ public class ChatMemoriesController : ControllerBase
             .Take(k)
             .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.HasAudio, m.HasImage, m.CreatedAt,
                 vectorDistance.TryGetValue(m.Id, out var d) ? d : (double?)null,
-                fusedScore[m.Id]))
+                fusedScore[m.Id], m.ConversationId))
             .ToList();
         return Ok(fused);
     }
@@ -279,7 +285,7 @@ public class ChatMemoriesController : ControllerBase
         return await query
             .OrderByDescending(m => m.CreatedAt)
             .Take(t)
-            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null))
+            .Select(m => new MemoryHit(m.Id, m.Role, m.Modality, m.Kind, m.Content, m.AudioObjectKey != null, m.ImageObjectKey != null, m.CreatedAt, (double?)null, null, m.ConversationId))
             .ToListAsync();
     }
 
@@ -291,10 +297,23 @@ public class ChatMemoriesController : ControllerBase
         var content = (req.Text ?? "").Trim();
         var convId = (req.ConversationId ?? "").Trim();
         if (content.Length == 0 || convId.Length == 0) return BadRequest(new { error = "conversationId and text are required." });
+
+        // Only these two kinds may be written here, and a digest MUST carry a synthetic id. Both halves
+        // matter: this endpoint deletes every row matching (conversation, kind) before inserting, so an
+        // unvalidated kind would let a caller aim that delete at a real conversation's "turn" rows and
+        // wipe the transcript. The prefix check keeps digests in their own id namespace, where the
+        // delete can only ever hit a previous digest for the same period.
+        var kind = (req.Kind ?? "summary").Trim().ToLowerInvariant();
+        if (kind is not ("summary" or "digest")) return BadRequest(new { error = "Unsupported kind." });
+        if (kind == "digest" && !convId.StartsWith("digest:", StringComparison.Ordinal))
+            return BadRequest(new { error = "A digest needs a digest: conversation id." });
+        if (kind == "summary" && convId.StartsWith("digest:", StringComparison.Ordinal))
+            return BadRequest(new { error = "A conversation summary cannot use a digest: id." });
+
         var uid = Uid;
 
         await _db.ChatMemories
-            .Where(m => m.EndUserId == uid && m.ConversationId == convId && m.Kind == "summary")
+            .Where(m => m.EndUserId == uid && m.ConversationId == convId && m.Kind == kind)
             .ExecuteDeleteAsync();
 
         var cfg = await _db.EmbeddingConfigs.AsNoTracking().FirstOrDefaultAsync();
@@ -309,7 +328,7 @@ public class ChatMemoriesController : ControllerBase
             ConversationId = convId,
             Role = "assistant",
             Modality = "text",
-            Kind = "summary",
+            Kind = kind,
             Content = content.Length > 16000 ? content[..16000] : content,
             Embedding = emb is null ? null : new Vector(emb),
             EmbeddingHalf = emb is null ? null : ToHalf(emb),

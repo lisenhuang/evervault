@@ -3,6 +3,7 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  Eraser,
   FileAudio,
   FileText,
   Image as ImageIcon,
@@ -21,6 +22,7 @@ import MessageMenu from "./MessageMenu";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import FilePreview from "./FilePreview";
 import type { ChatMessage, ReplyRef } from "./types";
+import type { ForgetItem } from "./lib/forgetTool";
 import { formatDuration, formatMemoryDate } from "./lib/time";
 import { formatSize, openFileInNewTab, type PreparedFile } from "./lib/files";
 import { isIOS } from "./lib/liveAudio";
@@ -111,6 +113,7 @@ export default function MessageList({
   onReply,
   onDelete,
   onSendFile,
+  onForget,
   scale,
   scrollSignal,
 }: {
@@ -130,6 +133,9 @@ export default function MessageList({
    *  carrying the file. Nothing reaches the chat until this runs — tapping the confirm button *is*
    *  the send. */
   onSendFile: (messageId: string, fileId: number) => void;
+  /** Confirm a "forgetOffer" card: permanently remove the listed items and replace the card with a
+   *  short confirmation. Nothing is deleted until this runs — tapping the button *is* the deletion. */
+  onForget: (messageId: string, items: ForgetItem[]) => void;
   /** The user's chat text size (1 = 100%), set from the mobile header's A− / % / A+ control. */
   scale: number;
   // Bump this to re-pin to the bottom even when `messages` didn't change — e.g. when the call bar
@@ -212,6 +218,15 @@ export default function MessageList({
               <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
             </span>
           </div>
+        ) : m.kind === "forgetOffer" && m.forgetRef ? (
+          // The assistant found things it remembers and is asking before removing them. Tapping the
+          // confirm button IS the deletion — nothing has been removed at the point this renders.
+          <ForgetOfferCard
+            key={m.id}
+            note={m.text}
+            items={m.forgetRef}
+            onForget={() => onForget(m.id, m.forgetRef!)}
+          />
         ) : m.kind === "fileOffer" && m.fileRef ? (
           // The assistant found a stored file and is asking before handing it over. Kept ahead of the
           // user/assistant split on purpose: an unhandled kind falls through to AssistantMessage and
@@ -711,6 +726,79 @@ function FileOfferCard({
           <button
             type="button"
             disabled={sending}
+            onClick={() => setDismissed(true)}
+            className="rounded-full px-3 py-1.5 chat-text-sm font-medium text-black/55 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/55 dark:hover:bg-white/10"
+          >
+            {t.message.notNow}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The assistant has found things it remembers and is asking whether to remove them. Deliberately
+// modelled on FileOfferCard: the model can propose, but only the human can act. Removal is permanent,
+// so the list shows exactly what would go and the destructive button is styled as such.
+function ForgetOfferCard({
+  note,
+  items,
+  onForget,
+}: {
+  note: string;
+  items: ForgetItem[];
+  onForget: () => void;
+}) {
+  const t = useT();
+  const [dismissed, setDismissed] = useState(false);
+  // Set on tap and never cleared: the caller replaces this message once the deletes settle, so the
+  // card unmounts either way. The spinner only has to outlive the round-trip.
+  const [working, setWorking] = useState(false);
+  if (dismissed) return null;
+
+  return (
+    <div className="flex items-start gap-3">
+      <AiAvatar />
+      <div className={BUBBLE_CLS}>
+        <div className="flex items-center gap-1.5 chat-text-sm font-semibold text-black/50 dark:text-white/50">
+          <Eraser size={13} className="chat-icon" aria-hidden="true" />
+          {t.message.forgetOffer}
+        </div>
+        {note && <p className="mt-1.5 whitespace-pre-wrap">{note}</p>}
+        <ul className="mt-2 flex flex-col gap-1.5">
+          {items.map((it) => (
+            <li
+              key={it.ref}
+              className="rounded-xl bg-black/5 px-3 py-2 chat-text-sm dark:bg-white/10"
+            >
+              <span className="block">{it.what}</span>
+              {it.detail && (
+                <span className="mt-0.5 block chat-text-2xs text-black/45 dark:text-white/45">{it.detail}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 chat-text-2xs text-black/45 dark:text-white/45">{t.message.forgetPermanent}</p>
+        <div className="mt-2.5 flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={working}
+            onClick={() => {
+              setWorking(true);
+              onForget();
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-3.5 py-1.5 chat-text-sm font-medium text-white shadow-sm transition hover:bg-red-700 disabled:opacity-60"
+          >
+            {working ? (
+              <Loader2 size={13} className="chat-icon animate-spin" aria-hidden="true" />
+            ) : (
+              <Eraser size={13} className="chat-icon" aria-hidden="true" />
+            )}
+            {t.message.forgetConfirm}
+          </button>
+          <button
+            type="button"
+            disabled={working}
             onClick={() => setDismissed(true)}
             className="rounded-full px-3 py-1.5 chat-text-sm font-medium text-black/55 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/55 dark:hover:bg-white/10"
           >

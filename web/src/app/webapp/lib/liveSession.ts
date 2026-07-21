@@ -9,9 +9,10 @@ import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServe
 import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
-import { CAPABILITY_BOUNDS, CONFIDENTIALITY } from "./persona";
+import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
+import { FORGET_PERSONA, FORGET_TOOL_DECLARATIONS, isForgetTool, runForgetTool } from "./forgetTool";
 import { FILE_TOOL_DECLARATIONS, isFileTool, runFileTool } from "./fileTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
 import { currentTimeContext } from "./time";
@@ -115,19 +116,48 @@ export class LiveSession {
   private lastVoiceActivityMs = 0;
   private idleTimer?: ReturnType<typeof setInterval>;
 
-  constructor(
-    private model: string,
-    private voice: string,
-    private memoryEnabled = false,
-    private profileBlock?: string,
-    private recentContext?: string,
-    private language: Lang = "en",
-    private agendaBlock?: string,
-    // The user's chosen response-style directive for live calls ("" when they left it on default).
-    private styleInstruction?: string,
-    // Admin-configured idle auto-hang-up window, in seconds. 0 = never hang up on silence.
-    private idleTimeoutSec: number = DEFAULT_IDLE_TIMEOUT_SEC,
-  ) {}
+  private readonly model: string;
+  private readonly voice: string;
+  private readonly memoryEnabled: boolean;
+  private readonly profileBlock?: string;
+  private readonly stateBlock?: string;
+  private readonly eventsBlock?: string;
+  private readonly recentContext?: string;
+  private readonly language: Lang;
+  private readonly agendaBlock?: string;
+  /** The user's chosen response-style directive for live calls ("" when they left it on default). */
+  private readonly styleInstruction?: string;
+  /** Admin-configured idle auto-hang-up window, in seconds. 0 = never hang up on silence. */
+  private readonly idleTimeoutSec: number;
+
+  // Named options rather than a positional list: every memory feature adds another optional context
+  // block here, and appending to a nine-argument positional constructor is how two of them silently
+  // land in each other's slots.
+  constructor(opts: {
+    model: string;
+    voice: string;
+    memoryEnabled?: boolean;
+    profileBlock?: string;
+    stateBlock?: string;
+    eventsBlock?: string;
+    recentContext?: string;
+    language?: Lang;
+    agendaBlock?: string;
+    styleInstruction?: string;
+    idleTimeoutSec?: number;
+  }) {
+    this.model = opts.model;
+    this.voice = opts.voice;
+    this.memoryEnabled = opts.memoryEnabled ?? false;
+    this.profileBlock = opts.profileBlock;
+    this.stateBlock = opts.stateBlock;
+    this.eventsBlock = opts.eventsBlock;
+    this.recentContext = opts.recentContext;
+    this.language = opts.language ?? "en";
+    this.agendaBlock = opts.agendaBlock;
+    this.styleInstruction = opts.styleInstruction;
+    this.idleTimeoutSec = opts.idleTimeoutSec ?? DEFAULT_IDLE_TIMEOUT_SEC;
+  }
 
   /** The idle window in ms, or 0 when the admin turned the auto-hang-up off. */
   private get idleTimeoutMs(): number {
@@ -270,7 +300,12 @@ export class LiveSession {
           {
             functionDeclarations: [
               ...(this.memoryEnabled
-                ? [RECALL_MEMORY_DECLARATION, ...TASK_TOOL_DECLARATIONS, ...FILE_TOOL_DECLARATIONS]
+                ? [
+                    RECALL_MEMORY_DECLARATION,
+                    ...TASK_TOOL_DECLARATIONS,
+                    ...FILE_TOOL_DECLARATIONS,
+                    ...FORGET_TOOL_DECLARATIONS,
+                  ]
                 : []),
               RECORD_SUGGESTION_DECLARATION,
             ],
@@ -280,10 +315,13 @@ export class LiveSession {
         // list_tasks tool gives freshness mid-call). The profile block grounds the call from the first word.
         systemInstruction: [
           this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
+          this.memoryEnabled && this.stateBlock ? this.stateBlock : "",
+          this.memoryEnabled && this.eventsBlock ? this.eventsBlock : "",
           this.memoryEnabled && this.agendaBlock ? this.agendaBlock : "",
           this.memoryEnabled && this.recentContext ? this.recentContext : "",
           this.memoryEnabled ? MEMORY_PERSONA : "",
           this.memoryEnabled ? TASKS_PERSONA : "",
+          this.memoryEnabled ? FORGET_PERSONA : "",
           SUGGESTION_PERSONA,
           SYSTEM_INSTRUCTION,
           // The user's chosen response style for calls (empty on default) — layered after the base
@@ -291,6 +329,7 @@ export class LiveSession {
           this.styleInstruction || "",
           CONFIDENTIALITY,
           CAPABILITY_BOUNDS,
+          SAFETY_BOUNDS,
           // Steer the spoken reply into the selected UI language (empty for English).
           aiReplyDirective(this.language),
           currentTimeContext(),
@@ -509,7 +548,9 @@ export class LiveSession {
               ? runTaskTool(name, args)
               : isFileTool(name)
                 ? runFileTool(name, args)
-                : runRecallTool(args);
+                : isForgetTool(name)
+                  ? runForgetTool(name, args)
+                  : runRecallTool(args);
         }),
       );
       this.session?.sendToolResponse({

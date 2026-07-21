@@ -29,17 +29,23 @@ public class UserTasksController : ControllerBase
     // Bound the token budget of the injected agenda + the per-user row count.
     private const int MaxOpenTasksPerUser = 100;
 
+    // Recurrence + LastCompletedAt are appended LAST and are optional on the way in: a previously
+    // shipped client deserializes the extra JSON properties harmlessly and never sends them.
     public record TaskDto(int Id, string Title, string? Details, string? DueDate, string? DueTime,
-        string Status, string Source, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
-    public record TaskCreate(string Title, string? Details, string? DueDate, string? DueTime, string? Source, string? ConversationId);
-    public record TaskPatch(string? Title, string? Details, string? DueDate, string? DueTime, string? Status);
+        string Status, string Source, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt,
+        string? Recurrence = null, DateTimeOffset? LastCompletedAt = null);
+    public record TaskCreate(string Title, string? Details, string? DueDate, string? DueTime, string? Source, string? ConversationId,
+        string? Recurrence = null);
+    public record TaskPatch(string? Title, string? Details, string? DueDate, string? DueTime, string? Status,
+        string? Recurrence = null);
     public record TaskAdd(string Title, string? Details, string? DueDate, string? DueTime);
     public record TasksSyncRequest(List<TaskAdd>? Adds, List<int>? Completes, List<int>? Dismisses, string? ConversationId);
 
     private static TaskDto ToDto(UserTask t) => new(
         t.Id, t.Title, t.Details,
         t.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), t.DueTime,
-        t.Status, t.Source, t.CreatedAt, t.UpdatedAt, t.CompletedAt);
+        t.Status, t.Source, t.CreatedAt, t.UpdatedAt, t.CompletedAt,
+        t.Recurrence, t.LastCompletedAt);
 
     // Parse a client-supplied "yyyy-MM-dd" into a DateOnly, or null if absent/malformed. Extraction
     // output is model-generated, so we drop bad values rather than 400 the whole batch.
@@ -51,6 +57,34 @@ public class UserTasksController : ControllerBase
     {
         s = (s ?? "").Trim();
         return System.Text.RegularExpressions.Regex.IsMatch(s, @"^\d{2}:\d{2}$") ? s : null;
+    }
+
+    // The repeat-rule grammar (see UserTask.Recurrence). The server only validates the shape and
+    // stores it — the browser is what interprets it, because it is the only side that reliably knows
+    // the user's wall calendar. Like ParseDate/ParseTime, an unrecognised value is dropped rather than
+    // 400-ing, since the input is model-generated: a bad rule degrades to a plain one-off task.
+    private static readonly System.Text.RegularExpressions.Regex RecurrenceRe = new(
+        @"^(daily|weekdays|weekends|weekly:(mon|tue|wed|thu|fri|sat|sun)(,(mon|tue|wed|thu|fri|sat|sun))*|monthly:([1-9]|[12][0-9]|3[01]))$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string? ParseRecurrence(string? s)
+    {
+        s = (s ?? "").Trim().ToLowerInvariant();
+        return RecurrenceRe.IsMatch(s) ? s : null;
+    }
+
+    /// <summary>
+    /// Record one occurrence of a repeating task as done WITHOUT closing the series. A recurring task
+    /// is a single row that stays "open" while its due date rolls forward, so completing it must never
+    /// set Status/CompletedAt — those mean "finished for good", and a previously-shipped client reads
+    /// them that way. This is also the safety net for a stale browser tab: its complete_task sends
+    /// status:"done" with no idea the task repeats, and without this the user's recurring reminder
+    /// would be silently killed the first time they ticked it off from an un-refreshed page.
+    /// </summary>
+    private static void TickOccurrence(UserTask t, DateTimeOffset now)
+    {
+        t.LastCompletedAt = now;
+        t.UpdatedAt = now;
     }
 
     private static string Clip(string s, int max) => s.Length > max ? s[..max] : s;
@@ -89,6 +123,7 @@ public class UserTasksController : ControllerBase
             Details = string.IsNullOrWhiteSpace(req.Details) ? null : Clip(req.Details.Trim(), 2000),
             DueDate = ParseDate(req.DueDate),
             DueTime = ParseTime(req.DueTime),
+            Recurrence = ParseRecurrence(req.Recurrence),
             Status = "open",
             Source = source,
             SourceConversationId = string.IsNullOrWhiteSpace(req.ConversationId) ? null : Clip(req.ConversationId.Trim(), 64),
@@ -113,6 +148,12 @@ public class UserTasksController : ControllerBase
         foreach (var id in req.Completes ?? [])
             if (byId.TryGetValue(id, out var t) && t.Status == "open")
             {
+                // A repeating task is never "done" — tick the occurrence and leave the series running.
+                if (t.Recurrence is not null)
+                {
+                    TickOccurrence(t, now);
+                    continue;
+                }
                 t.Status = "done";
                 t.CompletedAt = now;
                 t.UpdatedAt = now;
@@ -181,13 +222,28 @@ public class UserTasksController : ControllerBase
             t.DueDate = req.DueDate.Trim().Length == 0 ? null : ParseDate(req.DueDate) ?? t.DueDate;
         if (req.DueTime is not null)
             t.DueTime = req.DueTime.Trim().Length == 0 ? null : ParseTime(req.DueTime) ?? t.DueTime;
+        // Empty string turns a repeating task back into a one-off; an unparseable rule leaves it alone.
+        if (req.Recurrence is not null)
+            t.Recurrence = req.Recurrence.Trim().Length == 0 ? null : ParseRecurrence(req.Recurrence) ?? t.Recurrence;
         if (req.Status is not null)
         {
             var s = req.Status.Trim().ToLowerInvariant();
             if (s is "open" or "done" or "dismissed")
             {
-                t.Status = s;
-                t.CompletedAt = s == "done" ? now : null;
+                // "done" on a repeating task ticks the occurrence instead of ending the series. Note
+                // this reads t.Recurrence AFTER the patch above, so clearing the rule and completing
+                // in one request does finish the task — which is what that combination should mean.
+                // "dismissed" is deliberately NOT intercepted: it is how the user stops a repeat for
+                // good, and so is DELETE.
+                if (s == "done" && t.Recurrence is not null)
+                {
+                    TickOccurrence(t, now);
+                }
+                else
+                {
+                    t.Status = s;
+                    t.CompletedAt = s == "done" ? now : null;
+                }
             }
         }
         t.UpdatedAt = now;

@@ -5,7 +5,8 @@
 // looking further out, and adding/completing/rescheduling on the fly.
 
 import { Type, type FunctionDeclaration } from "@google/genai";
-import { createTask, getTasks, patchTask, type Task } from "./tasks";
+import { describeRecurrence, firstOccurrence, isRecurring, nextOccurrence } from "./recurrence";
+import { createTask, getTasks, localDateStr, patchTask, type Task } from "./tasks";
 
 // Persona addendum for the task list. Prepend alongside MEMORY_PERSONA on both surfaces.
 export const TASKS_PERSONA =
@@ -17,11 +18,35 @@ export const TASKS_PERSONA =
   "list on your own initiative or just because a to-do came up in conversation. When the user mentions a " +
   "concrete to-do, appointment, or deadline, first ASK whether they want it added to their task list, and " +
   "only call add_task AFTER they explicitly confirm — the human must approve every task before it is " +
-  "added. Once they confirm, resolve relative dates ('tomorrow', 'next Friday') into a YYYY-MM-DD date, and " +
+  "added. The one exception is when the user has ALREADY asked you to remember or remind them of " +
+  "something (\"remind me to X\", \"don't let me forget X\") — that IS the confirmation, so just add it " +
+  "and say you've got it, rather than asking them to confirm a request they already made. " +
+  "Once they confirm, resolve relative dates ('tomorrow', 'next Friday') into a YYYY-MM-DD date, and " +
   "omit the date if they didn't give one. When the user says something is done, " +
   "call complete_task with its id; use update_task to reschedule a task or to dismiss one they no longer " +
   "want (dismiss, don't complete, when it wasn't actually done). Refer to tasks by their title, never by " +
-  "id number, and never invent tasks that aren't on the list.";
+  "id number, and never invent tasks that aren't on the list.\n\n" +
+  // Without this the whole reminder feature is invisible: the agenda is passive context, so the model
+  // reads it and says nothing, and the user has to ask "what's on my list" to ever be reminded.
+  "BRING UP WHAT'S DUE. A reminder is only useful if you actually raise it. When a conversation starts " +
+  "and something is overdue or due today, mention it yourself, early and briefly, without waiting to be " +
+  "asked — warmly and in one line, not as a recited list (\"Morning! Just so you know, cleaning the room " +
+  "is on for today.\"). Raise a given task only once per conversation; if they've already told you they " +
+  "did it, or they're clearly in the middle of something else, let it go rather than repeating yourself. " +
+  "Nothing due means say nothing about tasks at all.\n\n" +
+  "REPEATING TASKS. A task can repeat: pass `repeat` to add_task with one of exactly these values — " +
+  "`daily`, `weekdays`, `weekends`, `weekly:` plus comma-separated days (e.g. `weekly:mon,thu`), or " +
+  "`monthly:` plus a day number (e.g. `monthly:15`). \"Every weekend\" is `weekends`, \"every morning\" " +
+  "is `daily`, \"every Tuesday\" is `weekly:tue`. Use the same `repeat` on update_task to change a " +
+  "schedule, or pass an empty string to make a task one-off again. Completing a repeating task marks " +
+  "THIS occurrence done and the task automatically moves to its next date — so say something like " +
+  "\"nice, that's done — the next one's on Saturday\", never that the task is finished for good. If a " +
+  "repeat is no longer wanted, dismiss it with update_task. " +
+  // The product genuinely cannot contact the user between sessions, and CAPABILITY_BOUNDS forbids
+  // implying otherwise. A repeating task changes what's on the list, not what the assistant can do.
+  "Be accurate about how a repeating reminder reaches them: it will be waiting at the top of their " +
+  "list on the day, and you will bring it up the next time they come and talk to you. You still cannot " +
+  "message, notify, alert or ping them on your own — never say or imply that you will.";
 
 export const LIST_TASKS_DECLARATION: FunctionDeclaration = {
   name: "list_tasks",
@@ -66,6 +91,15 @@ export const ADD_TASK_DECLARATION: FunctionDeclaration = {
           "local date/time you were given. Omit entirely if the user gave no date.",
       },
       dueTime: { type: Type.STRING, description: "Optional clock time as 24-hour HH:mm." },
+      repeat: {
+        type: Type.STRING,
+        description:
+          "Optional repeat schedule. Exactly one of: 'daily', 'weekdays', 'weekends', " +
+          "'weekly:<days>' with comma-separated day abbreviations (e.g. 'weekly:mon,thu'), or " +
+          "'monthly:<day-of-month>' (e.g. 'monthly:15'). Use 'weekends' for \"every weekend\". Omit " +
+          "for a one-off task. When set, dueDate is optional — the first occurrence is worked out for " +
+          "you — and the task moves to its next date each time it is completed.",
+      },
     },
     required: ["title"],
   },
@@ -73,7 +107,10 @@ export const ADD_TASK_DECLARATION: FunctionDeclaration = {
 
 export const COMPLETE_TASK_DECLARATION: FunctionDeclaration = {
   name: "complete_task",
-  description: "Mark a task done when the user says they finished it. Use the id from the task list or list_tasks.",
+  description:
+    "Mark a task done when the user says they finished it. Use the id from the task list or " +
+    "list_tasks. For a repeating task this completes THIS occurrence and automatically schedules the " +
+    "next one — the response tells you the next date — so don't describe it as finished for good.",
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -98,6 +135,12 @@ export const UPDATE_TASK_DECLARATION: FunctionDeclaration = {
         description: "New due date as YYYY-MM-DD, resolved from the current local date/time. Pass an empty string to clear it.",
       },
       dueTime: { type: Type.STRING, description: "New clock time as HH:mm, or empty string to clear it." },
+      repeat: {
+        type: Type.STRING,
+        description:
+          "Change the repeat schedule: 'daily', 'weekdays', 'weekends', 'weekly:<days>' or " +
+          "'monthly:<day>'. Pass an empty string to stop it repeating and make it a one-off.",
+      },
       status: { type: Type.STRING, description: "'open' to reopen, or 'dismissed' to drop it." },
     },
     required: ["id"],
@@ -120,6 +163,9 @@ const brief = (t: Task) => ({
   due: t.dueDate,
   time: t.dueTime,
   status: t.status,
+  // Described in words rather than as the raw token, so the model never reads an internal format
+  // aloud. Omitted entirely for one-off tasks to keep the payload small.
+  ...(t.recurrence ? { repeats: describeRecurrence(t.recurrence) } : {}),
 });
 
 /**
@@ -149,8 +195,20 @@ export async function runTaskTool(
   if (name === "add_task") {
     const title = str(args.title);
     if (!title) return JSON.stringify({ error: "a title is required" });
+    const repeat = str(args.repeat);
+    if (repeat && !isRecurring(repeat)) {
+      // Tell the model what it got wrong rather than silently dropping the schedule — otherwise it
+      // reports "set to repeat every weekend" for a task that is actually a one-off.
+      return JSON.stringify({
+        error:
+          "unrecognised repeat schedule; use daily, weekdays, weekends, weekly:<days> or monthly:<day>",
+      });
+    }
+    // Anchor the series so a repeating task always has a first date: without one there is nothing to
+    // roll forward from, and the task would sit undated forever instead of coming due.
+    const dueDate = str(args.dueDate) ?? (repeat ? firstOccurrence(repeat) ?? undefined : undefined);
     const task = await createTask(
-      { title, details: str(args.details), dueDate: str(args.dueDate), dueTime: str(args.dueTime) },
+      { title, details: str(args.details), dueDate, dueTime: str(args.dueTime), recurrence: repeat },
       "ai",
     );
     if (!task) return JSON.stringify({ error: "could not add the task" });
@@ -160,6 +218,21 @@ export async function runTaskTool(
 
   if (name === "complete_task") {
     if (!Number.isFinite(id)) return JSON.stringify({ error: "a task id is required" });
+    const existing = (await getTasks("open")).find((t) => t.id === id);
+    // A repeating task is never "done": the server ticks the occurrence and keeps the row open, and we
+    // move it on to its next date in the same request so the agenda is correct immediately.
+    if (existing?.recurrence) {
+      const next = nextOccurrence(existing.recurrence, existing.dueDate ?? localDateStr());
+      const task = await patchTask(id, { status: "done", ...(next ? { dueDate: next } : {}) });
+      if (!task) return JSON.stringify({ error: "no such task" });
+      onChanged?.();
+      return JSON.stringify({
+        ok: true,
+        occurrenceDone: true,
+        nextDue: task.dueDate,
+        task: brief(task),
+      });
+    }
     const task = await patchTask(id, { status: "done" });
     if (!task) return JSON.stringify({ error: "no such task" });
     onChanged?.();
@@ -168,10 +241,31 @@ export async function runTaskTool(
 
   if (name === "update_task") {
     if (!Number.isFinite(id)) return JSON.stringify({ error: "a task id is required" });
-    const patch: { title?: string; dueDate?: string; dueTime?: string; status?: string } = {};
+    const patch: {
+      title?: string;
+      dueDate?: string;
+      dueTime?: string;
+      recurrence?: string;
+      status?: string;
+    } = {};
     if (typeof args.title === "string") patch.title = args.title.trim();
     if (typeof args.dueDate === "string") patch.dueDate = args.dueDate.trim(); // "" clears it
     if (typeof args.dueTime === "string") patch.dueTime = args.dueTime.trim();
+    if (typeof args.repeat === "string") {
+      const repeat = args.repeat.trim(); // "" stops it repeating
+      if (repeat && !isRecurring(repeat)) {
+        return JSON.stringify({
+          error:
+            "unrecognised repeat schedule; use daily, weekdays, weekends, weekly:<days> or monthly:<day>",
+        });
+      }
+      patch.recurrence = repeat;
+      // Newly repeating with no date of its own — anchor it, or it can never come due.
+      if (repeat && patch.dueDate === undefined) {
+        const seed = (await getTasks("open")).find((t) => t.id === id);
+        if (seed && !seed.dueDate) patch.dueDate = firstOccurrence(repeat) ?? undefined;
+      }
+    }
     const status = str(args.status);
     if (status === "open" || status === "dismissed") patch.status = status;
     const task = await patchTask(id, patch);
