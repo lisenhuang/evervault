@@ -18,7 +18,6 @@ export default function Composer({
   onStopVoice,
   onStartCall,
   voiceState,
-  disabled,
   inCall,
   replyTo,
   onCancelReply,
@@ -28,7 +27,9 @@ export default function Composer({
   onStopVoice: () => void;
   onStartCall: () => void;
   voiceState: VoiceState;
-  disabled: boolean;
+  /** A realtime voice call is active. The call owns the mic, so recording a voice message and
+   *  starting another call are blocked while it runs — but typing/attaching/sending text is not:
+   *  a text turn has no audio, so it can be queued alongside the call. */
   inCall: boolean;
   /** The message the next send will quote (from the message menu's "Reply"). */
   replyTo: ChatMessage | null;
@@ -133,7 +134,7 @@ export default function Composer({
   }
 
   async function attachFiles(incoming: File[]) {
-    if (!incoming.length || disabled || voiceState === "recording") return;
+    if (!incoming.length || voiceState === "recording") return;
     const room = MAX_FILES - filesRef.current.length - inflightRef.current;
     if (incoming.length > room) flashError(t.composer.tooManyFiles(MAX_FILES));
     if (room <= 0) return;
@@ -213,7 +214,7 @@ export default function Composer({
 
   function send() {
     const trimmed = text.trim();
-    if ((!trimmed && files.length === 0) || disabled || busyCount > 0) return;
+    if ((!trimmed && files.length === 0) || busyCount > 0) return;
     onSendText(trimmed, files.length ? files : undefined);
     setText("");
     setFilesSync([]);
@@ -330,7 +331,7 @@ export default function Composer({
         <div className="flex items-end gap-2">
           <button
             onClick={callClick}
-            disabled={disabled || recording || processing || inCall}
+            disabled={recording || processing || inCall}
             title={inCall ? t.composer.callInProgress : t.composer.startCall}
             className={`${focused ? "hidden md:flex" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40`}
           >
@@ -338,7 +339,7 @@ export default function Composer({
           </button>
           <button
             onClick={micClick}
-            disabled={disabled || processing}
+            disabled={processing || inCall}
             title={recording ? t.composer.stopRecording : t.composer.recordVoice}
             className={`${focused ? "hidden md:flex" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
               recording
@@ -361,7 +362,7 @@ export default function Composer({
             <input ref={fileInputRef} type="file" accept={FILE_ACCEPT} multiple className="hidden" onChange={onPick} />
             <button
               onClick={attachClick}
-              disabled={disabled || recording}
+              disabled={recording}
               title={t.composer.attachFiles}
               aria-label={t.composer.attachFiles}
               className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10"
@@ -372,7 +373,7 @@ export default function Composer({
               ref={taRef}
               value={text}
               rows={1}
-              disabled={disabled || recording}
+              disabled={recording}
               placeholder={
                 recording ? t.composer.listening : isNarrow ? t.composer.placeholderShort : t.composer.placeholder
               }
@@ -407,7 +408,7 @@ export default function Composer({
 
           <button
             onClick={send}
-            disabled={disabled || recording || busy || (!text.trim() && files.length === 0)}
+            disabled={recording || busy || (!text.trim() && files.length === 0)}
             title={t.composer.send}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
           >

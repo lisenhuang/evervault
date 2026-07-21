@@ -46,6 +46,25 @@ const uid = () => crypto.randomUUID();
 /** Small await-able delay, used by the voice-reply poll loop. */
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * True when `asstId` is the reply to the MOST-RECENT voice message — i.e. the last non-errored
+ * assistant message with kind "voice" in the transcript is this one.
+ *
+ * With the send queue, several voice (and text) messages can be in flight at once and their spoken
+ * replies resolve in order. We only ever auto-play the *last* voice message's reply: an earlier one
+ * stays silent while a later voice message is still outstanding (its placeholder — added the moment
+ * the user sends it — already carries kind "voice", so it wins this scan). Interleaved text turns
+ * carry no kind, so a voice message followed only by typed messages is still "the last voice reply"
+ * and does play.
+ */
+function isLastVoiceReply(msgs: ChatMessage[], asstId: string): boolean {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role === "assistant" && m.kind === "voice" && !m.error) return m.id === asstId;
+  }
+  return false;
+}
+
 // Recordings shorter than this are discarded instead of sent: a blink-quick tap-tap holds no speech,
 // and transcribing/answering near-empty audio produces nonsense that derails the conversation.
 const MIN_VOICE_MESSAGE_SECONDS = 0.5;
@@ -212,7 +231,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [confirmNewChat, setConfirmNewChat] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState("");
-  const [streaming, setStreaming] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   // Message the next send will quote — set from a bubble's context menu (right-click / long-press).
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
@@ -317,12 +335,59 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // refreshed after each extraction. Refs (+ store getters) so the unload/idle handlers see live state.
   const profileFactsRef = useRef<Fact[]>([]);
   const tasksRef = useRef<Task[]>([]);
-  const messagesRef = useRef<ChatMessage[]>([]);
   const extractCursorRef = useRef(0); // messages already distilled into the profile this conversation
   const extractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // --- Message store + serial send queue ---
+  //
+  // `messagesRef` is the AUTHORITATIVE, synchronously-updated copy of the transcript; `messages`
+  // state trails it by a render (React commits async). Because the user can now queue several
+  // messages before the first reply lands, each queued turn must build its prompt from the reply the
+  // PREVIOUS queued turn just produced — which may not have been committed to React state yet. So
+  // every mutation goes through `applyMessages`, which updates the ref first and then mirrors it into
+  // state. Nothing else calls setMessages directly (that would let the ref drift out of sync).
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const applyMessages = useCallback((updater: (cur: ChatMessage[]) => ChatMessage[]) => {
+    messagesRef.current = updater(messagesRef.current);
+    setMessages(messagesRef.current);
+  }, []);
+
+  // The transcript as it stood just before `boundaryId` — the history a queued turn feeds to the
+  // model. Since turns run strictly in order, everything ahead of the boundary is already finalized.
+  // If the boundary is gone (its bubble was deleted, or the chat was cleared while the turn was still
+  // queued), return an EMPTY history rather than the whole current transcript — which could otherwise
+  // splice in later, unrelated in-flight turns.
+  const historyBefore = useCallback((boundaryId: string): ChatMessage[] => {
+    const msgs = messagesRef.current;
+    const i = msgs.findIndex((m) => m.id === boundaryId);
+    return i === -1 ? [] : msgs.slice(0, i);
+  }, []);
+
+  // FIFO queue for AI turns: the user's bubble + a "typing" placeholder are shown immediately (so the
+  // composer never blocks), but the actual generation for each turn runs only after the previous one
+  // finishes streaming its TEXT. Chaining off a tail promise keeps responses in send order; each task
+  // owns its own error handling, and the trailing catch is just a backstop so one failure can't wedge
+  // the chain. (Spoken-audio synthesis is detached inside runAssistant, so TTS never holds the queue.)
+  const queueTailRef = useRef<Promise<void>>(Promise.resolve());
+  const enqueueTurn = useCallback((task: () => Promise<void>) => {
+    queueTailRef.current = queueTailRef.current.then(task).catch(() => {});
+  }, []);
+
+  // Live mirrors of call/mic state for the async auto-play decision (see applyVoiceAudio), which runs
+  // outside render and must read the latest value, not a stale closure. inCallRef is set synchronously
+  // when a call starts (see startCall) so a reply resolving during connect can't play over it; this
+  // effect keeps it truthful for every other callState transition (its one-commit lag on the way OUT
+  // only makes auto-play a touch more conservative).
+  const inCallRef = useRef(false);
   useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    inCallRef.current = !!callState;
+  }, [callState]);
+  // True from the instant the user taps the mic — through the async getUserMedia acquisition and the
+  // whole recording — until the clip has been captured and queued. Managed by hand (NOT mirrored from
+  // `voiceState`, which only flips to "recording" AFTER acquisition) so it already covers the
+  // acquisition window; the auto-play gate reads it to keep a resolving reply from playing through the
+  // speaker into a recording that is just starting.
+  const micBusyRef = useRef(false);
 
   const refreshProfile = useCallback(async () => {
     if (!store.getMemoryOn()) return;
@@ -484,39 +549,55 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const voiceResolveRef = useRef<Set<string>>(new Set());
 
   // Attach a finished spoken clip to its reply and reveal the text. Guarded so a late arrival can't
-  // clobber a reply that was already resolved (or deleted). Auto-plays only when the tab is foreground —
-  // a clip that resolves while the user is away shouldn't play to no one (and iOS blocks un-gestured
-  // playback anyway); the reply's "Play" button covers that case.
+  // clobber a reply that was already resolved (or deleted). Auto-play is deliberately narrow: with a
+  // queue of messages in flight we only ever speak the LAST voice message's reply, and only when the
+  // audio path is actually free.
   const applyVoiceAudio = useCallback(
     (asstId: string, audio: VoiceReplyAudio) => {
-      // Decide whether this clip should auto-play from the ref, NOT from a flag set inside the
-      // setMessages updater: React may defer running the updater (it batches state updates from
-      // async contexts like this poll callback), and a deferred updater would leave the flag false
-      // here — silently skipping the auto-play and releasing the priming loop for nothing. The ref
-      // always reflects the latest committed messages, so the decision is deterministic.
-      const target = messagesRef.current.find((m) => m.id === asstId);
-      const shouldApply = !!target && !!target.pendingAudio && !target.audio;
-      setMessages((cur) =>
+      // Decide auto-play from the ref, NOT from a flag set inside the updater: React batches updates
+      // from async contexts like this poll callback, so a deferred updater would leave the flag stale.
+      // The authoritative ref always reflects the latest transcript, so the decision is deterministic.
+      const snapshot = messagesRef.current;
+      const target = snapshot.find((m) => m.id === asstId);
+      const stillPending = !!target && !!target.pendingAudio && !target.audio;
+      applyMessages((cur) =>
         cur.map((m) =>
           m.id === asstId && m.pendingAudio && !m.audio
             ? { ...m, streaming: false, pendingAudio: false, audio }
             : m,
         ),
       );
-      if (shouldApply && typeof document !== "undefined" && document.visibilityState === "visible") {
+      // Auto-play only when every condition holds:
+      //  - the clip was still pending (not already resolved/deleted),
+      //  - the tab is foreground (an un-gestured clip won't play to a hidden tab; iOS blocks it),
+      //  - no realtime call is running (the call owns the speaker — the Play button covers it later),
+      //  - the mic is idle (playing while recording would feed the assistant's voice into the clip),
+      //  - this is the reply to the most-recent voice message (an earlier one stays silent while a
+      //    later voice message is still outstanding — that's the "only play the last one" rule).
+      const foreground = typeof document !== "undefined" && document.visibilityState === "visible";
+      if (
+        stillPending &&
+        foreground &&
+        !inCallRef.current &&
+        !micBusyRef.current &&
+        isLastVoiceReply(snapshot, asstId)
+      ) {
         playAudioClip(asstId, audio.base64, audio.sampleRate);
       }
     },
-    [playAudioClip],
+    [playAudioClip, applyMessages],
   );
 
   // Give up on a reply's spoken audio: reveal its text without a clip (the same end state a TTS failure
   // has always produced). No-op once the reply is no longer waiting on audio.
-  const revealWithoutAudio = useCallback((asstId: string) => {
-    setMessages((cur) =>
-      cur.map((m) => (m.id === asstId && m.pendingAudio ? { ...m, streaming: false, pendingAudio: false } : m)),
-    );
-  }, []);
+  const revealWithoutAudio = useCallback(
+    (asstId: string) => {
+      applyMessages((cur) =>
+        cur.map((m) => (m.id === asstId && m.pendingAudio ? { ...m, streaming: false, pendingAudio: false } : m)),
+      );
+    },
+    [applyMessages],
+  );
 
   // Compatibility fallback for a backend without the server-side endpoint (or a failed kickoff): synthesize
   // in the browser, exactly as before. This path is still killed by backgrounding — it's a shim, not the
@@ -617,13 +698,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Idempotent per file: runWithSuspensionRetry re-runs the WHOLE turn after an iOS tab suspension, tool
   // calls included, and it only resets the assistant message's text — cards appended by the first attempt
   // survive. Without this guard the user comes back to the same file offered twice.
-  const offerFile = useCallback((meta: StoredFileMeta, note?: string) => {
-    setMessages((cur) =>
-      cur.some((m) => m.kind === "fileOffer" && m.fileRef?.id === meta.id)
-        ? cur
-        : [...cur, { id: uid(), role: "assistant", text: note ?? "", kind: "fileOffer", fileRef: meta }],
-    );
-  }, []);
+  const offerFile = useCallback(
+    (meta: StoredFileMeta, note?: string) => {
+      applyMessages((cur) =>
+        cur.some((m) => m.kind === "fileOffer" && m.fileRef?.id === meta.id)
+          ? cur
+          : [...cur, { id: uid(), role: "assistant", text: note ?? "", kind: "fileOffer", fileRef: meta }],
+      );
+    },
+    [applyMessages],
+  );
 
   // The user tapped Send on an offer card. Pull the stored bytes back down and turn the card itself
   // into a normal assistant message carrying the file, so it renders exactly like a fresh attachment
@@ -632,7 +716,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const sendStoredFile = useCallback(
     async (messageId: string, fileId: number) => {
       const pf = await fetchChatFileContent(fileId);
-      setMessages((cur) =>
+      applyMessages((cur) =>
         cur.map((m) =>
           m.id !== messageId
             ? m
@@ -642,14 +726,27 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         ),
       );
     },
-    [t],
+    [t, applyMessages],
   );
 
-  async function runAssistant(asstId: string, contents: Content[], speak: boolean): Promise<string> {
+  // `isCurrent` guards the one write that APPENDS a new bubble mid-turn — the send_file offer card.
+  // (Streamed text and the finalizers only `.map` an existing message, so they no-op once it's gone.)
+  // A turn abandoned by "New chat" keeps running, so without this its tool call could drop a card into
+  // the fresh conversation.
+  async function runAssistant(
+    asstId: string,
+    contents: Content[],
+    speak: boolean,
+    isCurrent: () => boolean = () => true,
+    // The transcript slice this turn is grounded in — used to pick the screenshot for record_suggestion.
+    // Defaults to the whole transcript; queued turns pass their own history so a LATER queued message's
+    // image can't be attached to THIS turn's suggestion.
+    scopedHistory: () => ChatMessage[] = () => messagesRef.current,
+  ): Promise<string> {
     let acc = "";
     const onDelta = (delta: string) => {
       acc += delta;
-      setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
+      applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
     };
     // System instruction always carries the current local time + the reply-language directive (so the
     // assistant answers in the selected UI language). When memory is on, also give the model the
@@ -663,7 +760,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // The feedback tool is available whether or not memory is on: forwarding a suggestion to the
     // developers doesn't depend on memory. It attaches whatever screenshots the user just shared.
     const runSuggestion = (args: Record<string, unknown>) =>
-      runSuggestionTool(args, () => sharedSuggestionImages(messagesRef.current));
+      runSuggestionTool(args, () => sharedSuggestionImages(scopedHistory()));
     // When the admin's primary text model isn't Gemini, run the turn server-side — but only for
     // all-text conversations: inline media (images / PDFs / voice clips, replayed in history) needs
     // Gemini's multimodal input, so those turns stay on the direct proxy path.
@@ -708,7 +805,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           : isTaskTool(name)
             ? runTaskTool(name, args, () => void refreshTasks())
             : isFileTool(name)
-              ? runFileTool(name, args, offerFile)
+              ? runFileTool(name, args, (meta, note) => {
+                  if (isCurrent()) offerFile(meta, note);
+                })
               : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
@@ -730,11 +829,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // racing ahead of the slower TTS. Synthesis runs SERVER-SIDE now (see ensureVoiceReplyAudio): the
       // backend generates the voice on a worker that keeps going even if the tab is backgrounded — the
       // exact case where the old in-page TTS was killed and the reply came back voiceless. Detached, so
-      // the caller settles immediately; `pendingAudio` alone keeps the composer disabled until it lands.
-      setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, streaming: false, text: finalText } : m)));
+      // the caller settles immediately; `pendingAudio` gates only auto-play now, not the composer.
+      applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, streaming: false, text: finalText } : m)));
       void ensureVoiceReplyAudio(asstId, acc);
     } else {
-      setMessages((cur) =>
+      applyMessages((cur) =>
         cur.map((m) => (m.id === asstId ? { ...m, streaming: false, pendingAudio: false, text: finalText } : m)),
       );
     }
@@ -746,8 +845,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   async function recordTextTurns(
     items: { role: "user" | "assistant"; text: string; modality: "text" | "voice" | "live" | "image" }[],
     extra?: { audioBase64?: string; imageBase64?: string; imageMime?: string },
+    // The conversation this exchange belongs to. Queued turns pass the id captured when the user sent
+    // the message, so a reply that only resolves AFTER "New chat" is filed under the old conversation
+    // (where it belongs) instead of leaking into the fresh one. Defaults to the current conversation.
+    conversationId?: string,
   ) {
     if (!memoryOn) return;
+    const convId = conversationId ?? conversationIdRef.current;
     const turns: TurnItem[] = [];
     for (const it of items) {
       if (!it.text.trim() && !(it.role === "user" && (extra?.audioBase64 || extra?.imageBase64))) continue;
@@ -763,14 +867,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           : {}),
       });
     }
-    recordTurn(conversationIdRef.current, turns);
-    scheduleExtraction(); // distil durable facts a little after the conversation goes idle
+    recordTurn(convId, turns);
+    // Only re-arm distillation for the LIVE conversation — a late turn from a cleared chat shouldn't
+    // schedule an extraction against the new one.
+    if (convId === conversationIdRef.current) scheduleExtraction();
   }
 
-  /** Relevant past context (episodic summaries + turns, re-ranked) as a preface for the next reply. */
-  async function ragPreface(query: string): Promise<Content | null> {
+  /** Relevant past context (episodic summaries + turns, re-ranked) as a preface for the next reply.
+   *  `history` is this turn's slice of the transcript (everything before it), so a queued turn re-ranks
+   *  against what actually precedes it rather than whatever else is in flight behind it. */
+  async function ragPreface(query: string, history: ChatMessage[]): Promise<Content | null> {
     if (!memoryOn) return null;
-    const recent = messages.filter((m) => m.text && !m.error).map((m) => ({ role: m.role, text: m.text }));
+    const recent = history.filter((m) => m.text && !m.error).map((m) => ({ role: m.role, text: m.text }));
     return retrieveContext({
       recent,
       currentText: query,
@@ -779,7 +887,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     });
   }
 
-  async function sendText(text: string, files?: PreparedFile[]) {
+  function sendText(text: string, files?: PreparedFile[]) {
     const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
     // Snapshot the quoted message (bounded — the quote renders two lines and the model sees a
     // capped snippet) and clear the composer's reply bar right away.
@@ -796,72 +904,95 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       ...(replyRef ? { replyTo: replyRef } : {}),
     };
     const asstId = uid();
-    const base = [...messages, userMsg];
-    setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true }]);
-    setStreaming(true);
-    try {
-      // Retry across an iOS tab suspension (see stopVoice): leaving the tab mid-reply kills the in-flight
-      // request, which rejects with "Load failed" on return. Re-run rather than error out. Each attempt
-      // rebuilds `contents` fresh — the tool loop appends to it — and re-runs RAG retrieval.
-      const reply = await runWithSuspensionRetry(async (attempt) => {
-        if (attempt > 0) {
-          setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
-        }
-        const preface = await ragPreface(text);
-        const contents = preface ? [preface, ...toContents(base)] : toContents(base);
-        return runAssistant(asstId, contents, false);
-      });
-      if (files?.length) {
-        // Record the turn so past attachments can be recalled: each file becomes a memory line that
-        // states the user *sent* a file (type + name) plus whatever content we can extract — image
-        // description, audio transcript, PDF summary, or the file's text (a second generateContent
-        // call per binary file). The first image itself also goes to R2. And the files themselves are
-        // now kept (see uploadChatFile below), so the AI doesn't just remember that a file was sent —
-        // it can find it again and hand the actual file back. Best-effort — never blocks the chat.
-        void (async () => {
-          const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
-          const userContent =
-            [replyRef ? replyContext(replyRef) : "", text.trim(), ...lines].filter(Boolean).join("\n") ||
-            "(attachment)";
+    // The conversation this turn belongs to, captured now. If the user starts a new chat before this
+    // queued turn finishes, `isCurrent` goes false and its late effects (send_file card, memory) are
+    // routed away from the fresh conversation.
+    const turnConvId = conversationIdRef.current;
+    const isCurrent = () => conversationIdRef.current === turnConvId;
+    // Show the user's bubble + a "typing" placeholder immediately and return — the composer stays live
+    // so the next message can be sent right away. The reply itself is generated when this turn reaches
+    // the front of the queue (its history is read fresh then, so it includes earlier queued replies).
+    applyMessages((cur) => [...cur, userMsg, { id: asstId, role: "assistant", text: "", streaming: true }]);
+    enqueueTurn(async () => {
+      try {
+        // Retry across an iOS tab suspension (see stopVoice): leaving the tab mid-reply kills the in-flight
+        // request, which rejects with "Load failed" on return. Re-run rather than error out. Each attempt
+        // rebuilds `contents` fresh — the tool loop appends to it — and re-runs RAG retrieval.
+        const reply = await runWithSuspensionRetry(async (attempt) => {
+          if (attempt > 0) {
+            applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
+          }
+          // The transcript up to and including this user message — earlier queued turns are finished by
+          // now, so their replies are part of the history the model sees.
+          const base = historyBefore(asstId);
+          // RAG re-ranks against the conversation SO FAR, so it must exclude this very message —
+          // `currentText` already carries it. Passing `base` (which ends with this user message) would
+          // duplicate it and shove an older turn out of the recent window.
+          const preface = await ragPreface(text, historyBefore(userMsg.id));
+          const contents = preface ? [preface, ...toContents(base)] : toContents(base);
+          // Scope suggestion screenshots to this turn's history (through its own user message), not
+          // later queued turns that may carry unrelated images.
+          return runAssistant(asstId, contents, false, isCurrent, () => historyBefore(asstId));
+        });
+        if (files?.length) {
+          // Record the turn so past attachments can be recalled: each file becomes a memory line that
+          // states the user *sent* a file (type + name) plus whatever content we can extract — image
+          // description, audio transcript, PDF summary, or the file's text (a second generateContent
+          // call per binary file). The first image itself also goes to R2. And the files themselves are
+          // now kept (see uploadChatFile below), so the AI doesn't just remember that a file was sent —
+          // it can find it again and hand the actual file back. Best-effort — never blocks the chat.
+          void (async () => {
+            const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
+            const userContent =
+              [replyRef ? replyContext(replyRef) : "", text.trim(), ...lines].filter(Boolean).join("\n") ||
+              "(attachment)";
+            void recordTextTurns(
+              [
+                { role: "user", text: userContent, modality: images.length ? "image" : "text" },
+                { role: "assistant", text: reply, modality: "text" },
+              ],
+              images[0] ? { imageBase64: images[0].base64, imageMime: images[0].mimeType } : undefined,
+              turnConvId,
+            );
+            // Store every attachment durably, each with its own memory line as the searchable
+            // description + a vector, so find_files/send_file can retrieve it later. Gated on memoryOn
+            // exactly as recordTextTurns is — file recall is part of memory, not a separate opt-in.
+            if (memoryOn) {
+              await Promise.all(
+                files.map(async (f, i) => {
+                  const desc = lines[i];
+                  const embedding = (await embedDocument(desc)) ?? undefined;
+                  await uploadChatFile(turnConvId, f, desc, embedding);
+                }),
+              );
+            }
+          })();
+        } else {
           void recordTextTurns(
             [
-              { role: "user", text: userContent, modality: images.length ? "image" : "text" },
+              // Keep the quote in the recorded turn so recalled replies still read in context.
+              { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${text}` : text, modality: "text" },
               { role: "assistant", text: reply, modality: "text" },
             ],
-            images[0] ? { imageBase64: images[0].base64, imageMime: images[0].mimeType } : undefined,
+            undefined,
+            turnConvId,
           );
-          // Store every attachment durably, each with its own memory line as the searchable
-          // description + a vector, so find_files/send_file can retrieve it later. Gated on memoryOn
-          // exactly as recordTextTurns is — file recall is part of memory, not a separate opt-in.
-          if (memoryOn) {
-            await Promise.all(
-              files.map(async (f, i) => {
-                const desc = lines[i];
-                const embedding = (await embedDocument(desc)) ?? undefined;
-                await uploadChatFile(conversationIdRef.current, f, desc, embedding);
-              }),
-            );
-          }
-        })();
-      } else {
-        void recordTextTurns([
-          // Keep the quote in the recorded turn so recalled replies still read in context.
-          { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${text}` : text, modality: "text" },
-          { role: "assistant", text: reply, modality: "text" },
-        ]);
+        }
+      } catch (e) {
+        const fe = friendlyAiError(e, t);
+        reportAiError(fe, "chat.send");
+        applyMessages((cur) =>
+          cur.map((m) => (m.id === asstId ? { ...m, streaming: false, error: true, text: fe.text } : m)),
+        );
       }
-    } catch (e) {
-      const fe = friendlyAiError(e, t);
-      reportAiError(fe, "chat.send");
-      setMessages((cur) =>
-        cur.map((m) => (m.id === asstId ? { ...m, streaming: false, error: true, text: fe.text } : m)),
-      );
-    } finally {
-      setStreaming(false);
-    }
+    });
   }
 
   async function startVoice() {
+    // Mark the mic busy up front — BEFORE the awaited getUserMedia below — so a voice reply that
+    // resolves during acquisition is held back from the speaker instead of playing into the recording
+    // that's about to start. Cleared if acquisition fails (catch) or once the clip is queued (stopVoice).
+    micBusyRef.current = true;
     // Silence any spoken reply first — the assistant shouldn't keep talking into the recording, and
     // freeing the reply element lets the unlock below re-prime it. Synchronous, so the gesture holds.
     stopReplyAudio();
@@ -880,11 +1011,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       recorderRef.current = await startRecording();
       setVoiceState("recording");
     } catch (e) {
+      micBusyRef.current = false; // acquisition failed — the mic never opened
       setVoiceState("idle");
       // startRecording throws a typed MicError; micErrorMessage turns each reason into specific,
       // actionable copy (unsupported browser, insecure context, blocked, no device, in use).
       const text = micErrorMessage(e, t) ?? t.chat.micGeneric;
-      setMessages((cur) => [...cur, { id: uid(), role: "assistant", text, error: true }]);
+      applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text, error: true }]);
     }
   }
 
@@ -897,10 +1029,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // so the reply that's about to be synthesized can auto-play (see unlockAudioPlayback).
     stopReplyAudio();
     unlockAudioPlayback();
+    // "processing" only spans capturing + enqueuing the clip (a fast, synchronous encode) — NOT the
+    // reply. As soon as the turn is queued the mic frees up, so the user can record the next message
+    // while this one's reply is still being generated behind it.
     setVoiceState("processing");
-    setStreaming(true);
-    const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
-    const asstId = uid();
     try {
       const { base64, mimeType, seconds, voicedSeconds } = await rec.stop();
       // rec.stop() released the mic and reset the session to "auto". Pin it to "playback" now and hold
@@ -914,78 +1046,114 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // the silence with its own prompt ("Please provide the audio file…"), which lands in the user's
       // bubble and derails the conversation — drop the recording with a hint instead.
       if (seconds < MIN_VOICE_MESSAGE_SECONDS) {
-        setMessages((cur) => [
+        applyMessages((cur) => [
           ...cur,
           { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true },
         ]);
-        return; // finally() below resets the composer state
+        return; // finally() below resets the mic state
       }
       // Long enough, but the mic caught no speech (nothing said / only room tone). Drop it rather than
       // let the transcription model invent words out of the silence — and the assistant answer them.
       if (voicedSeconds < MIN_VOICED_SECONDS) {
-        setMessages((cur) => [
+        applyMessages((cur) => [
           ...cur,
           { id: uid(), role: "assistant", text: t.chat.noSpeechDetected, error: true },
         ]);
-        return; // finally() below resets the composer state
+        return; // finally() below resets the mic state
       }
-      const base = [...messages, userMsg];
+      const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
+      const asstId = uid();
+      // Conversation this voice turn belongs to (see sendText) — guards its late effects if the user
+      // starts a new chat before the reply lands.
+      const turnConvId = conversationIdRef.current;
+      const isCurrent = () => conversationIdRef.current === turnConvId;
       // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready
-      // (see runAssistant), so the text doesn't appear ahead of the slower voice.
-      setMessages([...base, { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true }]);
-      // Transcribe in parallel with the reply (a second, audio-capable generateContent call). Fills the
-      // user's bubble in place when it lands; an empty/failed transcript degrades to the "Voice message"
-      // label so the turn still reads sensibly and stays in toContents() history.
+      // (see runAssistant), so the text doesn't appear ahead of the slower voice. Both bubbles go in
+      // now — the placeholder carries kind "voice" so isLastVoiceReply can see this turn is the newest
+      // voice message even before its reply exists (that's what silences an earlier reply behind it).
+      applyMessages((cur) => [
+        ...cur,
+        userMsg,
+        { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true },
+      ]);
+      // Transcribe right away (in parallel, off the queue) so the user's bubble fills in promptly no
+      // matter how many turns are queued ahead of this one. Fills the bubble in place when it lands;
+      // an empty/failed transcript degrades to the "Voice message" label so the turn still reads
+      // sensibly and stays in toContents() history.
       const transcriptPromise = transcribeAudio(textModel, base64, mimeType)
-        .then((t) => {
-          setMessages((cur) => cur.map((m) => (m.id === userMsg.id ? { ...m, text: t || "Voice message" } : m)));
-          return t;
+        .then((tx) => {
+          applyMessages((cur) => cur.map((m) => (m.id === userMsg.id ? { ...m, text: tx || "Voice message" } : m)));
+          return tx;
         })
         .catch(() => "");
-      const voiceInstruction =
-        "Respond conversationally to this spoken message. Act on what they say the same as if " +
-        "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
-        "share feedback with the team, call record_suggestion).";
-      // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript:
-      // wait for it (transcription stays a Gemini call), then send it as text. An empty transcript
-      // (no speech recognized / transcription down) degrades to the raw-audio Gemini path so the
-      // user still gets an answer. Gemini-primary keeps hearing the audio itself, tone and all.
-      const serverTranscript = serverChat ? await transcriptPromise : "";
-      const lastTurn: Content =
-        serverChat && serverTranscript
-          ? { role: "user", parts: [{ text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
-          : { role: "user", parts: [{ inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
-      // Speak the reply too. TTS runs in the background (see runAssistant), so it doesn't hold the
-      // composer's busy state — the voice button stays usable while the audio is being generated.
-      // Retry across an iOS tab suspension: backgrounding the app mid-reply kills the in-flight request
-      // (it rejects with "Load failed" on return), so re-run the generation once the user is back instead
-      // of surfacing a bogus "server unreachable". The recorded audio is already captured, so each attempt
-      // just rebuilds `contents` fresh — the tool loop appends to that array, so it can't be reused as-is.
-      const reply = await runWithSuspensionRetry((attempt) => {
-        if (attempt > 0) {
-          setMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
+      // Generate the reply when this turn reaches the front of the queue, so responses stay in send
+      // order and each one sees the finished replies of the turns before it.
+      enqueueTurn(async () => {
+        try {
+          const voiceInstruction =
+            "Respond conversationally to this spoken message. Act on what they say the same as if " +
+            "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
+            "share feedback with the team, call record_suggestion).";
+          // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript:
+          // wait for it (transcription stays a Gemini call), then send it as text. An empty transcript
+          // (no speech recognized / transcription down) degrades to the raw-audio Gemini path so the
+          // user still gets an answer. Gemini-primary keeps hearing the audio itself, tone and all.
+          const serverTranscript = serverChat ? await transcriptPromise : "";
+          const lastTurn: Content =
+            serverChat && serverTranscript
+              ? { role: "user", parts: [{ text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
+              : { role: "user", parts: [{ inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
+          // Speak the reply too. TTS runs in the background (see runAssistant), so it never holds the
+          // queue — the next turn starts as soon as this reply's TEXT is done. Retry across an iOS tab
+          // suspension: backgrounding the app mid-reply kills the in-flight request (it rejects with
+          // "Load failed" on return), so re-run the generation once the user is back instead of
+          // surfacing a bogus "server unreachable". The audio is already captured, so each attempt just
+          // rebuilds `contents` fresh — the tool loop appends to that array, so it can't be reused as-is.
+          // History is everything before this voice bubble; the audio itself rides in as `lastTurn`.
+          const reply = await runWithSuspensionRetry((attempt) => {
+            if (attempt > 0) {
+              applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
+            }
+            // Scope suggestion screenshots to this turn's history (through this voice message), not
+            // later queued turns.
+            return runAssistant(asstId, [...toContents(historyBefore(userMsg.id)), lastTurn], true, isCurrent, () =>
+              historyBefore(asstId),
+            );
+          });
+          // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
+          const transcript = await transcriptPromise; // already resolved in practice; never throws
+          void recordTextTurns(
+            [
+              { role: "user", text: transcript || "(voice message)", modality: "voice" },
+              { role: "assistant", text: reply, modality: "voice" },
+            ],
+            { audioBase64: base64 },
+            turnConvId,
+          );
+        } catch (e) {
+          const fe = friendlyAiError(e, t);
+          reportAiError(fe, "chat.voice");
+          // `.map`-only (matching the text path): no-op if the placeholder is gone — e.g. the chat was
+          // cleared while this turn was still generating — so a late failure can't inject a stray error
+          // bubble into a new conversation.
+          applyMessages((cur) =>
+            cur.map((m) =>
+              m.id === asstId ? { ...m, text: fe.text, streaming: false, error: true, kind: "voice" } : m,
+            ),
+          );
         }
-        return runAssistant(asstId, [...toContents(messages), lastTurn], true);
       });
-      // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
-      const transcript = await transcriptPromise; // already resolved in practice; never throws
-      void recordTextTurns(
-        [
-          { role: "user", text: transcript || "(voice message)", modality: "voice" },
-          { role: "assistant", text: reply, modality: "voice" },
-        ],
-        { audioBase64: base64 },
-      );
     } catch (e) {
+      // rec.stop() itself failed (rare) — surface it before anything was queued.
       const fe = friendlyAiError(e, t);
       reportAiError(fe, "chat.voice");
-      setMessages((cur) => {
-        const errored: ChatMessage = { id: asstId, role: "assistant", text: fe.text, streaming: false, error: true };
-        return cur.some((m) => m.id === asstId) ? cur.map((m) => (m.id === asstId ? errored : m)) : [...cur, errored];
-      });
+      applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: fe.text, error: true }]);
     } finally {
+      // The clip is captured and queued (or was dropped) — the mic is free again, so a subsequent
+      // voice reply may auto-play. This turn's OWN reply is the newest voice message now, so it's the
+      // one that will play; any earlier reply stays silenced by isLastVoiceReply.
+      micBusyRef.current = false;
       setVoiceState("idle");
-      setStreaming(false);
     }
   }
 
@@ -1012,7 +1180,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   function deleteMessage(m: ChatMessage) {
     // If this message's spoken clip is the one loaded in the player, stop it — its bubble is leaving.
     if (audioPlaying?.id === m.id) stopReplyAudio();
-    setMessages((cur) => cur.filter((x) => x.id !== m.id));
+    applyMessages((cur) => cur.filter((x) => x.id !== m.id));
     // Drop a pending reply that quoted the now-deleted message.
     setReplyTo((r) => (r?.id === m.id ? null : r));
   }
@@ -1023,7 +1191,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const ref = role === "user" ? liveUserIdRef : liveAsstIdRef;
     const txtRef = role === "user" ? liveUserTextRef : liveAsstTextRef;
     txtRef.current += delta;
-    setMessages((cur) => {
+    applyMessages((cur) => {
       if (ref.current) return cur.map((m) => (m.id === ref.current ? { ...m, text: m.text + delta } : m));
       const id = uid();
       ref.current = id;
@@ -1050,7 +1218,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // second more than the last value the user watched tick, and sub-1s blips stay suppressed.
     const durationSec = Math.floor((Date.now() - startedAt) / 1000);
     if (durationSec < 1) return;
-    setMessages((cur) => [...cur, { id: uid(), role: "assistant", text: "", kind: "call", durationSec }]);
+    applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: "", kind: "call", durationSec }]);
   }
 
   async function startCall() {
@@ -1082,6 +1250,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     );
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
+    // Mirror the ref synchronously (the sync effect runs a commit later): the call is taking over the
+    // audio path now, so any voice reply that resolves during connect must not auto-play over it.
+    inCallRef.current = true;
     setCallState("connecting");
     try {
       await session.start({
@@ -1209,12 +1380,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }
 
-  // Block the composer (text + voice) until the assistant has FULLY responded. For a voice reply the
-  // spoken audio finishes AFTER the text (the bubble stays on `pendingAudio` while TTS runs), so this
-  // keeps the mic disabled until the whole reply — text and audio — is ready, preventing a second voice
-  // message from being sent mid-response.
-  const composerBusy = streaming || messages.some((m) => m.pendingAudio);
-
   // Clear the screen and begin a fresh conversation. The old messages are only ever shown client-side,
   // so this is the point of no return for them — call it from the confirm dialog, not straight from the
   // button, whenever the chat has content (see onNewChat below).
@@ -1222,7 +1387,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
     setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're clearing
     void runExtraction(2); // distil the conversation we're leaving before clearing it
-    setMessages([]);
+    // Drop any turns still queued behind the cleared chat so their replies can't land in the new one.
+    queueTailRef.current = Promise.resolve();
+    applyMessages(() => []);
     setReplyTo(null); // a quote from the old chat has nothing to point at anymore
     conversationIdRef.current = uid();
     extractCursorRef.current = 0;
@@ -1317,7 +1484,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           onStopVoice={stopVoice}
           onStartCall={startCall}
           voiceState={voiceState}
-          disabled={composerBusy}
           inCall={!!callState}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
