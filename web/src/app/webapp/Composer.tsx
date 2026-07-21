@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileAudio, FileText, FileUp, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
+import { FileAudio, FileText, FileUp, Loader2, Mic, Paperclip, Phone, Plus, Reply, Send, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import { FILE_ACCEPT, FileError, formatSize, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
 import type { ChatMessage } from "./types";
@@ -245,6 +245,14 @@ export default function Composer({
   const recording = voiceState === "recording";
   const processing = voiceState === "processing";
   const busy = busyCount > 0;
+  // Two-state layout. Idle (collapsed) keeps today's single row — call · voice · field (with the
+  // paperclip inside) · send. Once you're actually composing we switch to the stacked box — the
+  // textarea on top with just "+" (add file) bottom-left and send bottom-right — and the call/voice
+  // buttons step aside, since you've chosen to type. "Composing" means the field is focused, or it
+  // already holds text, staged attachments, or a pending reply, so the layout never collapses out
+  // from under content you haven't sent yet. The <textarea> itself stays mounted across the swap
+  // (only class names change) so the mobile keyboard never drops mid-transition.
+  const expanded = focused || text.trim().length > 0 || files.length > 0 || replyTo != null;
 
   return (
     <div className="border-t border-black/10 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/10 dark:bg-neutral-950/80">
@@ -328,20 +336,28 @@ export default function Composer({
             ))}
           </div>
         )}
-        <div className="flex items-center gap-2">
+        <div
+          className={
+            expanded
+              ? "flex flex-col gap-2.5 rounded-3xl border border-black/15 bg-white px-3.5 py-3 dark:border-white/20 dark:bg-neutral-900"
+              : "flex items-center gap-2"
+          }
+        >
+          {/* Real-time call — idle row only; steps aside once you're composing. */}
           <button
             onClick={callClick}
             disabled={recording || processing || inCall}
             title={inCall ? t.composer.callInProgress : t.composer.startCall}
-            className={`${focused ? "hidden md:flex" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40`}
+            className={`${expanded ? "hidden" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-sm transition hover:opacity-90 disabled:opacity-40`}
           >
             <Phone size={18} />
           </button>
+          {/* Voice message — idle row only; also hidden while composing. */}
           <button
             onClick={micClick}
             disabled={processing || inCall}
             title={recording ? t.composer.stopRecording : t.composer.recordVoice}
-            className={`${focused ? "hidden md:flex" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
+            className={`${expanded ? "hidden" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
               recording
                 ? "bg-red-600 text-white hover:bg-red-700"
                 : "border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
@@ -358,14 +374,24 @@ export default function Composer({
             )}
           </button>
 
-          <div className="relative flex flex-1 rounded-2xl border border-black/15 bg-white px-2 py-1.5 dark:border-white/20 dark:bg-neutral-900">
+          {/* The field. In the idle row it's the bordered pill (paperclip inside); when composing it
+              becomes the full-width top of the rounded box. Same <textarea> node in both — never
+              remounted — so focus and the mobile keyboard survive the layout swap. */}
+          <div
+            className={
+              expanded
+                ? "relative flex w-full"
+                : "relative flex flex-1 rounded-2xl border border-black/15 bg-white px-2 py-1.5 dark:border-white/20 dark:bg-neutral-900"
+            }
+          >
             <input ref={fileInputRef} type="file" accept={FILE_ACCEPT} multiple className="hidden" onChange={onPick} />
+            {/* Idle-row attach: paperclip tucked inside the field on the left. */}
             <button
               onClick={attachClick}
               disabled={recording}
               title={t.composer.attachFiles}
               aria-label={t.composer.attachFiles}
-              className="absolute left-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10"
+              className={`${expanded ? "hidden" : "flex"} absolute left-2 top-1.5 h-8 w-8 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10`}
             >
               <Paperclip size={18} />
             </button>
@@ -402,18 +428,36 @@ export default function Composer({
                   onCancelReply();
                 }
               }}
-              className="max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none [text-indent:2rem] md:text-sm disabled:opacity-50"
+              // Idle row indents past the inline paperclip; the composing box has no inline icon.
+              className={`max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none md:text-sm disabled:opacity-50 ${
+                expanded ? "" : "[text-indent:2rem]"
+              }`}
             />
           </div>
 
-          <button
-            onClick={send}
-            disabled={recording || busy || (!text.trim() && files.length === 0)}
-            title={t.composer.send}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40"
-          >
-            <Send size={18} />
-          </button>
+          {/* Controls. While composing this is the row beneath the field ("+" left, send right).
+              Idle it collapses to `contents`, so send flows back into the single row and the "+" is
+              hidden in favour of the inline paperclip above. */}
+          <div className={expanded ? "flex items-center justify-between" : "contents"}>
+            {/* Composing attach: the "+" button, bottom-left. */}
+            <button
+              onClick={attachClick}
+              disabled={recording}
+              title={t.composer.attachFiles}
+              aria-label={t.composer.attachFiles}
+              className={`${expanded ? "flex" : "hidden"} h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/15 text-black/60 transition hover:bg-black/5 disabled:opacity-40 dark:border-white/20 dark:text-white/60 dark:hover:bg-white/10`}
+            >
+              <Plus size={18} />
+            </button>
+            <button
+              onClick={send}
+              disabled={recording || busy || (!text.trim() && files.length === 0)}
+              title={t.composer.send}
+              className={`${expanded ? "h-9 w-9" : "h-11 w-11"} flex shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-40`}
+            >
+              <Send size={18} />
+            </button>
+          </div>
         </div>
       </div>
     </div>
