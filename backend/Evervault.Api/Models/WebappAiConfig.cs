@@ -35,6 +35,13 @@ public class WebappAiConfig
     public string? LiveModel { get; set; }
     public string? DefaultVoice { get; set; }
 
+    /// <summary>When true, a spoken voice-message reply is synthesized sentence-by-sentence and streamed to
+    /// the browser chunk-by-chunk, so playback of the first sentence starts while the rest is still being
+    /// generated — instead of waiting for the whole clip. Off by default (and for legacy null rows), which
+    /// keeps the original single-clip behavior. Admin-configurable because per-sentence synthesis multiplies
+    /// the number of TTS calls, which a rate-limited (free-tier) key may not tolerate.</summary>
+    public bool? ChunkVoiceReplyBySentence { get; set; }
+
     /// <summary>How long a live voice call may sit in user silence before it auto-hangs-up, in seconds.
     /// A Live socket bills for the whole time it's open, so this caps an abandoned call. 0 = never hang up
     /// (the call runs until the user ends it). Null (legacy rows) = <see cref="WebappAiDefaults.LiveIdleSeconds"/>.</summary>
@@ -66,6 +73,10 @@ public static class WebappAiDefaults
 
     public static string Text(WebappAiConfig? c) => Or(c?.TextModel, TextModel);
     public static string Audio(WebappAiConfig? c) => Or(c?.AudioModel, AudioModel);
+
+    /// <summary>Whether spoken replies are synthesized and streamed sentence-by-sentence. Default (and
+    /// legacy null rows) = false, preserving the original single-clip behavior.</summary>
+    public static bool ChunkVoiceReply(WebappAiConfig? c) => c?.ChunkVoiceReplyBySentence ?? false;
     public static string Live(WebappAiConfig? c) => Or(c?.LiveModel, LiveModel);
     public static string VoiceOf(WebappAiConfig? c) => Or(c?.DefaultVoice, Voice);
 

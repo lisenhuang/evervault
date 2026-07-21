@@ -50,6 +50,9 @@ export type WebappAiConfigDto = {
   textFallbackReasoning: string | null; // fallback reasoning level (ChatGPT only); null = model default
   // How long a live voice call may sit in user silence before it auto-hangs-up, in seconds. 0 = never.
   liveIdleTimeoutSeconds: number;
+  // When true, spoken voice-message replies are synthesized sentence-by-sentence and streamed, so the
+  // first sentence starts playing while the rest is still generated. Off = one clip after the whole reply.
+  chunkVoiceReplyBySentence: boolean;
 };
 
 // One rolling quota window (e.g. ChatGPT's 5-hour and weekly limits). resetUnixMs is epoch ms.
