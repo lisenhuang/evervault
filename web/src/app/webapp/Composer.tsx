@@ -358,14 +358,14 @@ export default function Composer({
             )}
           </button>
 
-          <div className="flex flex-1 items-end rounded-2xl border border-black/15 bg-white px-2 py-1.5 dark:border-white/20 dark:bg-neutral-900">
+          <div className="relative flex flex-1 rounded-2xl border border-black/15 bg-white px-2 py-1.5 dark:border-white/20 dark:bg-neutral-900">
             <input ref={fileInputRef} type="file" accept={FILE_ACCEPT} multiple className="hidden" onChange={onPick} />
             <button
               onClick={attachClick}
               disabled={recording}
               title={t.composer.attachFiles}
               aria-label={t.composer.attachFiles}
-              className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10"
+              className="absolute left-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full text-black/50 transition hover:bg-black/5 disabled:opacity-40 dark:text-white/50 dark:hover:bg-white/10"
             >
               <Paperclip size={18} />
             </button>
@@ -402,7 +402,7 @@ export default function Composer({
                   onCancelReply();
                 }
               }}
-              className="max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none md:text-sm disabled:opacity-50"
+              className="max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none [text-indent:2rem] md:text-sm disabled:opacity-50"
             />
           </div>
 
