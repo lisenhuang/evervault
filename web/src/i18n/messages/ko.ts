@@ -142,7 +142,10 @@ const ko: Messages = {
     tooManyFiles: (n: number) => `메시지당 최대 ${n}개의 파일을 첨부할 수 있습니다.`,
     fileTooLarge: (name: string) => `"${name}"은(는) 너무 커서 첨부할 수 없습니다.`,
     fileUnsupported: (name: string) => `"${name}"은(는) 지원되지 않는 파일 형식입니다.`,
-    fileLegacyDoc: (name: string) => `"${name}"은(는) 구형 Word 파일입니다 — .docx나 PDF로 저장한 뒤 다시 시도해 주세요.`,
+    fileLegacyOffice: (name: string) =>
+      `"${name}"은(는) 구형 Office 파일입니다 — .docx, .pptx, .xlsx로 저장하거나 PDF로 내보낸 뒤 다시 시도해 주세요.`,
+    fileNoText: (name: string) =>
+      `"${name}"은(는) 대부분 이미지나 차트여서 읽을 수 있는 텍스트가 없습니다. PDF로 내보내 첨부해 주세요 — PDF는 페이지 내용을 그대로 읽을 수 있습니다.`,
     fileUnreadable: (name: string) => `"${name}"을(를) 읽을 수 없습니다.`,
     filesTooLargeTotal: "첨부 파일이 너무 커서 한 번에 보낼 수 없습니다 — 일부를 제거하거나 더 작은 파일을 사용해 주세요.",
     send: "보내기",

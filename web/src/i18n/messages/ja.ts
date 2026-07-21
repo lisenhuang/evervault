@@ -142,7 +142,10 @@ const ja: Messages = {
     tooManyFiles: (n: number) => `1つのメッセージに添付できるのは最大${n}件です。`,
     fileTooLarge: (name: string) => `「${name}」は大きすぎて添付できません。`,
     fileUnsupported: (name: string) => `「${name}」は対応していないファイル形式です。`,
-    fileLegacyDoc: (name: string) => `「${name}」は旧形式のWordファイルです — .docxまたはPDFで保存し直してからお試しください。`,
+    fileLegacyOffice: (name: string) =>
+      `「${name}」は旧形式のOfficeファイルです — .docx / .pptx / .xlsx で保存し直すか、PDFに書き出してからお試しください。`,
+    fileNoText: (name: string) =>
+      `「${name}」は画像や図表が中心で、読み取れるテキストがありません。PDFに書き出して添付してください — PDFならページの内容をそのまま読み取れます。`,
     fileUnreadable: (name: string) => `「${name}」を読み込めませんでした。`,
     filesTooLargeTotal: "添付ファイルの合計が大きすぎて送信できません — いくつか削除するか、より小さいファイルをお使いください。",
     send: "送信",

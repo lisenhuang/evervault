@@ -143,7 +143,10 @@ const zh: Messages = {
     tooManyFiles: (n: number) => `每条消息最多添加 ${n} 个文件。`,
     fileTooLarge: (name: string) => `「${name}」太大，无法添加。`,
     fileUnsupported: (name: string) => `不支持「${name}」的文件类型。`,
-    fileLegacyDoc: (name: string) => `「${name}」是旧版 Word 格式——请另存为 .docx 或 PDF 后再试。`,
+    fileLegacyOffice: (name: string) =>
+      `「${name}」是旧版 Office 格式——请另存为 .docx、.pptx 或 .xlsx，或导出为 PDF 后再试。`,
+    fileNoText: (name: string) =>
+      `「${name}」以图片或图表为主，没有可读取的文字。请导出为 PDF 再上传——PDF 可以直接读取页面内容。`,
     fileUnreadable: (name: string) => `无法读取「${name}」。`,
     filesTooLargeTotal: "附件总大小超出限制——请移除部分附件或改用更小的文件。",
     send: "发送",

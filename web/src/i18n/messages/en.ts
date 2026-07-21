@@ -143,7 +143,10 @@ const en = {
     tooManyFiles: (n: number) => `You can attach up to ${n} files per message.`,
     fileTooLarge: (name: string) => `"${name}" is too large to attach.`,
     fileUnsupported: (name: string) => `"${name}" isn't a supported file type.`,
-    fileLegacyDoc: (name: string) => `"${name}" is an old-format Word file — save it as .docx or PDF and try again.`,
+    fileLegacyOffice: (name: string) =>
+      `"${name}" is an old-format Office file — save it as .docx, .pptx or .xlsx, or export it to PDF, and try again.`,
+    fileNoText: (name: string) =>
+      `"${name}" is mostly images or charts, so there's no text to read. Export it to PDF and attach that instead — PDF pages can be read directly.`,
     fileUnreadable: (name: string) => `"${name}" couldn't be read.`,
     filesTooLargeTotal: "Attachments are too large to send together — remove some or use smaller files.",
     send: "Send",

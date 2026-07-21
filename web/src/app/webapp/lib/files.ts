@@ -42,8 +42,10 @@ const MaxPdfBytes = 10_000_000;
 const MaxAudioBytes = 10_000_000;
 /** Text files are read whole up to this size, then the extracted text is clipped below. */
 const MaxTextBytes = 5_000_000;
-/** Extracted text is clipped to keep the prompt sane (~30k tokens per file). */
-const MaxTextChars = 120_000;
+/** Extracted text is clipped to keep the prompt sane (~30k tokens per file). Exported so the
+ *  pptx/xlsx extractors can spend the same budget a record at a time, cutting on a slide or sheet
+ *  boundary instead of mid-row. */
+export const MaxTextChars = 120_000;
 
 const TextExtensions = new Set([
   "md", "markdown", "txt", "text", "csv", "tsv", "json", "yaml", "yml", "html", "htm", "xml",
@@ -56,7 +58,23 @@ const TextMimes = new Set([
 ]);
 
 const DocxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const DocMime = "application/msword";
+const PptxMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const XlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+// Macro-enabled and template variants are the same ZIP+XML package as the plain one, so they parse
+// identically — .xlsm in particular is everywhere in business workbooks.
+const PptxExtensions = new Set(["pptx", "pptm", "ppsx", "potx"]);
+const XlsxExtensions = new Set(["xlsx", "xlsm", "xltx"]);
+
+// Office 97-2003 binaries. These are OLE2/CFB containers, not zips, and nothing in the browser
+// extracts them reliably — the only real .xls reader is SheetJS's full build at ~300KB gzipped, for
+// a format Office and Google Drive both re-save in one click. Rejected with a message that says so.
+const LegacyOfficeMimes = new Set([
+  "application/msword",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.ms-excel",
+]);
+const LegacyOfficeExtensions = new Set(["doc", "ppt", "pps", "pot", "xls", "xlt"]);
 
 // Audio the chat model can take inline. Keyed by extension so we can fill in a Gemini-friendly mime
 // when the browser reports none — and normalize the mp3 case (browsers say audio/mpeg, Gemini wants
@@ -80,8 +98,15 @@ export const FILE_ACCEPT = [
   "audio/*",
   "application/pdf",
   DocxMime,
-  DocMime,
-  ".pdf", ".docx", ".doc",
+  PptxMime,
+  XlsxMime,
+  ...LegacyOfficeMimes,
+  ".pdf", ".docx",
+  ...[...PptxExtensions].map((e) => `.${e}`),
+  ...[...XlsxExtensions].map((e) => `.${e}`),
+  // Listed so the legacy formats stay selectable and get a real explanation, rather than being
+  // greyed out in the picker with no hint as to why.
+  ...[...LegacyOfficeExtensions].map((e) => `.${e}`),
   ...[...AudioExtensions].map((e) => `.${e}`),
   ...[...TextExtensions].map((e) => `.${e}`),
 ].join(",");
@@ -89,7 +114,12 @@ export const FILE_ACCEPT = [
 /** `accept` for the iOS "Photo Library" picker. */
 export const IMAGE_ACCEPT = "image/*";
 
-export type FileErrorCode = "unsupported" | "too-large" | "legacy-doc" | "unreadable";
+export type FileErrorCode =
+  | "unsupported"
+  | "too-large"
+  | "legacy-office"
+  | "no-text"
+  | "unreadable";
 
 /** Why a file couldn't be attached — carries the file name for the user-facing message. */
 export class FileError extends Error {
@@ -137,11 +167,30 @@ export async function prepareFile(file: File): Promise<PreparedFile> {
       throw new FileError("unreadable", name);
     }
     if (!text) throw new FileError("unreadable", name);
-    return { id, name, size: file.size, kind: "text", mimeType: "text/plain", text: clip(text) };
+    return { id, name, size: file.size, kind: "text", mimeType: "text/plain", text: clip(sanitizeExtractedText(text)) };
   }
 
-  // Word 97-2003 binary format — nothing in the browser extracts it reliably; ask for docx/PDF.
-  if (file.type === DocMime || ext === "doc") throw new FileError("legacy-doc", name);
+  // PowerPoint and Excel, like docx: parsed here and sent as text, because Gemini rejects OOXML
+  // outright (400 "Unsupported MIME type") — only PDF gets its document-vision path. Both branches
+  // sit above the generic-text branch on purpose: a deck the OS mis-reports as text/plain would
+  // otherwise be read with file.text() and reach the model as decoded ZIP binary. The size gate is
+  // MaxPdfBytes because it applies to the compressed original, not the extracted text.
+  if (file.type === PptxMime || PptxExtensions.has(ext)) {
+    if (file.size > MaxPdfBytes) throw new FileError("too-large", name);
+    const { extractPptx } = await import("./office");
+    // No clip() — the extractor spends MaxTextChars itself so it can cut between slides.
+    return { id, name, size: file.size, kind: "text", mimeType: "text/plain", text: await extractPptx(file, name) };
+  }
+
+  if (file.type === XlsxMime || XlsxExtensions.has(ext)) {
+    if (file.size > MaxPdfBytes) throw new FileError("too-large", name);
+    const { extractXlsx } = await import("./office");
+    return { id, name, size: file.size, kind: "text", mimeType: "text/plain", text: await extractXlsx(file, name) };
+  }
+
+  if (LegacyOfficeMimes.has(file.type) || LegacyOfficeExtensions.has(ext)) {
+    throw new FileError("legacy-office", name);
+  }
 
   if (file.type.startsWith("text/") || TextMimes.has(file.type) || TextExtensions.has(ext)) {
     if (file.size > MaxTextBytes) throw new FileError("too-large", name);
@@ -152,14 +201,48 @@ export async function prepareFile(file: File): Promise<PreparedFile> {
       throw new FileError("unreadable", name);
     }
     if (!text) throw new FileError("unreadable", name);
+    if (looksBinary(text)) throw new FileError("unsupported", name);
     return { id, name, size: file.size, kind: "text", mimeType: file.type || "text/plain", text: clip(text) };
   }
 
   throw new FileError("unsupported", name);
 }
 
+/**
+ * Whether decoded "text" is really a binary someone renamed. A .pptx saved as notes.txt still says
+ * `text/plain`, so nothing above catches it and `file.text()` happily hands back 100KB of mojibake
+ * headed straight for the prompt. Deflated bytes decode to a dense run of U+FFFD and control
+ * characters; real text, in any language, has almost none.
+ */
+function looksBinary(text: string): boolean {
+  const sample = text.slice(0, 4096);
+  if (!sample) return false;
+  let odd = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const code = sample.charCodeAt(i);
+    if (code === 0xfffd || (code < 0x20 && code !== 9 && code !== 10 && code !== 13)) odd += 1;
+  }
+  return odd / sample.length > 0.02;
+}
+
 function clip(text: string): string {
   return text.length <= MaxTextChars ? text : `${text.slice(0, MaxTextChars)}\n…[file truncated]`;
+}
+
+/**
+ * Defuse forged prompt fences in text we extracted from a document. Attachment text is sent to the
+ * model wrapped in `--- Attached file: X ---` … `--- End of file: X ---`, so a document containing
+ * that line verbatim could close the fence early and have the rest of itself read as instructions
+ * rather than as quoted data. Swapping the hyphens for en dashes keeps the line readable to the
+ * model while making it stop looking like our delimiter.
+ *
+ * Applied to text we parsed out of a binary container (docx/pptx/xlsx), where the line can only be
+ * deliberate — not to plain-text files, where a Markdown rule above such a heading is plausible.
+ */
+export function sanitizeExtractedText(text: string): string {
+  return text.replace(/^[ \t]*-{2,}[ \t]*(?=(Attached|End of) file\b)/gim, (fence) =>
+    fence.replace(/-/g, "–"),
+  );
 }
 
 function readAsBase64(file: File, name: string): Promise<string> {

@@ -124,8 +124,10 @@ export default function Composer({
     switch (code) {
       case "too-large":
         return t.composer.fileTooLarge(name);
-      case "legacy-doc":
-        return t.composer.fileLegacyDoc(name);
+      case "legacy-office":
+        return t.composer.fileLegacyOffice(name);
+      case "no-text":
+        return t.composer.fileNoText(name);
       case "unsupported":
         return t.composer.fileUnsupported(name);
       default:
