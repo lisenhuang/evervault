@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileAudio, FileText, FileUp, Loader2, Mic, Paperclip, Phone, Plus, Reply, Send, X } from "lucide-react";
+import { FileAudio, FileText, FileUp, Loader2, Mic, Paperclip, Phone, Reply, Send, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import { FILE_ACCEPT, FileError, formatSize, inlineSize, MAX_FILES, MAX_TOTAL_INLINE, prepareFile, type PreparedFile } from "./lib/files";
 import type { ChatMessage } from "./types";
@@ -435,11 +435,11 @@ export default function Composer({
             />
           </div>
 
-          {/* Controls. While composing this is the row beneath the field ("+" left, send right).
-              Idle it collapses to `contents`, so send flows back into the single row and the "+" is
-              hidden in favour of the inline paperclip above. */}
+          {/* Controls. While composing this is the row beneath the field (attach left, send right).
+              Idle it collapses to `contents`, so send flows back into the single row and this attach
+              button is hidden in favour of the inline paperclip above. */}
           <div className={expanded ? "flex items-center justify-between" : "contents"}>
-            {/* Composing attach: the "+" button, bottom-left. */}
+            {/* Composing attach: bottom-left. Same paperclip icon as the idle row, kept consistent. */}
             <button
               onClick={attachClick}
               disabled={recording}
@@ -447,7 +447,7 @@ export default function Composer({
               aria-label={t.composer.attachFiles}
               className={`${expanded ? "flex" : "hidden"} h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/15 text-black/60 transition hover:bg-black/5 disabled:opacity-40 dark:border-white/20 dark:text-white/60 dark:hover:bg-white/10`}
             >
-              <Plus size={18} />
+              <Paperclip size={18} />
             </button>
             <button
               onClick={send}
