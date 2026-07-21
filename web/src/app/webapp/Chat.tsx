@@ -1024,6 +1024,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const rec = recorderRef.current;
     if (!rec) return;
     recorderRef.current = null;
+    // Snapshot the message this recording is replying to (the composer's reply bar), so a voice
+    // message quotes it exactly as a typed reply does. Bounded like sendText's snapshot. The bar is
+    // cleared only once the clip clears the too-short / no-speech gates below and is actually sent —
+    // a dropped recording keeps the reply bar so the user can simply re-record.
+    const replyRef: ReplyRef | null = replyTo
+      ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
+      : null;
     // A stray clip (e.g. a slow previous reply that landed mid-recording) must not keep talking over
     // the send. This also frees the reply element, and the stop tap is a gesture — re-prime playback
     // so the reply that's about to be synthesized can auto-play (see unlockAudioPlayback).
@@ -1061,7 +1068,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         ]);
         return; // finally() below resets the mic state
       }
-      const userMsg: ChatMessage = { id: uid(), role: "user", text: "", kind: "voice" };
+      // The recording is being sent — retire the composer's reply bar and quote the message on the
+      // voice bubble, matching the typed-reply flow (see sendText). QuotedReply renders above the
+      // voice content in MessageList for any user message carrying replyTo.
+      if (replyRef) setReplyTo(null);
+      const userMsg: ChatMessage = {
+        id: uid(),
+        role: "user",
+        text: "",
+        kind: "voice",
+        ...(replyRef ? { replyTo: replyRef } : {}),
+      };
       const asstId = uid();
       // Conversation this voice turn belongs to (see sendText) — guards its late effects if the user
       // starts a new chat before the reply lands.
@@ -1099,10 +1116,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           // (no speech recognized / transcription down) degrades to the raw-audio Gemini path so the
           // user still gets an answer. Gemini-primary keeps hearing the audio itself, tone and all.
           const serverTranscript = serverChat ? await transcriptPromise : "";
+          // Lead with the quoted-message marker (same as toContents) so the model answers the voice
+          // message in the context of the message it replies to. Empty when this isn't a reply.
+          const replyParts = replyRef ? [{ text: replyContext(replyRef) }] : [];
           const lastTurn: Content =
             serverChat && serverTranscript
-              ? { role: "user", parts: [{ text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
-              : { role: "user", parts: [{ inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
+              ? { role: "user", parts: [...replyParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
+              : { role: "user", parts: [...replyParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
           // Speak the reply too. TTS runs in the background (see runAssistant), so it never holds the
           // queue — the next turn starts as soon as this reply's TEXT is done. Retry across an iOS tab
           // suspension: backgrounding the app mid-reply kills the in-flight request (it rejects with
@@ -1122,9 +1142,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           });
           // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
           const transcript = await transcriptPromise; // already resolved in practice; never throws
+          const userText = transcript || "(voice message)";
           void recordTextTurns(
             [
-              { role: "user", text: transcript || "(voice message)", modality: "voice" },
+              // Keep the quote in the recorded turn so a recalled voice reply still reads in context.
+              { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
               { role: "assistant", text: reply, modality: "voice" },
             ],
             { audioBase64: base64 },
