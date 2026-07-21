@@ -64,7 +64,7 @@ public class ChatAiController : ControllerBase
 
     public record WebappConfigDto(
         string TextModel, string AudioModel, string LiveModel, string DefaultVoice, bool ServerChat,
-        int LiveIdleTimeoutSeconds);
+        int LiveIdleTimeoutSeconds, bool ChunkVoiceReply);
     public record LiveTokenDto(string Token, string? ExpiresAt);
 
     /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks).
@@ -74,7 +74,9 @@ public class ChatAiController : ControllerBase
     /// Gemini (e.g. ChatGPT), so text turns should go through <c>POST text</c>, where the server holds the
     /// credentials and runs primary→fallback. The model id itself is deliberately not exposed.
     /// <c>LiveIdleTimeoutSeconds</c> is the admin's auto-hang-up window for an idle live call (0 = never);
-    /// it's additive, so an older client that ignores it just keeps its built-in 60s default.</summary>
+    /// it's additive, so an older client that ignores it just keeps its built-in 60s default.
+    /// <c>ChunkVoiceReply</c> tells the client the admin turned on sentence-chunked spoken replies, so it
+    /// should stream the audio chunk-by-chunk; also additive, and false unless the admin opts in.</summary>
     [HttpGet("config")]
     public async Task<ActionResult<WebappConfigDto>> Config()
     {
@@ -82,7 +84,7 @@ public class ChatAiController : ControllerBase
         return Ok(new WebappConfigDto(
             WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
             WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider,
-            WebappAiDefaults.LiveIdle(c)));
+            WebappAiDefaults.LiveIdle(c), WebappAiDefaults.ChunkVoiceReply(c)));
     }
 
     // --- Server-side voice-message reply audio ---
@@ -120,8 +122,9 @@ public class ChatAiController : ControllerBase
         var model = WebappAiDefaults.Audio(c);
         var voice = string.IsNullOrWhiteSpace(req.Voice) ? WebappAiDefaults.VoiceOf(c) : req.Voice!.Trim();
         if (voice.Length > 64) voice = voice[..64];
+        var chunk = WebappAiDefaults.ChunkVoiceReply(c);
 
-        var status = _voiceReplies.Enqueue(uid, replyId, text, voice, model, UserAgent);
+        var status = _voiceReplies.Enqueue(uid, replyId, text, voice, model, chunk, UserAgent);
         return StatusCode(StatusCodes.Status202Accepted, new { status = status.ToString().ToLowerInvariant(), replyId });
     }
 
@@ -144,6 +147,89 @@ public class ChatAiController : ControllerBase
             VoiceReplySynthesizer.ReplyStatus.Failed => Ok(new { status = "failed" }),
             _ => Ok(new { status = "pending" }),
         };
+    }
+
+    /// <summary>Poll a spoken reply's synthesis <b>incrementally</b>: returns any chunks at or past
+    /// <paramref name="from"/> (base64 mono PCM16, in playback order) plus the sample rate and whether
+    /// synthesis has finished (<c>ended</c>). The client plays each chunk as it lands — so sentence one
+    /// starts while the rest is still synthesizing — and stops once <c>ended</c> is true and it has every
+    /// ready chunk. This is the poll fallback for the SSE stream below; a 404 means we have no record of it
+    /// (never started, or swept — the client re-kicks). Additive: the old whole-clip endpoint is untouched.</summary>
+    [HttpGet("voice-reply/{replyId}/chunks")]
+    public IActionResult GetVoiceReplyChunks(string replyId, [FromQuery] int from = 0)
+    {
+        if (Uid is not int uid) return Unauthorized();
+
+        var snap = _voiceReplies.TryGetChunks(uid, (replyId ?? "").Trim(), from);
+        if (snap is null) return NotFound(new { status = "unknown" });
+
+        return Ok(new
+        {
+            chunks = snap.NewChunks.Select(ch => new { index = ch.Index, base64 = Convert.ToBase64String(ch.Pcm) }),
+            totalReady = snap.TotalReady,
+            sampleRate = snap.SampleRate,
+            ended = snap.Ended,
+        });
+    }
+
+    /// <summary>Server-Sent Events stream of a reply's chunks: pushes each chunk the instant it's synthesized
+    /// (so the browser needn't poll on a timer), then a terminal event, then closes. Frames:
+    /// <c>{type:"chunk",index,base64,sampleRate}</c> per chunk, <c>{type:"done"}</c> once every chunk has been
+    /// delivered, or <c>{type:"error"}</c> when the reply is unknown/swept. The connection is bounded (~90s)
+    /// and a backgrounded tab drops it, so the client keeps its incremental poll as the fallback. Additive.</summary>
+    [HttpGet("voice-reply/{replyId}/stream")]
+    public async Task StreamVoiceReply(string replyId, [FromQuery] int from = 0)
+    {
+        var ct = HttpContext.RequestAborted;
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no"; // nginx: pass events through unbuffered
+        HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+
+        if (Uid is not int uid)
+        {
+            await WriteSseAsync(new { type = "error" }, ct);
+            return;
+        }
+
+        var id = (replyId ?? "").Trim();
+        var next = from < 0 ? 0 : from;
+        // Bound the stream so a synthesis that never finishes can't hold the connection open forever; the
+        // client's incremental poll covers anything past this. ~90s at 200 ms per iteration.
+        for (int i = 0; i < 450; i++)
+        {
+            var snap = _voiceReplies.TryGetChunks(uid, id, next);
+            if (snap is null)
+            {
+                await WriteSseAsync(new { type = "error" }, ct);
+                return;
+            }
+            foreach (var chunk in snap.NewChunks)
+            {
+                await WriteSseAsync(
+                    new { type = "chunk", index = chunk.Index, base64 = Convert.ToBase64String(chunk.Pcm), sampleRate = snap.SampleRate },
+                    ct);
+                next = chunk.Index + 1;
+            }
+            if (snap.Ended)
+            {
+                await WriteSseAsync(new { type = "done" }, ct);
+                return;
+            }
+            try { await Task.Delay(200, ct); }
+            catch (OperationCanceledException) { return; } // client navigated away
+        }
+    }
+
+    private async Task WriteSseAsync(object payload, CancellationToken ct)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, FrameJson);
+        try
+        {
+            await Response.WriteAsync($"data: {json}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+        catch (OperationCanceledException) { /* client gone — stop writing */ }
     }
 
     // --- Server-side text chat (used when the primary text model isn't Gemini) ---

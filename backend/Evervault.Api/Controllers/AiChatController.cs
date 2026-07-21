@@ -33,12 +33,12 @@ public class AiChatController : ControllerBase
         string TextModel, string AudioModel, string LiveModel, string DefaultVoice,
         string TextProvider, string? TextReasoning,
         string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning,
-        int LiveIdleTimeoutSeconds);
+        int LiveIdleTimeoutSeconds, bool ChunkVoiceReplyBySentence);
     public record WebappAiConfigInput(
         string? TextModel, string? AudioModel, string? LiveModel, string? DefaultVoice,
         string? TextProvider, string? TextReasoning,
         string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning,
-        int? LiveIdleTimeoutSeconds);
+        int? LiveIdleTimeoutSeconds, bool? ChunkVoiceReplyBySentence);
 
     /// <summary>Live model list for a provider (free/paid + pricing where exposed). Goes through failover.
     /// <paramref name="kind"/> = "chat" (default) or "embedding".</summary>
@@ -189,6 +189,7 @@ public class AiChatController : ControllerBase
         c.TextFallbackModel = MergeText(input.TextFallbackModel, c.TextFallbackModel);
         c.TextFallbackReasoning = MergeReasoning(input.TextFallbackReasoning, c.TextFallbackReasoning);
         if (input.LiveIdleTimeoutSeconds is not null) c.LiveIdleTimeoutSeconds = input.LiveIdleTimeoutSeconds;
+        if (input.ChunkVoiceReplyBySentence is not null) c.ChunkVoiceReplyBySentence = input.ChunkVoiceReplyBySentence;
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.WebappAiConfigs.Add(c);
         await _db.SaveChangesAsync();
@@ -199,7 +200,7 @@ public class AiChatController : ControllerBase
         WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
         WebappAiDefaults.TextProviderOf(c), c?.TextReasoning,
         c?.TextFallbackProvider, c?.TextFallbackModel, c?.TextFallbackReasoning,
-        WebappAiDefaults.LiveIdle(c));
+        WebappAiDefaults.LiveIdle(c), WebappAiDefaults.ChunkVoiceReply(c));
 
     // null → keep existing (older clients omit the field); ""/whitespace → clear to null; else trimmed value.
     private static string? MergeText(string? incoming, string? current) =>

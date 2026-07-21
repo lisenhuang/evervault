@@ -289,6 +289,102 @@ export function playPcm16Handle(
   };
 }
 
+/**
+ * A sequential player for a spoken reply that arrives in pieces (sentence-chunked TTS). Chunks are played
+ * back-to-back in the order enqueued, each through {@link playPcm16Handle}; the first chunk starts as soon
+ * as it's handed in, so playback begins while later sentences are still being synthesized. Exposes the same
+ * {stop, pause, resume, ended} surface as a single clip (so the caller can drive it from the same player
+ * state and the bubble's Play/Pause button), plus:
+ *  - `enqueue(base64, sampleRate)` — add the next chunk; plays immediately if idle (and not paused).
+ *  - `done()` — no more chunks are coming; `ended` resolves once the queue drains.
+ *
+ * `ended` resolves when the queue is fully played after `done()`, or when `stop()` is called. Between chunks
+ * the player sits idle (not ended) waiting for the next `enqueue` — the natural gap while the next sentence
+ * synthesizes. `pause()`/`resume()` map to the currently-playing chunk and gate starting the next one.
+ */
+export function playPcm16Queue(): {
+  enqueue: (base64: string, sampleRate: number) => void;
+  done: () => void;
+  stop: () => void;
+  pause: () => void;
+  resume: () => void;
+  ended: Promise<void>;
+} {
+  const pending: { base64: string; sampleRate: number }[] = [];
+  let current: ReturnType<typeof playPcm16Handle> | null = null;
+  let paused = false;
+  let noMore = false; // done() called — finish once the queue drains
+  let finished = false;
+  let resolveEnded: () => void = () => {};
+  const ended = new Promise<void>((resolve) => {
+    resolveEnded = resolve;
+  });
+
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    current?.stop();
+    current = null;
+    resolveEnded();
+  };
+
+  const playNext = () => {
+    if (finished || paused || current) return;
+    const next = pending.shift();
+    if (!next) {
+      // Queue momentarily empty: end only if no more chunks are coming, else idle until the next enqueue.
+      if (noMore) finish();
+      return;
+    }
+    const handle = playPcm16Handle(next.base64, next.sampleRate);
+    current = handle;
+    void handle.ended.then(() => {
+      if (current !== handle) return; // superseded by stop()/finish()
+      current = null;
+      playNext();
+    });
+  };
+
+  return {
+    enqueue: (base64, sampleRate) => {
+      if (finished || noMore) return;
+      pending.push({ base64, sampleRate });
+      playNext();
+    },
+    done: () => {
+      noMore = true;
+      if (!current && pending.length === 0) finish();
+    },
+    stop: finish,
+    pause: () => {
+      paused = true;
+      current?.pause();
+    },
+    resume: () => {
+      paused = false;
+      if (current) current.resume();
+      else playNext(); // was idle between chunks (or paused before the first) — pick up where we left off
+    },
+    ended,
+  };
+}
+
+// Concatenate several base64 mono-PCM16 chunks (all at the same sample rate) into one base64 clip, so a
+// chunk-streamed reply can be stored as a single clip the bubble's Play button replays like any other.
+export function concatPcm16Base64(parts: string[]): string {
+  if (parts.length === 1) return parts[0];
+  const decoded = parts.map(base64ToUint8);
+  let total = 0;
+  for (const d of decoded) total += d.byteLength;
+  const all = new Uint8Array(total);
+  let off = 0;
+  for (const d of decoded) {
+    all.set(d, off);
+    off += d.byteLength;
+  }
+  return arrayBufferToBase64(all.buffer);
+}
+
 // Wrap little-endian PCM16 bytes in a 44-byte WAV header (mono). No re-encoding — the payload is
 // used as-is, matching the header the recorder writes in encodeWav.
 function pcm16ToWavBlob(pcmBytes: Uint8Array, sampleRate: number): Blob {

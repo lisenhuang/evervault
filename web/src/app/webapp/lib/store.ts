@@ -12,6 +12,9 @@ const LIVE_MODEL = "ev:liveModel";
 // started before the config fetch resolves still uses the admin's value rather than the built-in 60s.
 const LIVE_IDLE_SEC = "ev:liveIdleSec";
 const VOICE = "ev:voice";
+// Admin opt-in: synthesize + stream spoken replies sentence-by-sentence (cached so the voice-reply flow
+// knows the mode even before the config fetch resolves). "1" = on, anything else = off.
+const CHUNK_VOICE_REPLY = "ev:chunkVoiceReply";
 const MEMORY_ON = "ev:memoryOn";
 const NOTICE_SEEN = "ev:memoryNoticeSeen";
 // Response-style presets, chosen separately per surface. Default ("default") leaves the built-in tone.
@@ -89,6 +92,9 @@ export const store = {
   setChatScale: (v: number) => set(CHAT_SCALE, v === DEFAULT_CHAT_SCALE ? "" : String(v)),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
+  // Whether spoken replies stream sentence-by-sentence (admin-configured; off by default).
+  getChunkVoiceReply: () => get(CHUNK_VOICE_REPLY) === "1",
+  setChunkVoiceReply: (on: boolean) => set(CHUNK_VOICE_REPLY, on ? "1" : ""),
   // Whether the user has explicitly picked a voice — so the admin's default only applies before they do.
   getVoiceChosen: () => !!get(VOICE),
   // Memory recall is on by default; users can turn it off.

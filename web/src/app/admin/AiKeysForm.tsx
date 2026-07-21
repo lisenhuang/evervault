@@ -233,6 +233,7 @@ function WebappModelsCard() {
   const [fbModel, setFbModel] = useState("");
   const [fbReasoning, setFbReasoning] = useState("auto");
   const [audioModel, setAudioModel] = useState("");
+  const [chunkVoiceReply, setChunkVoiceReply] = useState(false);
   const [liveModel, setLiveModel] = useState("");
   const [voice, setVoice] = useState("");
   // Idle auto-hang-up window for live calls, in seconds ("0" = never). Held as a string for <Select>.
@@ -280,6 +281,7 @@ function WebappModelsCard() {
         setFbModel(d.textFallbackModel || "");
         setFbReasoning(d.textFallbackReasoning || "auto");
         setAudioModel(d.audioModel);
+        setChunkVoiceReply(!!d.chunkVoiceReplyBySentence);
         setLiveModel(d.liveModel);
         setVoice(d.defaultVoice);
         setLiveIdle(String(d.liveIdleTimeoutSeconds ?? DEFAULT_LIVE_IDLE_SEC));
@@ -306,6 +308,7 @@ function WebappModelsCard() {
         textFallbackModel: fbProvider ? fbModel : "",
         textFallbackReasoning: fbProvider === "openai" ? fbReasoning || "auto" : "",
         audioModel,
+        chunkVoiceReplyBySentence: chunkVoiceReply,
         liveModel,
         defaultVoice: voice,
         liveIdleTimeoutSeconds: Number(liveIdle),
@@ -361,6 +364,7 @@ function WebappModelsCard() {
       (fbModel || "") !== (cfg.textFallbackModel || "") ||
       normReason(fbReasoning) !== normReason(cfg.textFallbackReasoning) ||
       audioModel !== cfg.audioModel ||
+      chunkVoiceReply !== cfg.chunkVoiceReplyBySentence ||
       liveModel !== cfg.liveModel ||
       voice !== cfg.defaultVoice ||
       Number(liveIdle) !== cfg.liveIdleTimeoutSeconds);
@@ -429,6 +433,24 @@ function WebappModelsCard() {
             Speaks replies to voice messages. Must be a TTS model.
           </span>
         </label>
+
+        <div className="rounded-lg border border-black/10 p-3 dark:border-white/10">
+          <label className="flex items-start gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={chunkVoiceReply}
+              onChange={(e) => setChunkVoiceReply(e.target.checked)}
+              disabled={busy}
+              className="mt-0.5 h-4 w-4 rounded border-black/20 dark:border-white/20"
+            />
+            Stream spoken replies sentence-by-sentence
+          </label>
+          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+            Splits the reply into sentences and speaks the first while the rest is still being generated, so
+            playback starts sooner instead of waiting for the whole clip. It makes one TTS call per sentence,
+            so leave it off if your keys are tightly rate-limited (e.g. a free-tier Gemini key).
+          </span>
+        </div>
 
         <label className="block">
           <span className="text-sm font-medium">Live voice-call model</span>

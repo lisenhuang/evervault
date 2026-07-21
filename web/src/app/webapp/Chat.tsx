@@ -10,11 +10,24 @@ import KeyDrawer from "./KeyDrawer";
 import MessageList from "./MessageList";
 import TextSizeControl from "./TextSizeControl";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
+import {
+  concatPcm16Base64,
+  playPcm16Handle,
+  playPcm16Queue,
+  startRecording,
+  unlockAudioPlayback,
+  type Recorder,
+} from "./lib/audio";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
-import { fetchVoiceReply, startVoiceReply, type VoiceReplyAudio } from "./lib/voiceReply";
+import {
+  fetchVoiceReply,
+  fetchVoiceReplyChunks,
+  openVoiceReplyStream,
+  startVoiceReply,
+  type VoiceReplyAudio,
+} from "./lib/voiceReply";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { setAudioSessionType } from "./lib/liveAudio";
@@ -526,7 +539,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (!res.ok) return;
       const cfg = (await res.json()) as {
         textModel: string; audioModel: string; liveModel: string; defaultVoice: string; serverChat?: boolean;
-        liveIdleTimeoutSeconds?: number;
+        liveIdleTimeoutSeconds?: number; chunkVoiceReply?: boolean;
       };
       if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
       if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
@@ -537,6 +550,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (typeof cfg.liveIdleTimeoutSeconds === "number" && cfg.liveIdleTimeoutSeconds >= 0) {
         store.setLiveIdleSec(cfg.liveIdleTimeoutSeconds);
         setLiveIdleSec(cfg.liveIdleTimeoutSeconds);
+      }
+      if (typeof cfg.chunkVoiceReply === "boolean") {
+        store.setChunkVoiceReply(cfg.chunkVoiceReply);
+        chunkVoiceReplyRef.current = cfg.chunkVoiceReply;
       }
       setServerChat(!!cfg.serverChat);
     } catch {
@@ -645,6 +662,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // foreground-resume handler never spin up duplicate loops for the same reply.
   const voiceResolveRef = useRef<Set<string>>(new Set());
 
+  // Whether the admin turned on sentence-chunked spoken replies (set from config; cached so the value is
+  // known before the config fetch resolves). A ref so the voice-reply callback reads the live value without
+  // being torn down and recreated when it changes.
+  const chunkVoiceReplyRef = useRef<boolean>(store.getChunkVoiceReply());
+
   // Attach a finished spoken clip to its reply and reveal the text. Guarded so a late arrival can't
   // clobber a reply that was already resolved (or deleted). Auto-play is deliberately narrow: with a
   // queue of messages in flight we only ever speak the LAST voice message's reply, and only when the
@@ -710,6 +732,141 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     [audioModel, applyVoiceAudio, revealWithoutAudio],
   );
 
+  // Chunked spoken reply (admin opt-in): the backend synthesizes the reply sentence-by-sentence and streams
+  // the chunks, so the first sentence plays while the rest is still being generated. Chunks arrive over SSE
+  // (the fast path); when that drops — a backgrounded tab, a network blip, SSE unsupported — an incremental
+  // poll catches up from the same cursor. Playback runs through a sequential queue, and the whole clip is
+  // stored once synthesis ends so the bubble's Play button replays it like any other reply. The kickoff
+  // (startVoiceReply) has already run when this is called.
+  const driveChunkedVoiceReply = useCallback(
+    async (asstId: string, text: string, voice: string) => {
+      const chunks: { base64: string; sampleRate: number }[] = [];
+      let cursor = 0; // next chunk index we still need (dedupes SSE + poll, which are both contiguous)
+      let revealed = false;
+      let sampleRate = 24000;
+      let queue: ReturnType<typeof playPcm16Queue> | null = null;
+
+      // Start the sequential player and wire it into the shared reply-player state, so a new recording/call
+      // or another clip stops it and the Play/Pause button drives it — mirrors playAudioClip.
+      const startQueue = () => {
+        playingAudioRef.current?.stop();
+        setAudioSessionType("playback");
+        const q = playPcm16Queue();
+        playingAudioRef.current = q;
+        setAudioPlaying({ id: asstId, paused: false });
+        void q.ended.then(() => {
+          if (playingAudioRef.current === q) {
+            playingAudioRef.current = null;
+            setAudioPlaying(null);
+            setAudioSessionType("auto");
+          }
+        });
+        return q;
+      };
+
+      // Consume one chunk: reveal the text on the first, start playback if this reply is the one that should
+      // speak, and feed the queue while it's still the active player. Contiguous, so a non-next index is a
+      // duplicate we already have (or a gap we can't use yet) and is ignored.
+      const takeChunk = (index: number, base64: string, rate: number) => {
+        if (index !== cursor) return;
+        const msg = messagesRef.current.find((m) => m.id === asstId);
+        if (!msg) return; // message deleted / chat cleared — stop consuming
+        cursor = index + 1;
+        sampleRate = rate || sampleRate;
+        chunks.push({ base64, sampleRate: rate });
+        if (!revealed) {
+          revealed = true;
+          // Reveal the text now so text + voice land together (as applyVoiceAudio does on ready).
+          applyMessages((cur) =>
+            cur.map((m) =>
+              m.id === asstId && m.pendingAudio && !m.audio ? { ...m, streaming: false, pendingAudio: false } : m,
+            ),
+          );
+          const foreground = typeof document !== "undefined" && document.visibilityState === "visible";
+          if (foreground && !inCallRef.current && !micBusyRef.current && isLastVoiceReply(messagesRef.current, asstId)) {
+            queue = startQueue();
+          }
+        }
+        if (queue && playingAudioRef.current === queue) queue.enqueue(base64, rate);
+      };
+
+      // Synthesis finished (every chunk in, or it gave up): drain the queue and store the whole clip for the
+      // Play button. If not a single chunk landed, reveal the text without audio — the same end state a TTS
+      // failure has always produced.
+      const finalize = () => {
+        queue?.done();
+        if (chunks.length === 0) {
+          revealWithoutAudio(asstId);
+          return;
+        }
+        const base64 = concatPcm16Base64(chunks.map((c) => c.base64));
+        applyMessages((cur) =>
+          cur.map((m) =>
+            m.id === asstId ? { ...m, streaming: false, pendingAudio: false, audio: { base64, sampleRate } } : m,
+          ),
+        );
+        // Nothing played live (e.g. the tab was backgrounded when the first chunk arrived) but we're now
+        // foreground on the latest voice reply → auto-play the finished clip, parity with the single-clip path.
+        if (!queue) {
+          const foreground = typeof document !== "undefined" && document.visibilityState === "visible";
+          if (foreground && !inCallRef.current && !micBusyRef.current && isLastVoiceReply(messagesRef.current, asstId)) {
+            playAudioClip(asstId, base64, sampleRate);
+          }
+        }
+      };
+
+      // SSE fast path: resolves "done" when every chunk arrived, or "error" to hand off to the poll fallback.
+      const streamed = await new Promise<"done" | "error">((resolve) => {
+        let settled = false;
+        let close: () => void = () => {};
+        const settle = (o: "done" | "error") => {
+          if (settled) return;
+          settled = true;
+          close();
+          resolve(o);
+        };
+        close = openVoiceReplyStream(asstId, cursor, {
+          onChunk: (c) => takeChunk(c.index, c.base64, c.sampleRate),
+          onDone: () => settle("done"),
+          onError: () => settle("error"),
+        });
+      });
+      if (streamed === "done") {
+        finalize();
+        return;
+      }
+
+      // Poll fallback for the remainder, from the current cursor. Foreground-budgeted like the single-clip
+      // loop: a hidden tab freezes without spending attempts; re-kick if the job was swept.
+      let visibleAttempts = 0;
+      const maxVisibleAttempts = 75;
+      for (;;) {
+        const msg = messagesRef.current.find((m) => m.id === asstId);
+        if (!msg) return; // deleted / chat cleared
+        if (typeof document !== "undefined" && document.hidden) {
+          await sleep(1000); // tab suspended — wait without spending the budget
+          continue;
+        }
+        const res = await fetchVoiceReplyChunks(asstId, cursor);
+        if (res.status === "unknown") {
+          await startVoiceReply(asstId, text, voice); // lost/swept — re-kick
+        } else if (res.status === "ok") {
+          for (const ch of res.chunks) takeChunk(ch.index, ch.base64, ch.sampleRate);
+          if (res.ended) {
+            finalize();
+            return;
+          }
+        }
+        if (++visibleAttempts >= maxVisibleAttempts) {
+          finalize();
+          return;
+        }
+        await sleep(1000);
+      }
+    },
+    [applyMessages, revealWithoutAudio, playAudioClip],
+  );
+
   // Drive a reply's spoken audio to completion: ask the backend to synthesize it (server-side, so it
   // finishes even while the tab is backgrounded), then poll until the clip is ready. Only FOREGROUND time
   // counts against the attempt budget — a suspended tab freezes this loop, and the time the user was away
@@ -727,6 +884,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         if (!(await startVoiceReply(asstId, text, voice))) {
           // Endpoint missing / request failed → in-browser fallback so the reply still gets a voice.
           await clientSideSynthesize(asstId, text, voice);
+          return;
+        }
+        // Chunked mode (admin opt-in): stream the reply sentence-by-sentence for earlier playback.
+        if (chunkVoiceReplyRef.current) {
+          await driveChunkedVoiceReply(asstId, text, voice);
           return;
         }
         let visibleAttempts = 0;
@@ -760,7 +922,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         voiceResolveRef.current.delete(asstId);
       }
     },
-    [applyVoiceAudio, revealWithoutAudio, clientSideSynthesize],
+    [applyVoiceAudio, revealWithoutAudio, clientSideSynthesize, driveChunkedVoiceReply],
   );
 
   // When the tab returns to the foreground, re-drive any spoken reply still waiting on its audio. This is
