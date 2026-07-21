@@ -328,7 +328,7 @@ export default function Composer({
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={callClick}
             disabled={recording || processing || inCall}
