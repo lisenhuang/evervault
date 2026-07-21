@@ -34,6 +34,14 @@ const LIVE_IDLE_OPTIONS: { sec: number; label: string }[] = [
   { sec: 0, label: "Never — only the user ends the call" },
 ];
 
+// How a sent voice message is answered. "live" streams the reply from one Gemini Live session (audio +
+// text together, no separate transcribe/synthesize step — far faster), falling back to "tts" if a Live
+// session can't start; "tts" is the classic transcribe → reply → synthesize pipeline.
+const VOICE_MODE_OPTIONS: { value: string; label: string }[] = [
+  { value: "live", label: "Gemini Live — fast (audio in, audio out)" },
+  { value: "tts", label: "Classic — transcribe, reply, then speak" },
+];
+
 export default function AiKeysForm() {
   const [data, setData] = useState<AiKeysDto>({ gemini: [], openRouter: [] });
 
@@ -234,6 +242,9 @@ function WebappModelsCard() {
   const [fbReasoning, setFbReasoning] = useState("auto");
   const [audioModel, setAudioModel] = useState("");
   const [liveModel, setLiveModel] = useState("");
+  // Voice-message replies: the Live model for the "live" path + the mode ("live" | "tts").
+  const [voiceLiveModel, setVoiceLiveModel] = useState("");
+  const [voiceMode, setVoiceMode] = useState("live");
   const [voice, setVoice] = useState("");
   // Idle auto-hang-up window for live calls, in seconds ("0" = never). Held as a string for <Select>.
   const [liveIdle, setLiveIdle] = useState(String(DEFAULT_LIVE_IDLE_SEC));
@@ -281,6 +292,8 @@ function WebappModelsCard() {
         setFbReasoning(d.textFallbackReasoning || "auto");
         setAudioModel(d.audioModel);
         setLiveModel(d.liveModel);
+        setVoiceLiveModel(d.voiceLiveModel);
+        setVoiceMode(d.voiceMode === "tts" ? "tts" : "live");
         setVoice(d.defaultVoice);
         setLiveIdle(String(d.liveIdleTimeoutSeconds ?? DEFAULT_LIVE_IDLE_SEC));
       }
@@ -307,6 +320,8 @@ function WebappModelsCard() {
         textFallbackReasoning: fbProvider === "openai" ? fbReasoning || "auto" : "",
         audioModel,
         liveModel,
+        voiceLiveModel,
+        voiceMode,
         defaultVoice: voice,
         liveIdleTimeoutSeconds: Number(liveIdle),
       }),
@@ -327,6 +342,8 @@ function WebappModelsCard() {
     .map((m) => ({ provider: "gemini", id: m.id, name: m.name }));
   const audioOptions = withCurrent(chatModels.filter((m) => /tts/i.test(m.id)), audioModel);
   const liveOptions = withCurrent(liveModels, liveModel);
+  // Voice-message Live model reuses the same Live-API model list as the call.
+  const voiceLiveOptions = withCurrent(liveModels, voiceLiveModel);
   // A value set directly through the API needn't be one of our presets; surface it so the select never
   // renders blank and silently rewrites the stored setting on the next save.
   const idleOptions = LIVE_IDLE_OPTIONS.some((o) => String(o.sec) === liveIdle)
@@ -362,6 +379,8 @@ function WebappModelsCard() {
       normReason(fbReasoning) !== normReason(cfg.textFallbackReasoning) ||
       audioModel !== cfg.audioModel ||
       liveModel !== cfg.liveModel ||
+      voiceLiveModel !== cfg.voiceLiveModel ||
+      voiceMode !== (cfg.voiceMode === "tts" ? "tts" : "live") ||
       voice !== cfg.defaultVoice ||
       Number(liveIdle) !== cfg.liveIdleTimeoutSeconds);
 
@@ -445,6 +464,44 @@ function WebappModelsCard() {
           </span>
         </label>
 
+        <div className="space-y-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
+          <label className="block">
+            <span className="text-sm font-medium">Voice message replies</span>
+            <div className="mt-1">
+              <Select value={voiceMode} onChange={setVoiceMode} disabled={busy}>
+                {VOICE_MODE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </Select>
+            </div>
+            <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+              How a sent voice message is answered. <strong>Gemini Live</strong> replies from one streaming
+              session — audio and text together, with no separate transcription or synthesis step — so it&rsquo;s
+              much faster, and it falls back to Classic automatically if a Live session can&rsquo;t start.{" "}
+              <strong>Classic</strong> uses the transcribe → reply → speak pipeline (the voice model above).
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">Voice message Live model</span>
+            <div className="mt-1">
+              <Select
+                value={voiceLiveModel}
+                onChange={setVoiceLiveModel}
+                disabled={busy || loadingModels || voiceMode !== "live"}
+              >
+                {loadingModels && voiceLiveOptions.length === 0 && <option value="">Loading…</option>}
+                {voiceLiveOptions.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </Select>
+            </div>
+            <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+              The Gemini Live model that answers voice messages when the mode above is Gemini Live. Needs a
+              Live-API model (same list as the call).
+            </span>
+          </label>
+        </div>
+
         <label className="block">
           <span className="text-sm font-medium">End an idle call after</span>
           <div className="mt-1">
@@ -492,7 +549,7 @@ function WebappModelsCard() {
         <div className="flex items-center gap-2">
           <Button
             onClick={save}
-            disabled={busy || !dirty || !textModel || !audioModel || !liveModel || fallbackIncomplete}
+            disabled={busy || !dirty || !textModel || !audioModel || !liveModel || !voiceLiveModel || fallbackIncomplete}
           >
             Save
           </Button>

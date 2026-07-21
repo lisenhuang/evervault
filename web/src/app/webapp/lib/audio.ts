@@ -458,7 +458,7 @@ export function playAudioUrlHandle(url: string): {
 // silent clip can't normalize its own noise floor up into "voiced".
 const VOICED_WINDOW_SAMPLES = 480; // 30 ms at 16 kHz
 const VOICED_RMS_THRESHOLD = 0.008; // ~ -42 dBFS
-function voicedSeconds(samples: Float32Array, sampleRate: number): number {
+export function voicedSeconds(samples: Float32Array, sampleRate: number): number {
   let voicedWindows = 0;
   for (let start = 0; start + VOICED_WINDOW_SAMPLES <= samples.length; start += VOICED_WINDOW_SAMPLES) {
     let sumSq = 0;
@@ -471,7 +471,7 @@ function voicedSeconds(samples: Float32Array, sampleRate: number): number {
   return (voicedWindows * VOICED_WINDOW_SAMPLES) / sampleRate;
 }
 
-function mergeFloat32(chunks: Float32Array[]): Float32Array {
+export function mergeFloat32(chunks: Float32Array[]): Float32Array {
   let len = 0;
   for (const c of chunks) len += c.length;
   const out = new Float32Array(len);
@@ -492,7 +492,7 @@ function downsample(input: Float32Array, inRate: number, outRate: number): Float
   return out;
 }
 
-function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
+export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
   const writeStr = (off: number, s: string) => {
@@ -520,7 +520,7 @@ function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
   return buffer;
 }
 
-function arrayBufferToBase64(buf: ArrayBuffer): string {
+export function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let bin = "";
   const chunk = 0x8000;

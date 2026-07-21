@@ -9,14 +9,8 @@ import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServe
 import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
-import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./persona";
-import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
-import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
-import { FORGET_PERSONA, FORGET_TOOL_DECLARATIONS, isForgetTool, runForgetTool } from "./forgetTool";
-import { FILE_TOOL_DECLARATIONS, isFileTool, runFileTool } from "./fileTools";
-import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
-import { currentTimeContext } from "./time";
-import { aiReplyDirective, type Lang } from "@/i18n/config";
+import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
+import { type Lang } from "@/i18n/config";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
 
@@ -36,9 +30,6 @@ export type LiveCallbacks = {
 };
 
 type SessionHandle = Awaited<ReturnType<GoogleGenAI["live"]["connect"]>>;
-
-const SYSTEM_INSTRUCTION =
-  "You are EverVault, a warm and concise voice assistant. Keep replies short and natural for a spoken conversation.";
 
 // A single Live WebSocket lives for a capped span (~10 min) and Google closes it, even mid-conversation.
 // Session resumption lets a fresh socket pick the SAME conversation back up (full context intact) via a
@@ -292,50 +283,21 @@ export class LiveSession {
         // so an hours-long call never terminates from hitting the model's context ceiling.
         sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
         contextWindowCompression: { slidingWindow: {} },
-        // The record_suggestion tool is always available (forwarding feedback doesn't need memory);
-        // when memory is on, also give the model recall_memory + the task tools + the file tools and a
-        // persona that knows it has memory + a task list, so it can search past chats, manage tasks and
-        // look up files the user sent, mid-call.
-        tools: [
-          {
-            functionDeclarations: [
-              ...(this.memoryEnabled
-                ? [
-                    RECALL_MEMORY_DECLARATION,
-                    ...TASK_TOOL_DECLARATIONS,
-                    ...FILE_TOOL_DECLARATIONS,
-                    ...FORGET_TOOL_DECLARATIONS,
-                  ]
-                : []),
-              RECORD_SUGGESTION_DECLARATION,
-            ],
-          },
-        ],
-        // Time + agenda are captured at connect; a multi-hour call won't refresh them (acceptable — the
-        // list_tasks tool gives freshness mid-call). The profile block grounds the call from the first word.
-        systemInstruction: [
-          this.memoryEnabled && this.profileBlock ? this.profileBlock : "",
-          this.memoryEnabled && this.stateBlock ? this.stateBlock : "",
-          this.memoryEnabled && this.eventsBlock ? this.eventsBlock : "",
-          this.memoryEnabled && this.agendaBlock ? this.agendaBlock : "",
-          this.memoryEnabled && this.recentContext ? this.recentContext : "",
-          this.memoryEnabled ? MEMORY_PERSONA : "",
-          this.memoryEnabled ? TASKS_PERSONA : "",
-          this.memoryEnabled ? FORGET_PERSONA : "",
-          SUGGESTION_PERSONA,
-          SYSTEM_INSTRUCTION,
-          // The user's chosen response style for calls (empty on default) — layered after the base
-          // voice persona so it refines tone without dropping the "short and spoken" baseline.
-          this.styleInstruction || "",
-          CONFIDENTIALITY,
-          CAPABILITY_BOUNDS,
-          SAFETY_BOUNDS,
-          // Steer the spoken reply into the selected UI language (empty for English).
-          aiReplyDirective(this.language),
-          currentTimeContext(),
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
+        // Same tools + persona/context assembly a voice message uses (see liveShared.ts): record_suggestion
+        // always, plus recall/tasks/files/forget when memory is on. Time + agenda are captured at connect;
+        // a multi-hour call won't refresh them (the list_tasks tool gives freshness mid-call).
+        tools: buildLiveToolDeclarations(this.memoryEnabled),
+        systemInstruction: buildLiveSystemInstruction({
+          memoryEnabled: this.memoryEnabled,
+          profileBlock: this.profileBlock,
+          stateBlock: this.stateBlock,
+          eventsBlock: this.eventsBlock,
+          agendaBlock: this.agendaBlock,
+          recentContext: this.recentContext,
+          // The user's chosen response style for calls (empty on default), steered into the selected UI language.
+          styleInstruction: this.styleInstruction,
+          language: this.language,
+        }),
         // Make voice-activity detection less twitchy so any residual speaker echo doesn't get
         // mistaken for the user speaking. Genuine speech still interrupts (barge-in stays on).
         realtimeInputConfig: {
@@ -533,28 +495,9 @@ export class LiveSession {
     // can match it. Note the dispatch chain ends in a FALLTHROUGH to recall — anything without its own
     // arm above becomes a memory search — so each tool family needs its explicit arm here.
     if (m.toolCall?.functionCalls?.length) {
-      const calls = m.toolCall.functionCalls;
-      const results = await Promise.all(
-        calls.map((c) => {
-          const name = c.name ?? "";
-          const args = c.args ?? {};
-          // No image attachments during a voice call, so record_suggestion runs without screenshots.
-          // The file tools run without an onOffer callback: a call has no chat UI to tap, so send_file
-          // comes back with "only in the text chat" while find_files still works — she can tell the
-          // user she has the file and offer to hand it over once they're back in the chat.
-          return isSuggestionTool(name)
-            ? runSuggestionTool(args)
-            : isTaskTool(name)
-              ? runTaskTool(name, args)
-              : isFileTool(name)
-                ? runFileTool(name, args)
-                : isForgetTool(name)
-                  ? runForgetTool(name, args)
-                  : runRecallTool(args);
-        }),
-      );
+      // Run the requested tool(s) and echo the responses (with matching call ids) back over the socket.
       this.session?.sendToolResponse({
-        functionResponses: calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } })),
+        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls),
       });
       return;
     }

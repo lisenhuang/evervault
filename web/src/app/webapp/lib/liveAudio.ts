@@ -90,6 +90,15 @@ export class MicStreamer {
   private processor?: ScriptProcessorNode;
   private source?: MediaStreamAudioSourceNode;
   private muted = false;
+  // When capturing (voice-message mode), every 16 kHz mono chunk sent to Gemini is also kept locally so
+  // the driver can build the exact same WAV the classic recorder produces — needed for the TTS fallback
+  // (if the Live session fails) and for the memory record. Null in call mode (nothing is retained).
+  private capture: Float32Array[] | null = null;
+
+  /** Retain every streamed 16 kHz chunk locally so {@link takeCapturedSamples} can rebuild the clip. */
+  enableCapture() {
+    this.capture = [];
+  }
 
   async start(onChunk: (base64Pcm16: string) => void): Promise<void> {
     setAudioSessionType("play-and-record");
@@ -108,11 +117,19 @@ export class MicStreamer {
     this.processor.onaudioprocess = (e: AudioProcessingEvent) => {
       if (this.muted) return;
       const down = downsample(e.inputBuffer.getChannelData(0), inRate, 16000);
+      // Retain a copy before encoding when capturing (downsample can return the input buffer unchanged,
+      // so copy defensively — the ScriptProcessor reuses its buffer between callbacks).
+      if (this.capture) this.capture.push(new Float32Array(down));
       onChunk(floatToPcm16Base64(down));
     };
     this.source.connect(this.processor);
     this.processor.connect(sink);
     sink.connect(this.ctx.destination);
+  }
+
+  /** The captured 16 kHz mono samples so far (empty if capture wasn't enabled). */
+  takeCapturedSamples(): Float32Array[] {
+    return this.capture ?? [];
   }
 
   setMuted(m: boolean) {
@@ -164,6 +181,11 @@ export class AudioPlayer {
 
   async resume() {
     if (this.ctx.state === "suspended") await this.ctx.resume();
+  }
+
+  /** Pause playback by suspending the context; scheduled audio resumes from the same spot on resume(). */
+  pause() {
+    if (this.ctx.state === "running") void this.ctx.suspend();
   }
 
   enqueue(base64Pcm16: string) {

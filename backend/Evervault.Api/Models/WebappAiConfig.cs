@@ -40,6 +40,16 @@ public class WebappAiConfig
     /// (the call runs until the user ends it). Null (legacy rows) = <see cref="WebappAiDefaults.LiveIdleSeconds"/>.</summary>
     public int? LiveIdleTimeoutSeconds { get; set; }
 
+    /// <summary>The Gemini Live model used to answer /webapp voice messages (audio-in / audio-out) when
+    /// <see cref="VoiceMode"/> is "live". Null = inherit the realtime-call <see cref="LiveModel"/>, then the
+    /// <see cref="WebappAiDefaults.LiveModel"/> default. Must be a Live-API model (same list as the call).</summary>
+    public string? VoiceLiveModel { get; set; }
+
+    /// <summary>How /webapp voice messages are answered: "live" = one Gemini Live session (fast — audio + text
+    /// in a single call, with automatic fallback to TTS on failure); "tts" = the legacy record→transcribe→
+    /// reply→synthesize pipeline. Null (legacy rows) = <see cref="WebappAiDefaults.VoiceMode"/> ("live").</summary>
+    public string? VoiceMode { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -52,6 +62,10 @@ public static class WebappAiDefaults
     public const string LiveModel = "gemini-3.1-flash-live-preview";
     public const string Voice = "Kore";
     public const string GeminiProvider = "gemini";
+
+    /// <summary>Default voice-message answer mode. "live" = the Gemini Live audio-in/audio-out path (with the
+    /// client falling back to TTS on failure); the alternative is "tts" (the legacy synthesis pipeline).</summary>
+    public const string VoiceMode = "live";
 
     /// <summary>Default auto-hang-up window for an idle live call (1 minute), matching the value the
     /// client hard-coded before this became configurable — so unset rows behave exactly as before.</summary>
@@ -68,6 +82,14 @@ public static class WebappAiDefaults
     public static string Audio(WebappAiConfig? c) => Or(c?.AudioModel, AudioModel);
     public static string Live(WebappAiConfig? c) => Or(c?.LiveModel, LiveModel);
     public static string VoiceOf(WebappAiConfig? c) => Or(c?.DefaultVoice, Voice);
+
+    /// <summary>The Live model for voice messages: the admin's voice-chat choice, else the realtime-call Live
+    /// model, else the default. All come from the same Live-API model list.</summary>
+    public static string VoiceLive(WebappAiConfig? c) => Or(c?.VoiceLiveModel, Live(c));
+
+    /// <summary>The voice-message answer mode, normalized to "live" | "tts". Legacy/unset rows default to
+    /// "live" (the client still auto-falls-back to TTS if a Live session fails).</summary>
+    public static string VoiceModeOf(WebappAiConfig? c) => Norm(c?.VoiceMode) == "tts" ? "tts" : VoiceMode;
 
     /// <summary>The idle auto-hang-up window in seconds, clamped to the allowed range. 0 means never.</summary>
     public static int LiveIdle(WebappAiConfig? c)

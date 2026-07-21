@@ -17,6 +17,7 @@ import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } fro
 import { fetchVoiceReply, startVoiceReply, type VoiceReplyAudio } from "./lib/voiceReply";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
+import { LiveVoiceMessage } from "./lib/liveVoiceMessage";
 import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
@@ -215,6 +216,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Admin-set idle auto-hang-up window for live calls, in seconds (0 = never). Seeded from the local
   // cache so the very first call of a session doesn't fall back to the built-in default.
   const [liveIdleSec, setLiveIdleSec] = useState(store.getLiveIdleSec());
+  // How voice messages are answered ("live" = one Gemini Live session — audio + text in one call, with
+  // an automatic fallback to TTS on failure; "tts" = the legacy synthesis pipeline) and which Gemini
+  // Live model the "live" path uses. Admin-configured; seeded from the local cache so the first voice
+  // message of a session already follows the admin's policy before the config fetch resolves.
+  const [voiceMode, setVoiceMode] = useState(store.getVoiceMode());
+  const [voiceLiveModel, setVoiceLiveModel] = useState(store.getVoiceLiveModel());
   // The admin's primary text model isn't Gemini (e.g. ChatGPT): text turns go through the backend's
   // /api/chat/ai/text instead of the direct Gemini proxy. Session-only (re-read on every mount) and
   // defaults to false, so an old backend or a failed config fetch keeps the plain Gemini path.
@@ -340,6 +347,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const liveAsstIdRef = useRef<string | null>(null);
   const liveUserTextRef = useRef("");
   const liveAsstTextRef = useRef("");
+  // The in-flight Gemini Live voice message (mode "live"): held between the mic press (start) and the
+  // send tap (endCapture/awaitReply). Its reply audio streams via the driver's own player.
+  const liveVoiceRef = useRef<LiveVoiceMessage | null>(null);
+  // The assistant bubble the current Live voice reply streams its transcript into (set at send time).
+  const liveVoiceAsstIdRef = useRef<string | null>(null);
 
   // Memory (recall) — background RAG only; the user-facing Memories panel is not exposed.
   const [memoryOn] = useState(true);
@@ -526,7 +538,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (!res.ok) return;
       const cfg = (await res.json()) as {
         textModel: string; audioModel: string; liveModel: string; defaultVoice: string; serverChat?: boolean;
-        liveIdleTimeoutSeconds?: number;
+        liveIdleTimeoutSeconds?: number; voiceLiveModel?: string; voiceMode?: string;
       };
       if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
       if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
@@ -538,6 +550,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         store.setLiveIdleSec(cfg.liveIdleTimeoutSeconds);
         setLiveIdleSec(cfg.liveIdleTimeoutSeconds);
       }
+      // Voice-message policy. Additive: an older backend omits these, so the cached/default (Live) stays.
+      if (cfg.voiceMode === "live" || cfg.voiceMode === "tts") {
+        store.setVoiceMode(cfg.voiceMode);
+        setVoiceMode(cfg.voiceMode);
+      }
+      if (cfg.voiceLiveModel) { store.setVoiceLiveModel(cfg.voiceLiveModel); setVoiceLiveModel(cfg.voiceLiveModel); }
       setServerChat(!!cfg.serverChat);
     } catch {
       /* keep the defaults */
@@ -1137,7 +1155,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     });
   }
 
+  // Stream the assistant transcript of a Gemini Live voice reply into its bubble as it arrives.
+  function appendVoiceAsstText(delta: string) {
+    const id = liveVoiceAsstIdRef.current;
+    if (!id) return;
+    applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: m.text + delta } : m)));
+  }
+
   async function startVoice() {
+    // Guard against a second mic tap during the getUserMedia acquisition window: voiceState is still
+    // "idle" (it flips to "recording" only after acquisition resolves), so the button stays enabled —
+    // a double-tap would otherwise spawn a second recorder/Live driver and orphan the first.
+    if (micBusyRef.current) return;
     // Mark the mic busy up front — BEFORE the awaited getUserMedia below — so a voice reply that
     // resolves during acquisition is held back from the speaker instead of playing into the recording
     // that's about to start. Cleared if acquisition fails (catch) or once the clip is queued (stopVoice).
@@ -1148,14 +1177,44 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // The mic press is a user gesture, and it's the earliest one in the voice-message flow — unlock
     // spoken-reply playback now (synchronously, before the awaited getUserMedia) so the reply that
     // lands seconds later can auto-play on iOS instead of waiting for a "Play" tap. Best-effort and
-    // isolated in its own try/catch so an unlock hiccup can never bubble up as a mic error, and so the
-    // very next statement — startRecording — is still the first `await` of the gesture (iOS drops the
-    // mic request if another async step runs before it).
+    // isolated in its own try/catch so an unlock hiccup can never bubble up as a mic error.
     try {
       unlockAudioPlayback();
     } catch {
       /* playback priming is best-effort; the reply's "Play" button plays it directly on tap */
     }
+    // Gemini Live path: open a one-shot Live session seeded with the FULL prior transcript, so the reply
+    // comes back as audio + text in a single streaming call and remembers the whole mixed text+voice
+    // conversation. The driver opens the mic now and connects in the background; on ANY Live failure the
+    // recorded clip is still captured locally and stopVoice falls back to the classic TTS pipeline.
+    if (voiceMode === "live") {
+      const driver = new LiveVoiceMessage({
+        model: voiceLiveModel,
+        voice,
+        memoryEnabled: memoryOn,
+        profileBlock: memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined,
+        stateBlock: memoryOn ? renderStateBlock(statesRef.current) ?? undefined : undefined,
+        eventsBlock: memoryOn ? renderEventsBlock(eventsRef.current) ?? undefined : undefined,
+        agendaBlock: memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined,
+        language: lang,
+        styleInstruction: styleDirective(voiceStyle),
+        history: toContents(messagesRef.current),
+        onModelText: appendVoiceAsstText,
+      });
+      try {
+        await driver.start(); // getUserMedia (throws a typed MicError) + background connect
+        liveVoiceRef.current = driver;
+        setVoiceState("recording");
+      } catch (e) {
+        micBusyRef.current = false; // acquisition failed — the mic never opened
+        setVoiceState("idle");
+        void driver.abandon();
+        const text = micErrorMessage(e, t) ?? t.chat.micGeneric;
+        applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text, error: true }]);
+      }
+      return;
+    }
+    // Classic TTS path: record locally now, then transcribe → reply → synthesize on send.
     try {
       recorderRef.current = await startRecording();
       setVoiceState("recording");
@@ -1170,13 +1229,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   async function stopVoice() {
+    // A Gemini Live voice message is in flight — end the turn on that session.
+    const driver = liveVoiceRef.current;
+    if (driver) {
+      liveVoiceRef.current = null;
+      await stopVoiceLive(driver);
+      return;
+    }
     const rec = recorderRef.current;
     if (!rec) return;
     recorderRef.current = null;
     // Snapshot the message this recording is replying to (the composer's reply bar), so a voice
-    // message quotes it exactly as a typed reply does. Bounded like sendText's snapshot. The bar is
-    // cleared only once the clip clears the too-short / no-speech gates below and is actually sent —
-    // a dropped recording keeps the reply bar so the user can simply re-record.
+    // message quotes it exactly as a typed reply does. The bar is cleared only once the clip clears the
+    // too-short / no-speech gates and is actually sent — a dropped recording keeps the reply bar.
     const replyRef: ReplyRef | null = replyTo
       ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
       : null;
@@ -1233,87 +1298,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // starts a new chat before the reply lands.
       const turnConvId = conversationIdRef.current;
       const isCurrent = () => conversationIdRef.current === turnConvId;
-      // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready
-      // (see runAssistant), so the text doesn't appear ahead of the slower voice. Both bubbles go in
-      // now — the placeholder carries kind "voice" so isLastVoiceReply can see this turn is the newest
-      // voice message even before its reply exists (that's what silences an earlier reply behind it).
+      // Both bubbles go in now — the placeholder carries kind "voice" so isLastVoiceReply can see this
+      // turn is the newest voice message even before its reply exists (that's what silences an earlier
+      // reply behind it). runTtsVoiceTurn sets pendingAudio + queues the reply.
       applyMessages((cur) => [
         ...cur,
         userMsg,
         { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true },
       ]);
-      // Transcribe right away (in parallel, off the queue) so the user's bubble fills in promptly no
-      // matter how many turns are queued ahead of this one. Fills the bubble in place when it lands;
-      // an empty/failed transcript degrades to the "Voice message" label so the turn still reads
-      // sensibly and stays in toContents() history.
-      const transcriptPromise = transcribeAudio(textModel, base64, mimeType)
-        .then((tx) => {
-          applyMessages((cur) => cur.map((m) => (m.id === userMsg.id ? { ...m, text: tx || "Voice message" } : m)));
-          return tx;
-        })
-        .catch(() => "");
-      // Generate the reply when this turn reaches the front of the queue, so responses stay in send
-      // order and each one sees the finished replies of the turns before it.
-      enqueueTurn(async () => {
-        try {
-          const voiceInstruction =
-            "Respond conversationally to this spoken message. Act on what they say the same as if " +
-            "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
-            "share feedback with the team, call record_suggestion).";
-          // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript:
-          // wait for it (transcription stays a Gemini call), then send it as text. An empty transcript
-          // (no speech recognized / transcription down) degrades to the raw-audio Gemini path so the
-          // user still gets an answer. Gemini-primary keeps hearing the audio itself, tone and all.
-          const serverTranscript = serverChat ? await transcriptPromise : "";
-          // Lead with the quoted-message marker (same as toContents) so the model answers the voice
-          // message in the context of the message it replies to. Empty when this isn't a reply.
-          const replyParts = replyRef ? [{ text: replyContext(replyRef) }] : [];
-          const lastTurn: Content =
-            serverChat && serverTranscript
-              ? { role: "user", parts: [...replyParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
-              : { role: "user", parts: [...replyParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
-          // Speak the reply too. TTS runs in the background (see runAssistant), so it never holds the
-          // queue — the next turn starts as soon as this reply's TEXT is done. Retry across an iOS tab
-          // suspension: backgrounding the app mid-reply kills the in-flight request (it rejects with
-          // "Load failed" on return), so re-run the generation once the user is back instead of
-          // surfacing a bogus "server unreachable". The audio is already captured, so each attempt just
-          // rebuilds `contents` fresh — the tool loop appends to that array, so it can't be reused as-is.
-          // History is everything before this voice bubble; the audio itself rides in as `lastTurn`.
-          const reply = await runWithSuspensionRetry((attempt) => {
-            if (attempt > 0) {
-              applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
-            }
-            // Scope suggestion screenshots to this turn's history (through this voice message), not
-            // later queued turns.
-            return runAssistant(asstId, [...toContents(historyBefore(userMsg.id)), lastTurn], true, isCurrent, () =>
-              historyBefore(asstId),
-            );
-          });
-          // Record the user's spoken audio file + its transcript, plus the assistant's reply text.
-          const transcript = await transcriptPromise; // already resolved in practice; never throws
-          const userText = transcript || "(voice message)";
-          void recordTextTurns(
-            [
-              // Keep the quote in the recorded turn so a recalled voice reply still reads in context.
-              { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
-              { role: "assistant", text: reply, modality: "voice" },
-            ],
-            { audioBase64: base64 },
-            turnConvId,
-          );
-        } catch (e) {
-          const fe = friendlyAiError(e, t);
-          reportAiError(fe, "chat.voice");
-          // `.map`-only (matching the text path): no-op if the placeholder is gone — e.g. the chat was
-          // cleared while this turn was still generating — so a late failure can't inject a stray error
-          // bubble into a new conversation.
-          applyMessages((cur) =>
-            cur.map((m) =>
-              m.id === asstId ? { ...m, text: fe.text, streaming: false, error: true, kind: "voice" } : m,
-            ),
-          );
-        }
-      });
+      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, turnConvId, isCurrent });
     } catch (e) {
       // rec.stop() itself failed (rare) — surface it before anything was queued.
       const fe = friendlyAiError(e, t);
@@ -1323,6 +1316,201 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // The clip is captured and queued (or was dropped) — the mic is free again, so a subsequent
       // voice reply may auto-play. This turn's OWN reply is the newest voice message now, so it's the
       // one that will play; any earlier reply stays silenced by isLastVoiceReply.
+      micBusyRef.current = false;
+      setVoiceState("idle");
+    }
+  }
+
+  // The classic voice reply (transcribe → reply → synthesize), used both when the admin picks the "tts"
+  // mode and as the automatic fallback when a Gemini Live voice message can't be used. The user +
+  // assistant bubbles already exist (asstId is the streaming placeholder). Transcribes the clip off the
+  // queue, then queues the reply so responses stay in send order and each sees the prior ones finished.
+  function runTtsVoiceTurn(p: {
+    userMsg: ChatMessage;
+    asstId: string;
+    wav: { base64: string; mimeType: string };
+    replyRef: ReplyRef | null;
+    turnConvId: string;
+    isCurrent: () => boolean;
+  }) {
+    const { userMsg, asstId, wav, replyRef, turnConvId, isCurrent } = p;
+    const { base64, mimeType } = wav;
+    // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready (see
+    // runAssistant), so the text doesn't appear ahead of the slower voice. (Also resets a Live bubble
+    // that had already started streaming text, when this is the fallback path.)
+    applyMessages((cur) =>
+      cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true, kind: "voice", pendingAudio: true } : m)),
+    );
+    // Transcribe right away (in parallel, off the queue) so the user's bubble fills promptly no matter
+    // how many turns are queued ahead. An empty/failed transcript degrades to "Voice message" so the
+    // turn still reads sensibly and stays in toContents() history.
+    const transcriptPromise = transcribeAudio(textModel, base64, mimeType)
+      .then((tx) => {
+        applyMessages((cur) => cur.map((m) => (m.id === userMsg.id ? { ...m, text: tx || "Voice message" } : m)));
+        return tx;
+      })
+      .catch(() => "");
+    enqueueTurn(async () => {
+      try {
+        const voiceInstruction =
+          "Respond conversationally to this spoken message. Act on what they say the same as if " +
+          "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
+          "share feedback with the team, call record_suggestion).";
+        // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript: wait
+        // for it (transcription stays a Gemini call), then send it as text. An empty transcript degrades
+        // to the raw-audio Gemini path so the user still gets an answer. Gemini-primary hears the audio.
+        const serverTranscript = serverChat ? await transcriptPromise : "";
+        const replyParts = replyRef ? [{ text: replyContext(replyRef) }] : [];
+        const lastTurn: Content =
+          serverChat && serverTranscript
+            ? { role: "user", parts: [...replyParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
+            : { role: "user", parts: [...replyParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
+        // TTS runs in the background inside runAssistant, so it never holds the queue. Retry across an iOS
+        // tab suspension (which kills the in-flight request) by rebuilding `contents` fresh each attempt.
+        const reply = await runWithSuspensionRetry((attempt) => {
+          if (attempt > 0) {
+            applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
+          }
+          return runAssistant(asstId, [...toContents(historyBefore(userMsg.id)), lastTurn], true, isCurrent, () =>
+            historyBefore(asstId),
+          );
+        });
+        const transcript = await transcriptPromise; // already resolved in practice; never throws
+        const userText = transcript || "(voice message)";
+        void recordTextTurns(
+          [
+            { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
+            { role: "assistant", text: reply, modality: "voice" },
+          ],
+          { audioBase64: base64 },
+          turnConvId,
+        );
+      } catch (e) {
+        const fe = friendlyAiError(e, t);
+        reportAiError(fe, "chat.voice");
+        applyMessages((cur) =>
+          cur.map((m) => (m.id === asstId ? { ...m, text: fe.text, streaming: false, error: true, kind: "voice" } : m)),
+        );
+      }
+    });
+  }
+
+  // Route a Live voice reply's streaming player through the shared play-state, so stopReplyAudio() (a new
+  // recording / a call) can cut it and MessageList shows the playing indicator on the bubble until it drains.
+  function registerLivePlayback(driver: LiveVoiceMessage, asstId: string) {
+    if (!driver.playing) {
+      // The reply already finished playing — release the driver's audio context and let the Play button
+      // replay m.audio through the normal path.
+      driver.stopPlayback();
+      return;
+    }
+    const handle = {
+      stop: () => driver.stopPlayback(),
+      pause: () => driver.pausePlayback(),
+      resume: () => driver.resumePlayback(),
+    };
+    playingAudioRef.current?.stop();
+    playingAudioRef.current = handle;
+    setAudioPlaying({ id: asstId, paused: false });
+    driver.onPlaybackIdle = () => {
+      if (playingAudioRef.current === handle) {
+        playingAudioRef.current = null;
+        setAudioPlaying(null);
+        setAudioSessionType("auto");
+      }
+    };
+  }
+
+  // End a Gemini Live voice message: stop the mic, gate the clip, then stream the reply (audio + both
+  // transcripts) from the same session. Falls back to the classic TTS pipeline (with the recorded clip)
+  // if Live never came up or fails mid-reply, so the user always gets an answer.
+  async function stopVoiceLive(driver: LiveVoiceMessage) {
+    const replyRef: ReplyRef | null = replyTo
+      ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
+      : null;
+    stopReplyAudio();
+    unlockAudioPlayback();
+    setVoiceState("processing");
+    try {
+      const { wav, connected } = driver.endCapture();
+      setAudioSessionType("playback");
+      unlockAudioPlayback();
+      // Same too-short / no-speech gates as the classic path — drop the clip without generating a reply.
+      if (wav.seconds < MIN_VOICE_MESSAGE_SECONDS) {
+        void driver.abandon();
+        applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true }]);
+        return;
+      }
+      if (wav.voicedSeconds < MIN_VOICED_SECONDS) {
+        void driver.abandon();
+        applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: t.chat.noSpeechDetected, error: true }]);
+        return;
+      }
+      if (replyRef) setReplyTo(null);
+      const userMsg: ChatMessage = {
+        id: uid(),
+        role: "user",
+        text: "",
+        kind: "voice",
+        ...(replyRef ? { replyTo: replyRef } : {}),
+      };
+      const asstId = uid();
+      const turnConvId = conversationIdRef.current;
+      const isCurrent = () => conversationIdRef.current === turnConvId;
+      // Both bubbles go in now; the assistant one streams its transcript live (no pendingAudio — on the
+      // Live path text and audio arrive together).
+      applyMessages((cur) => [
+        ...cur,
+        userMsg,
+        { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice" },
+      ]);
+      liveVoiceAsstIdRef.current = asstId;
+
+      if (!connected) {
+        // Live never came up (token mint / connect failed while recording) — fall back to TTS.
+        void driver.abandon();
+        liveVoiceAsstIdRef.current = null;
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, turnConvId, isCurrent });
+        return;
+      }
+      try {
+        const reply = await driver.awaitReply();
+        liveVoiceAsstIdRef.current = null;
+        // Fill the user bubble with the input transcript; finalize the assistant bubble + attach the
+        // assembled audio for the replay ("Play") button.
+        applyMessages((cur) =>
+          cur.map((m) =>
+            m.id === userMsg.id
+              ? { ...m, text: reply.userText || "Voice message" }
+              : m.id === asstId
+                ? { ...m, text: reply.modelText, streaming: false, audio: reply.audio }
+                : m,
+          ),
+        );
+        registerLivePlayback(driver, asstId);
+        const userText = reply.userText || "(voice message)";
+        void recordTextTurns(
+          [
+            { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
+            { role: "assistant", text: reply.modelText, modality: "voice" },
+          ],
+          { audioBase64: wav.base64 },
+          turnConvId,
+        );
+      } catch {
+        // Live failed mid-reply (socket error / timeout) — reuse the same bubbles and answer via TTS.
+        liveVoiceAsstIdRef.current = null;
+        driver.stopPlayback();
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, turnConvId, isCurrent });
+      }
+    } catch (e) {
+      // endCapture / an unexpected failure before a reply was set up.
+      void driver.abandon();
+      const fe = friendlyAiError(e, t);
+      reportAiError(fe, "chat.voice");
+      applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: fe.text, error: true }]);
+    } finally {
+      liveVoiceAsstIdRef.current = null;
       micBusyRef.current = false;
       setVoiceState("idle");
     }

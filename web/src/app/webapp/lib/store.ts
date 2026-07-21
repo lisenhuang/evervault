@@ -11,6 +11,11 @@ const LIVE_MODEL = "ev:liveModel";
 // Admin-set auto-hang-up window for an idle live call, in seconds ("0" = never). Cached so a call
 // started before the config fetch resolves still uses the admin's value rather than the built-in 60s.
 const LIVE_IDLE_SEC = "ev:liveIdleSec";
+// How the admin wants voice messages answered ("live" = one Gemini Live session, "tts" = the legacy
+// synthesis pipeline) and which Gemini Live model to use for the "live" path. Cached so the first
+// voice message of a session uses the admin's policy rather than the built-in default.
+const VOICE_MODE = "ev:voiceMode";
+const VOICE_LIVE_MODEL = "ev:voiceLiveModel";
 const VOICE = "ev:voice";
 const MEMORY_ON = "ev:memoryOn";
 const NOTICE_SEEN = "ev:memoryNoticeSeen";
@@ -50,6 +55,14 @@ export const DEFAULT_VOICE = "Kore";
 /** Fallback idle auto-hang-up window (seconds) before the server's config arrives. */
 export const DEFAULT_LIVE_IDLE_SEC = 60;
 
+/** How a voice message is answered. "live" = one Gemini Live session (audio + text in one call, with an
+ *  automatic fallback to TTS on failure); "tts" = the legacy record→transcribe→reply→synthesize path. */
+export type VoiceMode = "live" | "tts";
+/** Default before the server's config arrives — Live (the fast path), matching the backend default. */
+export const DEFAULT_VOICE_MODE: VoiceMode = "live";
+/** Default Live model for voice messages before config arrives (same list as the call). */
+export const DEFAULT_VOICE_LIVE_MODEL = DEFAULT_LIVE_MODEL;
+
 /** The chat text-size ladder, smallest first. 10% steps: fine enough that no tap overshoots. */
 export const CHAT_SCALE_STEPS = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5] as const;
 export const DEFAULT_CHAT_SCALE = 1;
@@ -79,6 +92,12 @@ export const store = {
     return raw !== "" && Number.isFinite(sec) && sec >= 0 ? sec : DEFAULT_LIVE_IDLE_SEC;
   },
   setLiveIdleSec: (v: number) => set(LIVE_IDLE_SEC, String(v)),
+  // Voice-message answer mode. Only "tts" is stored explicitly; anything else (incl. the cleared/unset
+  // key) reads back as the "live" default — so an untouched install gets the fast path.
+  getVoiceMode: (): VoiceMode => (get(VOICE_MODE) === "tts" ? "tts" : "live"),
+  setVoiceMode: (v: VoiceMode) => set(VOICE_MODE, v === "tts" ? "tts" : ""),
+  getVoiceLiveModel: () => get(VOICE_LIVE_MODEL) || DEFAULT_VOICE_LIVE_MODEL,
+  setVoiceLiveModel: (v: string) => set(VOICE_LIVE_MODEL, v),
   // Chat text size. Snapped to a known step rather than merely parsed, so a corrupt or
   // out-of-range value (hand-edited storage, or a ladder that changes in a later release) can
   // never render the transcript at some unusable size — it just falls back to 100%.
