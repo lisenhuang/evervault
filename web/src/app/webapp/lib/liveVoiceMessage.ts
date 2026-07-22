@@ -151,6 +151,10 @@ export class LiveVoiceMessage {
             eventsBlock: this.opts.eventsBlock,
             agendaBlock: this.opts.agendaBlock,
             recentContext: this.opts.recentContext,
+            // The prior mixed text+voice conversation goes into the system instruction as a transcript
+            // (not via sendClientContent — that's only supported for this Live model with a history-config
+            // flag the SDK doesn't expose, and using it broke every message after the first).
+            conversationBlock: renderConversation(this.opts.history),
             styleInstruction: this.opts.styleInstruction,
             language: this.opts.language,
           }),
@@ -173,9 +177,8 @@ export class LiveVoiceMessage {
         }
         return;
       }
-      // Prefill the full prior transcript (the SDK's documented "conversation context" use of
-      // sendClientContent), then open the user's turn and flush any audio captured while connecting.
-      if (this.opts.history.length) this.session.sendClientContent({ turns: this.opts.history, turnComplete: false });
+      // Open the user's turn (the prior conversation is already in the system instruction as a
+      // transcript — see conversationBlock), then flush any audio captured while connecting.
       this.session.sendRealtimeInput({ activityStart: {} });
       for (const b64 of this.pending) {
         this.session.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
@@ -371,4 +374,34 @@ function bytesToBase64(bytes: Uint8Array): string {
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
   return btoa(bin);
+}
+
+// Keep the transcript block bounded so a long chat doesn't bloat the system instruction; the most
+// recent turns matter most for continuing the conversation.
+const CONVERSATION_MAX_CHARS = 12000;
+
+/**
+ * Render the prior conversation (already toContents'd, so mixed text+voice) as a plain transcript for
+ * the system instruction. This is how a per-message Live session "remembers the entire context" — the
+ * realtime call gets this for free from its persistent server-side history, but a voice message opens a
+ * fresh session each time. Image/audio-only parts contribute no text and are skipped.
+ */
+function renderConversation(history: Content[]): string {
+  const lines: string[] = [];
+  for (const c of history) {
+    const text = (c.parts ?? [])
+      .map((p) => p.text ?? "")
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (!text) continue;
+    lines.push(`${c.role === "model" ? "You" : "User"}: ${text}`);
+  }
+  if (!lines.length) return "";
+  let block = lines.join("\n");
+  if (block.length > CONVERSATION_MAX_CHARS) block = `…\n${block.slice(block.length - CONVERSATION_MAX_CHARS)}`;
+  return (
+    "The conversation so far (most recent last) — continue it naturally, drawing on this so the user " +
+    `feels remembered:\n${block}`
+  );
 }

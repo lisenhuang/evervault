@@ -28,6 +28,10 @@ export type LiveContextOpts = {
   eventsBlock?: string;
   agendaBlock?: string;
   recentContext?: string;
+  /** The current on-screen conversation rendered as a transcript, so a per-message session (the voice
+   *  message) still "sees" the mixed text+voice history. The realtime call omits this — it keeps one
+   *  live session whose history the server already retains. */
+  conversationBlock?: string;
   /** The user's chosen response-style directive ("" on default) — layered after the base voice persona. */
   styleInstruction?: string;
   language?: Lang;
@@ -47,6 +51,7 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     mem && o.eventsBlock ? o.eventsBlock : "",
     mem && o.agendaBlock ? o.agendaBlock : "",
     mem && o.recentContext ? o.recentContext : "",
+    o.conversationBlock || "",
     mem ? MEMORY_PERSONA : "",
     mem ? TASKS_PERSONA : "",
     mem ? FORGET_PERSONA : "",
