@@ -352,6 +352,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const liveVoiceRef = useRef<LiveVoiceMessage | null>(null);
   // The assistant bubble the current Live voice reply streams its transcript into (set at send time).
   const liveVoiceAsstIdRef = useRef<string | null>(null);
+  // The human voice bubble the current Live message streams the user's own transcript into.
+  const liveVoiceUserIdRef = useRef<string | null>(null);
 
   // Memory (recall) — background RAG only; the user-facing Memories panel is not exposed.
   const [memoryOn] = useState(true);
@@ -1162,6 +1164,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: m.text + delta } : m)));
   }
 
+  // Stream the user's own transcript (the Live model's input transcription) into the human voice bubble
+  // as it arrives, so their words show up live rather than only once the reply finishes.
+  function appendVoiceUserText(delta: string) {
+    const id = liveVoiceUserIdRef.current;
+    if (!id) return;
+    applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: m.text + delta } : m)));
+  }
+
   async function startVoice() {
     // Guard against a second mic tap during the getUserMedia acquisition window: voiceState is still
     // "idle" (it flips to "recording" only after acquisition resolves), so the button stays enabled —
@@ -1200,6 +1210,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         styleInstruction: styleDirective(voiceStyle),
         history: toContents(messagesRef.current),
         onModelText: appendVoiceAsstText,
+        onUserText: appendVoiceUserText,
       });
       try {
         await driver.start(); // getUserMedia (throws a typed MicError) + background connect
@@ -1450,34 +1461,39 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const userMsg: ChatMessage = {
         id: uid(),
         role: "user",
-        text: "",
+        // Seed with anything the Live model already transcribed before the send tap; the rest streams
+        // in via onUserText (appendVoiceUserText) as it arrives.
+        text: driver.currentUserText,
         kind: "voice",
         ...(replyRef ? { replyTo: replyRef } : {}),
       };
       const asstId = uid();
       const turnConvId = conversationIdRef.current;
       const isCurrent = () => conversationIdRef.current === turnConvId;
-      // Both bubbles go in now; the assistant one streams its transcript live (no pendingAudio — on the
-      // Live path text and audio arrive together).
+      // Both bubbles go in now; each streams its own transcript live (no pendingAudio — on the Live
+      // path text and audio arrive together). No await before the refs are set, so no delta is lost.
       applyMessages((cur) => [
         ...cur,
         userMsg,
         { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice" },
       ]);
+      liveVoiceUserIdRef.current = userMsg.id;
       liveVoiceAsstIdRef.current = asstId;
 
       if (!connected) {
         // Live never came up (token mint / connect failed while recording) — fall back to TTS.
         void driver.abandon();
+        liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
         runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, turnConvId, isCurrent });
         return;
       }
       try {
         const reply = await driver.awaitReply();
+        liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
-        // Fill the user bubble with the input transcript; finalize the assistant bubble + attach the
-        // assembled audio for the replay ("Play") button.
+        // Finalize the user bubble with the full (trimmed) input transcript, and the assistant bubble
+        // with its reply + the assembled audio for the replay ("Play") button.
         applyMessages((cur) =>
           cur.map((m) =>
             m.id === userMsg.id
@@ -1499,6 +1515,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         );
       } catch {
         // Live failed mid-reply (socket error / timeout) — reuse the same bubbles and answer via TTS.
+        // Clearing the refs first stops any late Live delta from appending; runTtsVoiceTurn's
+        // transcription then owns the user bubble (it overwrites the partial Live text).
+        liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
         driver.stopPlayback();
         runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, turnConvId, isCurrent });
@@ -1510,6 +1529,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       reportAiError(fe, "chat.voice");
       applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: fe.text, error: true }]);
     } finally {
+      liveVoiceUserIdRef.current = null;
       liveVoiceAsstIdRef.current = null;
       micBusyRef.current = false;
       setVoiceState("idle");

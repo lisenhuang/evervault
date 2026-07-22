@@ -45,6 +45,9 @@ export type LiveVoiceOpts = {
   history: Content[];
   /** Streams the assistant's transcript as it arrives, for the streaming reply bubble. */
   onModelText: (delta: string) => void;
+  /** Streams the user's own transcript (the Live model's input transcription) as it arrives, for the
+   *  human voice bubble — so their words show up live, not only once the reply finishes. */
+  onUserText?: (delta: string) => void;
 };
 
 // Model audio streams back at 24 kHz mono PCM16 (same as the call).
@@ -237,7 +240,10 @@ export class LiveVoiceMessage {
         this.modelPcm.push(b64ToBytes(data)); // and keep it for the bubble's replay button
       }
     }
-    if (sc?.inputTranscription?.text) this.userText += sc.inputTranscription.text;
+    if (sc?.inputTranscription?.text) {
+      this.userText += sc.inputTranscription.text;
+      this.opts.onUserText?.(sc.inputTranscription.text);
+    }
     if (sc?.outputTranscription?.text) {
       this.modelText += sc.outputTranscription.text;
       this.opts.onModelText(sc.outputTranscription.text);
@@ -306,6 +312,12 @@ export class LiveVoiceMessage {
   /** Whether reply audio is still (about to be) sounding — drives the caller's play-state cleanup. */
   get playing(): boolean {
     return this.player.isPlaying;
+  }
+
+  /** The user's transcription so far — used to seed the human bubble with anything the Live model
+   *  transcribed before the send tap (subsequent deltas stream in via onUserText). */
+  get currentUserText(): string {
+    return this.userText;
   }
 
   /** Pause / resume the streamed reply audio (the bubble's Play button, while the clip is still streaming). */
