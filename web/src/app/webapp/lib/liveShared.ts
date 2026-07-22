@@ -100,6 +100,7 @@ export function buildLiveToolDeclarations(memoryEnabled: boolean) {
  */
 export async function dispatchLiveToolCalls(
   calls: FunctionCall[],
+  conversationId?: string,
 ): Promise<Array<{ id?: string; name?: string; response: { output: string } }>> {
   const results = await Promise.all(
     calls.map((c) => {
@@ -108,7 +109,7 @@ export async function dispatchLiveToolCalls(
       return isSuggestionTool(name)
         ? runSuggestionTool(args)
         : isTaskTool(name)
-          ? runTaskTool(name, args)
+          ? runTaskTool(name, args, undefined, conversationId)
           : isFileTool(name)
             ? runFileTool(name, args)
             : isForgetTool(name)

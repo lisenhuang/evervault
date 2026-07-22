@@ -7,6 +7,7 @@
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { describeRecurrence, firstOccurrence, isRecurring, nextOccurrence } from "./recurrence";
 import { createTask, getTasks, localDateStr, patchTask, type Task } from "./tasks";
+import { formatMemoryDate } from "./time";
 
 // Persona addendum for the task list. Prepend alongside MEMORY_PERSONA on both surfaces.
 export const TASKS_PERSONA =
@@ -25,7 +26,13 @@ export const TASKS_PERSONA =
   "omit the date if they didn't give one. When the user says something is done, " +
   "call complete_task with its id; use update_task to reschedule a task or to dismiss one they no longer " +
   "want (dismiss, don't complete, when it wasn't actually done). Refer to tasks by their title, never by " +
-  "id number, and never invent tasks that aren't on the list.\n\n" +
+  "id number, and never invent tasks that aren't on the list. " +
+  "If the user says they don't recognise a task you raised, do NOT apologise it away, claim you made it " +
+  "up, or tell them to ignore it — the task list shown to you is authoritative. Check it (use list_tasks " +
+  "to look it up by name), and if it really is on the list, say so plainly, tell them where it came from " +
+  "and when if you have that (you may be shown it was one you added from an earlier chat, one auto-noted " +
+  "from a past conversation, or one they added themselves), and offer to remove, reschedule, or keep it. " +
+  "Only treat a task as non-existent if it genuinely isn't on the list or returned by list_tasks.\n\n" +
   // Without this the whole reminder feature is invisible: the agenda is passive context, so the model
   // reads it and says nothing, and the user has to ask "what's on my list" to ever be reminded.
   "BRING UP WHAT'S DUE. A reminder is only useful if you actually raise it. When a conversation starts " +
@@ -51,14 +58,22 @@ export const TASKS_PERSONA =
 export const LIST_TASKS_DECLARATION: FunctionDeclaration = {
   name: "list_tasks",
   description:
-    "List the user's tasks. Use for 'what do I need to do', 'what's due this week', or to look up a " +
-    "task's id before completing or updating it. Defaults to open tasks.",
+    "List the user's tasks. Use for 'what do I need to do', 'what's due this week', to look up a " +
+    "task's id before completing or updating it, or to look up a specific task BY NAME (pass query) " +
+    "when the user asks about or disputes one. Results include each task's origin (where/when it came " +
+    "from). Defaults to open tasks.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       status: {
         type: Type.STRING,
         description: "Which tasks to return: 'open' (default), 'done', 'dismissed', or 'all'.",
+      },
+      query: {
+        type: Type.STRING,
+        description:
+          "Optional case-insensitive text matched against task titles — use it to find a specific task " +
+          "by name, e.g. to verify one the user says they don't recognise.",
       },
       dueOnOrBefore: {
         type: Type.STRING,
@@ -157,12 +172,26 @@ export const TASK_TOOL_DECLARATIONS: FunctionDeclaration[] = [
 const TASK_TOOL_NAMES = new Set(TASK_TOOL_DECLARATIONS.map((d) => d.name));
 export const isTaskTool = (name: string) => TASK_TOOL_NAMES.has(name);
 
+// Human, non-over-claiming provenance for a task, so the model can tell the user WHERE a task came from
+// when they dispute it — without asserting the user asked for it (the whole reason a task can feel
+// unfamiliar is that "ai"/"extracted" ones may not have had an explicit go-ahead). Factual only.
+const originOf = (t: Task): string => {
+  const when = formatMemoryDate(t.createdAt);
+  if (t.source === "user") return `you added this on ${when}`;
+  if (t.source === "ai") return `I added this during an earlier conversation on ${when}`;
+  if (t.source === "extracted") return `auto-noted from something in a past conversation on ${when}`;
+  return `on your list since ${when}`;
+};
+
 const brief = (t: Task) => ({
   id: t.id,
   title: t.title.length > 200 ? t.title.slice(0, 200) + "…" : t.title,
   due: t.dueDate,
   time: t.dueTime,
   status: t.status,
+  // Where/when this task originated — lets the model defend a disputed task ("I added this on…") instead
+  // of caving. Factual, and only surfaced through this tool (not recited in the passive agenda block).
+  origin: originOf(t),
   // Described in words rather than as the raw token, so the model never reads an internal format
   // aloud. Omitted entirely for one-off tasks to keep the payload small.
   ...(t.recurrence ? { repeats: describeRecurrence(t.recurrence) } : {}),
@@ -178,6 +207,7 @@ export async function runTaskTool(
   name: string,
   args: Record<string, unknown>,
   onChanged?: () => void,
+  conversationId?: string,
 ): Promise<string> {
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
   const id = Number(args.id);
@@ -185,9 +215,11 @@ export async function runTaskTool(
   if (name === "list_tasks") {
     const status = str(args.status) ?? "open";
     const cutoff = str(args.dueOnOrBefore);
+    const query = str(args.query)?.toLowerCase();
     const includeUndated = args.includeUndated !== false;
     let tasks = await getTasks(["open", "done", "dismissed", "all"].includes(status) ? status : "open");
     if (cutoff) tasks = tasks.filter((t) => (t.dueDate ? t.dueDate <= cutoff : includeUndated));
+    if (query) tasks = tasks.filter((t) => t.title.toLowerCase().includes(query));
     if (tasks.length === 0) return JSON.stringify({ tasks: [], note: "no matching tasks" });
     return JSON.stringify({ tasks: tasks.slice(0, 50).map(brief) });
   }
@@ -208,7 +240,7 @@ export async function runTaskTool(
     // roll forward from, and the task would sit undated forever instead of coming due.
     const dueDate = str(args.dueDate) ?? (repeat ? firstOccurrence(repeat) ?? undefined : undefined);
     const task = await createTask(
-      { title, details: str(args.details), dueDate, dueTime: str(args.dueTime), recurrence: repeat },
+      { title, details: str(args.details), dueDate, dueTime: str(args.dueTime), recurrence: repeat, conversationId },
       "ai",
     );
     if (!task) return JSON.stringify({ error: "could not add the task" });

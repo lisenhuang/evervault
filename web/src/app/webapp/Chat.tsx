@@ -347,6 +347,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const liveAsstIdRef = useRef<string | null>(null);
   const liveUserTextRef = useRef("");
   const liveAsstTextRef = useRef("");
+  // The conversation a live call belongs to, captured when it starts, so each turn (and any half-finished
+  // turn flushed at hang-up) is filed there even if "New chat" rotates conversationIdRef mid-call.
+  const callConvIdRef = useRef<string | null>(null);
   // The in-flight Gemini Live voice message (mode "live"): held between the mic press (start) and the
   // send tap (endCapture/awaitReply). Its reply audio streams via the driver's own player.
   const liveVoiceRef = useRef<LiveVoiceMessage | null>(null);
@@ -968,7 +971,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         isSuggestionTool(name)
           ? runSuggestion(args)
           : isTaskTool(name)
-            ? runTaskTool(name, args, () => void refreshTasks())
+            ? runTaskTool(name, args, () => void refreshTasks(), conversationIdRef.current)
             : isFileTool(name)
               ? runFileTool(name, args, (meta, note) => {
                   if (isCurrent()) offerFile(meta, note);
@@ -1208,6 +1211,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         agendaBlock: memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined,
         language: lang,
         styleInstruction: styleDirective(voiceStyle),
+        conversationId: conversationIdRef.current,
         history: toContents(messagesRef.current),
         onModelText: appendVoiceAsstText,
         onUserText: appendVoiceUserText,
@@ -1597,6 +1601,26 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // second more than the last value the user watched tick, and sub-1s blips stay suppressed.
     const durationSec = Math.floor((Date.now() - startedAt) / 1000);
     if (durationSec < 1) return;
+
+    // Flush a half-finished live turn. onTurnComplete is the ONLY other writer, and a hang-up (End, idle
+    // timeout, or a socket drop) routinely lands mid-turn — so without this the last thing said in a call
+    // (e.g. "I'm having Cantonese BBQ duck" right before End) is never recorded and is invisible to recall
+    // forever. recordTextTurns skips an empty side, so a user-only or reply-only tail still lands.
+    const pendingUser = liveUserTextRef.current.trim();
+    const pendingAsst = liveAsstTextRef.current.trim();
+    if (pendingUser || pendingAsst) {
+      void recordTextTurns(
+        [
+          { role: "user", text: pendingUser, modality: "live" },
+          { role: "assistant", text: pendingAsst, modality: "live" },
+        ],
+        undefined,
+        callConvIdRef.current ?? undefined,
+      );
+    }
+    liveUserTextRef.current = "";
+    liveAsstTextRef.current = "";
+
     applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: "", kind: "call", durationSec }]);
     // Hanging up is as much a "conversation end" as hiding the tab or starting a new chat, both of
     // which already distil. Without this the only backstop is the 20s debounce armed by the last
@@ -1620,6 +1644,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     liveAsstIdRef.current = null;
     liveUserTextRef.current = "";
     liveAsstTextRef.current = "";
+    callConvIdRef.current = conversationIdRef.current;
     // A call builds its agenda from the ref directly and never goes through the send path, so without
     // this a voice-only user's weekend chore would still read as overdue-since-March in every call.
     if (memoryOn) await catchUpIfNewDay();
@@ -1646,6 +1671,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       agendaBlock,
       styleInstruction: styleDirective(liveStyle),
       idleTimeoutSec: liveIdleSec,
+      conversationId: callConvIdRef.current ?? conversationIdRef.current,
     });
     session.setHeadphones(callHeadphones);
     liveRef.current = session;
@@ -1667,10 +1693,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onModelText: (d) => appendLiveText("assistant", d),
         onTurnComplete: () => {
           // Record the just-finished spoken turn as transcripts (live audio capture is a fast-follow).
-          void recordTextTurns([
-            { role: "user", text: liveUserTextRef.current, modality: "live" },
-            { role: "assistant", text: liveAsstTextRef.current, modality: "live" },
-          ]);
+          // File it under the call's own conversation so a late-resolving turn can't leak into a new chat.
+          void recordTextTurns(
+            [
+              { role: "user", text: liveUserTextRef.current, modality: "live" },
+              { role: "assistant", text: liveAsstTextRef.current, modality: "live" },
+            ],
+            undefined,
+            callConvIdRef.current ?? undefined,
+          );
           liveUserIdRef.current = null;
           liveAsstIdRef.current = null;
           liveUserTextRef.current = "";

@@ -124,6 +124,8 @@ export class LiveSession {
   private readonly styleInstruction?: string;
   /** Admin-configured idle auto-hang-up window, in seconds. 0 = never hang up on silence. */
   private readonly idleTimeoutSec: number;
+  /** The conversation this call belongs to, so a task the model adds mid-call is attributed to it. */
+  private readonly conversationId?: string;
 
   // Named options rather than a positional list: every memory feature adds another optional context
   // block here, and appending to a nine-argument positional constructor is how two of them silently
@@ -141,6 +143,7 @@ export class LiveSession {
     agendaBlock?: string;
     styleInstruction?: string;
     idleTimeoutSec?: number;
+    conversationId?: string;
   }) {
     this.model = opts.model;
     this.voice = opts.voice;
@@ -154,6 +157,7 @@ export class LiveSession {
     this.agendaBlock = opts.agendaBlock;
     this.styleInstruction = opts.styleInstruction;
     this.idleTimeoutSec = opts.idleTimeoutSec ?? DEFAULT_IDLE_TIMEOUT_SEC;
+    this.conversationId = opts.conversationId;
   }
 
   /** The idle window in ms, or 0 when the admin turned the auto-hang-up off. */
@@ -506,7 +510,7 @@ export class LiveSession {
     if (m.toolCall?.functionCalls?.length) {
       // Run the requested tool(s) and echo the responses (with matching call ids) back over the socket.
       this.session?.sendToolResponse({
-        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls),
+        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls, this.conversationId),
       });
       return;
     }

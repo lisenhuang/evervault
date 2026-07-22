@@ -41,6 +41,8 @@ export type LiveVoiceOpts = {
   recentContext?: string;
   styleInstruction?: string;
   language?: Lang;
+  /** The conversation this voice message belongs to, so a task the model adds is attributed to it. */
+  conversationId?: string;
   /** The full prior transcript as Gemini Content[] (toContents of everything before this message). */
   history: Content[];
   /** Streams the assistant's transcript as it arrives, for the streaming reply bubble. */
@@ -231,7 +233,7 @@ export class LiveVoiceMessage {
   private async onMessage(m: LiveServerMessage) {
     if (m.toolCall?.functionCalls?.length) {
       this.session?.sendToolResponse({
-        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls),
+        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls, this.opts.conversationId),
       });
       return;
     }

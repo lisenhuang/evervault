@@ -11,12 +11,18 @@ import { type MemoryHit, searchMemories } from "../recordApi";
 type Turn = { role: "user" | "assistant"; text: string };
 
 const SUMMARY_BONUS = 0.05; // summaries are higher-signal than raw turns → nudge them up
-const RECENCY_BONUS_MAX = 0.05; // most recent memories get a small lift
+const RECENCY_BONUS_MAX = 0.05; // most recent memories get a small lift (long-tail decay)
 const RECENCY_HALFLIFE_DAYS = 30;
+// Short-horizon boost: a memory from the last day or two is exactly the "you told me an hour ago" case,
+// and the 0.05 long-tail lift above is far too small to pull it past an older, more topically-similar
+// note. This much stronger, fast-fading credit lets a fresh detail win. It only reorders — the raw
+// ABS_CUTOFF gate below still keeps genuinely-irrelevant recent chatter out.
+const RECENT_WINDOW_HOURS = 48;
+const RECENT_BONUS_MAX = 0.18;
 const ABS_CUTOFF = 0.6; // never inject a hit whose RAW cosine distance is worse than this (≈0.4 similarity)
 const REL_CUTOFF = 0.2; // …or much worse than the best hit
 const JACCARD_DUP = 0.6; // skip a hit too similar to one already kept
-const MAX_HITS = 5;
+const MAX_HITS = 6;
 // Keyword-only hits (embeddings off) carry a hybrid `score` instead of a distance. Gate them on being
 // at least ~top-5 in one search lane (RRF weight 1/(60+5)); below that is noise.
 const KEYWORD_MIN_SCORE = 1 / (60 + 5);
@@ -68,9 +74,13 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 function score(h: MemoryHit, nowMs: number): number {
   const base = baseDistance(h);
   const summary = h.kind === "summary" ? SUMMARY_BONUS : 0;
-  const ageDays = (nowMs - new Date(h.createdAt).getTime()) / 86_400_000;
-  const recency = RECENCY_BONUS_MAX * Math.pow(0.5, Math.max(0, ageDays) / RECENCY_HALFLIFE_DAYS);
-  return base - summary - recency;
+  const ageMs = Math.max(0, nowMs - new Date(h.createdAt).getTime());
+  const recency = RECENCY_BONUS_MAX * Math.pow(0.5, ageMs / 86_400_000 / RECENCY_HALFLIFE_DAYS);
+  // A large extra lift for the last RECENT_WINDOW_HOURS, fading linearly to zero at the window edge, so
+  // "what did I just tell you" beats an older but more on-topic match.
+  const ageHours = ageMs / 3_600_000;
+  const recent = ageHours < RECENT_WINDOW_HOURS ? RECENT_BONUS_MAX * (1 - ageHours / RECENT_WINDOW_HOURS) : 0;
+  return base - summary - recency - recent;
 }
 
 /**
@@ -103,7 +113,11 @@ export async function retrieveContext(opts: {
     if (s > best + REL_CUTOFF) break; // ranked ascending by adjusted score → the rest are worse
     if (!passesAbsGate(h)) continue; // weak match (raw distance/score below the bar) → skip
     const hw = words(h.content);
-    if (keptWords.some((kw) => jaccard(hw, kw) > JACCARD_DUP)) continue; // near-duplicate of a kept hit
+    // Near-duplicate suppression — but never let a kept summary evict a raw turn. A 2-4 sentence summary
+    // condenses away the specifics (a dish, a name, a number) that the raw turn still carries, so a
+    // "summary + its own turn" pair must keep BOTH: drop the turn and the detail is gone from recall.
+    const dupIdx = keptWords.findIndex((kw) => jaccard(hw, kw) > JACCARD_DUP);
+    if (dupIdx !== -1 && !(h.kind !== "summary" && kept[dupIdx].kind === "summary")) continue;
     if (profileWords && jaccard(hw, profileWords) > JACCARD_DUP) continue; // already in the profile block
     kept.push(h);
     keptWords.push(hw);
