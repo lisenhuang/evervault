@@ -12,6 +12,7 @@
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { embedDocument } from "./embed";
 import { getChatFile, searchChatFiles, type StoredFileMeta } from "./filesApi";
+import { formatLocalWhen } from "./time";
 
 // Persona addendum for stored files. Without this the model falls back on its trained belief that it
 // cannot retrieve anything the user sent earlier, and simply never calls find_files. Prepend it
@@ -35,7 +36,9 @@ export const FILES_PERSONA =
   "So say you've FOUND the file and put it there for them to confirm — never that you've already " +
   "sent it. Don't call send_file repeatedly for the same file; the card stays until they act on it. " +
   "When several files match, don't guess: name them briefly (file name and roughly when they were " +
-  "sent) and ask which one they mean. If find_files comes back empty, say plainly that you don't have " +
+  "sent) and ask which one they mean. The `when` you get for each file is already in the user's local " +
+  "time — state it as given and don't recompute the date from any other timestamp. " +
+  "If find_files comes back empty, say plainly that you don't have " +
   "it rather than inventing a file, describing one you never saw, or promising to look again later — " +
   "only files the user sent after this ability was added are stored, so genuinely old ones aren't " +
   "there. Refer to files by their name, never by id number, and don't mention tools, storage, search, " +
@@ -111,7 +114,7 @@ const brief = (m: StoredFileMeta) => ({
   name: m.name,
   kind: m.kind,
   size: m.sizeBytes,
-  when: m.createdAt,
+  when: formatLocalWhen(m.createdAt),
   summary: m.description.length > MaxSummaryChars ? m.description.slice(0, MaxSummaryChars) + "…" : m.description,
 });
 

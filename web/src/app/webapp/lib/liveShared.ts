@@ -9,7 +9,7 @@ import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
 import { FORGET_PERSONA, FORGET_TOOL_DECLARATIONS, isForgetTool, runForgetTool } from "./forgetTool";
-import { FILE_TOOL_DECLARATIONS, isFileTool, runFileTool } from "./fileTools";
+import { FILES_PERSONA, FILE_TOOL_DECLARATIONS, isFileTool, runFileTool } from "./fileTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
@@ -53,6 +53,7 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     mem && o.recentContext ? o.recentContext : "",
     o.conversationBlock || "",
     mem ? MEMORY_PERSONA : "",
+    mem ? FILES_PERSONA : "",
     mem ? TASKS_PERSONA : "",
     mem ? FORGET_PERSONA : "",
     SUGGESTION_PERSONA,

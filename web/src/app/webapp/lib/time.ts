@@ -2,6 +2,8 @@
 // can answer "what time is it" and resolve relative dates ("tomorrow", "last week"). Recalled memories
 // are dated too, so the model also knows *when* past things were said.
 
+import { localDateStr } from "./recurrence";
+
 /** Local ISO 8601 timestamp *with* numeric offset, e.g. "2026-07-08T06:50:00+12:00". Unlike
  * `Date#toISOString()` (always UTC "Z"), this keeps the user's wall-clock time and offset so the model
  * can compute correct date ranges ("yesterday 00:00") for memory recall without guessing the offset. */
@@ -32,6 +34,24 @@ export function currentTimeContext(): string {
 /** Short date label for a recalled memory, e.g. "Jun 15, 2026". */
 export function formatMemoryDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+/** A stored item's timestamp as a human label in the user's LOCAL time, relative for recent days so the
+ * model narrates recency correctly: "today at 11:30 AM", "yesterday at 8:10 PM", else
+ * "Jul 15, 2026 at 8:10 PM". The raw ISO is UTC (DateTimeOffset.UtcNow, "…+00:00"); handing that
+ * straight to the model made it read the UTC date and say "yesterday" for a file sent today — for users
+ * east of UTC (e.g. NZ +12/13) a morning-local instant rolls back a calendar day in UTC. Day
+ * classification is pure wall-calendar (localDateStr), never now−24h, so it stays correct across DST. */
+export function formatLocalWhen(iso: string): string {
+  const d = new Date(iso); // respects the browser's local zone
+  const now = new Date();
+  const day = localDateStr(d);
+  const nowDay = localDateStr(now);
+  const yestDay = localDateStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (day === nowDay) return `today at ${time}`;
+  if (day === yestDay) return `yesterday at ${time}`;
+  return `${formatMemoryDate(iso)} at ${time}`;
 }
 
 /**
