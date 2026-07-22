@@ -114,6 +114,10 @@ export class LiveSession {
   private readonly stateBlock?: string;
   private readonly eventsBlock?: string;
   private readonly recentContext?: string;
+  /** The current on-screen conversation as a transcript, briefing a fresh call so a stop→restart (same
+   *  page + chat) continues where it left off. It's the visible thread, not stored memory, so it's sent
+   *  regardless of the memory toggle — matching the voice-message path. Absent/empty = a fresh call. */
+  private readonly conversationBlock?: string;
   private readonly language: Lang;
   private readonly agendaBlock?: string;
   /** The user's chosen response-style directive for live calls ("" when they left it on default). */
@@ -132,6 +136,7 @@ export class LiveSession {
     stateBlock?: string;
     eventsBlock?: string;
     recentContext?: string;
+    conversationBlock?: string;
     language?: Lang;
     agendaBlock?: string;
     styleInstruction?: string;
@@ -144,6 +149,7 @@ export class LiveSession {
     this.stateBlock = opts.stateBlock;
     this.eventsBlock = opts.eventsBlock;
     this.recentContext = opts.recentContext;
+    this.conversationBlock = opts.conversationBlock;
     this.language = opts.language ?? "en";
     this.agendaBlock = opts.agendaBlock;
     this.styleInstruction = opts.styleInstruction;
@@ -294,6 +300,9 @@ export class LiveSession {
           eventsBlock: this.eventsBlock,
           agendaBlock: this.agendaBlock,
           recentContext: this.recentContext,
+          // Brief the call with the on-screen conversation so a stop→restart continues the thread. Per-call
+          // only: it resets on refresh/new-chat because the source `messages` is in-memory and cleared then.
+          conversationBlock: this.conversationBlock,
           // The user's chosen response style for calls (empty on default), steered into the selected UI language.
           styleInstruction: this.styleInstruction,
           language: this.language,

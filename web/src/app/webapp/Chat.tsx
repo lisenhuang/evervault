@@ -17,7 +17,7 @@ import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } fro
 import { fetchVoiceReply, startVoiceReply, type VoiceReplyAudio } from "./lib/voiceReply";
 import type { PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
-import { LiveVoiceMessage } from "./lib/liveVoiceMessage";
+import { LiveVoiceMessage, renderConversation } from "./lib/liveVoiceMessage";
 import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
@@ -1628,6 +1628,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const eventsBlock = memoryOn ? renderEventsBlock(eventsRef.current) ?? undefined : undefined;
     const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
     const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
+    // Brief the fresh call with the on-screen conversation so stopping and restarting (same page + same
+    // chat) picks the thread back up — including any earlier typed messages. It's the current visible
+    // thread, not stored memory, so it's independent of the memory toggle; and it self-resets on a page
+    // refresh or a new chat, since `messages` is in-memory React state that both of those paths clear.
+    const conversationBlock = renderConversation(toContents(messagesRef.current)) || undefined;
     const session = new LiveSession({
       model: liveModel,
       voice,
@@ -1636,6 +1641,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       stateBlock,
       eventsBlock,
       recentContext,
+      conversationBlock,
       language: lang,
       agendaBlock,
       styleInstruction: styleDirective(liveStyle),

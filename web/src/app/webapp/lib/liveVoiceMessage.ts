@@ -386,7 +386,7 @@ const CONVERSATION_MAX_CHARS = 12000;
  * realtime call gets this for free from its persistent server-side history, but a voice message opens a
  * fresh session each time. Image/audio-only parts contribute no text and are skipped.
  */
-function renderConversation(history: Content[]): string {
+export function renderConversation(history: Content[]): string {
   const lines: string[] = [];
   for (const c of history) {
     const text = (c.parts ?? [])
