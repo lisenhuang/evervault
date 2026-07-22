@@ -56,6 +56,10 @@ Guidance for Claude Code when working in this repository.
   action. Runtime configuration (e.g. storage credentials) goes through the app UI into the
   DB — not `.env`. Secrets are encrypted in the DB (Data Protection), not stored on disk.
 
+- **No work on the `app/` codebase for now.** The Expo / React Native app under `app/`
+  is currently out of scope — do not make changes there unless a human explicitly asks.
+  Focus on `backend/` and `web/`.
+
 ## Project structure
 
 Three independent codebases live at the repo root (no shared monorepo tooling).
