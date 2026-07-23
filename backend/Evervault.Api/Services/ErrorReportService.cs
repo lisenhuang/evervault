@@ -28,6 +28,11 @@ public class ErrorReportService : IErrorReportService
     public async Task<string> CaptureAsync(
         string source, string area, int? endUserId, int? httpStatus,
         string message, string? detail, string? userAgent = null, string? code = null)
+        => (await TryCaptureAsync(source, area, endUserId, httpStatus, message, detail, userAgent, code)).Code;
+
+    public async Task<CaptureResult> TryCaptureAsync(
+        string source, string area, int? endUserId, int? httpStatus,
+        string message, string? detail, string? userAgent = null, string? code = null)
     {
         var normalized = (code ?? "").Trim().ToUpperInvariant();
         if (!CodeShape.IsMatch(normalized)) normalized = NewCode();
@@ -41,7 +46,7 @@ public class ErrorReportService : IErrorReportService
                 normalized, source, area, httpStatus, endUserId, LogSafe(message, 200), LogSafe(detail, 300));
 
             // Idempotent for the client's localStorage queue: a retried code is already stored.
-            if (await _db.ErrorReports.AnyAsync(r => r.Code == normalized)) return normalized;
+            if (await _db.ErrorReports.AnyAsync(r => r.Code == normalized)) return new CaptureResult(normalized, true);
 
             _db.ErrorReports.Add(new ErrorReport
             {
@@ -55,10 +60,22 @@ public class ErrorReportService : IErrorReportService
                 UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : Clip(userAgent, 400),
             });
             await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            // Never let the report break the failing response path; the warning above still has the code.
+            // Report the failure to the caller so a retryable path (the client queue) can keep retrying
+            // instead of treating a lost report as stored.
+            _log.LogError(ex, "Failed to persist error report {Code}", normalized);
+            return new CaptureResult(normalized, false);
+        }
 
-            // Opportunistic retention sweep (CreatedAt is indexed) — no background job needed. Run it
-            // only occasionally so a burst of failures during an outage doesn't fire a DELETE per
-            // request; ~2% amortizes to roughly one sweep per 50 reports.
+        // Opportunistic retention sweep (CreatedAt is indexed) — no background job needed. Run it only
+        // occasionally so a burst of failures during an outage doesn't fire a DELETE per request; ~2%
+        // amortizes to roughly one sweep per 50 reports. Best-effort AND separate from the insert: the
+        // report is already stored, so a sweep failure must not mark the capture as unpersisted.
+        try
+        {
             if (Random.Shared.Next(50) == 0)
             {
                 var cutoff = DateTimeOffset.UtcNow - Retention;
@@ -67,10 +84,10 @@ public class ErrorReportService : IErrorReportService
         }
         catch (Exception ex)
         {
-            // Never let the report break the failing response path; the warning above still has the code.
-            _log.LogError(ex, "Failed to persist error report {Code}", normalized);
+            _log.LogError(ex, "Error report retention sweep failed");
         }
-        return normalized;
+
+        return new CaptureResult(normalized, true);
     }
 
     private static string Clip(string? s, int max)

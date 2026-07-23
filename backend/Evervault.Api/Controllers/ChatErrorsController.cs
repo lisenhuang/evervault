@@ -47,9 +47,16 @@ public class ChatErrorsController : ControllerBase
         if (recent >= MaxReportsPerUserPerHour)
             return StatusCode(429, new { error = "Too many error reports. Please try again later." });
 
-        var code = await _errors.CaptureAsync(
+        var result = await _errors.TryCaptureAsync(
             "client", req.Area ?? "", uid, req.HttpStatus,
             req.Message ?? "", req.Detail, Request.Headers.UserAgent.ToString(), req.Code);
-        return Ok(new { code });
+
+        // The write was swallowed (transient DB failure) — don't ack it as stored, or the client drops
+        // it from its retry queue and the shown code is lost. A 5xx keeps the client retrying (it treats
+        // 5xx as retryable) until the row actually lands.
+        if (!result.Persisted)
+            return StatusCode(503, new { error = "Could not store the report. Please try again.", code = result.Code });
+
+        return Ok(new { code = result.Code });
     }
 }
