@@ -54,8 +54,20 @@ export type LiveVoiceOpts = {
 
 // Model audio streams back at 24 kHz mono PCM16 (same as the call).
 const MODEL_SAMPLE_RATE = 24000;
-// Backstop: if the model never signals turnComplete, stop waiting and let the caller fall back to TTS.
-const REPLY_TIMEOUT_MS = 30_000;
+// Stall watchdog: the reply is only given up on after this much SILENCE from the server — every
+// incoming message re-arms it, so a healthy reply can stream for any length without timing out.
+// (The old flat 30s deadline killed every reply whose turnComplete lagged past it — and turnComplete
+// is playback-paced: the server can sit out the whole "assumed playback" duration after the last
+// audio chunk before sending it, so long replies were cut mid-play and regenerated via TTS.)
+const REPLY_STALL_MS = 15_000;
+// Once generationComplete arrives everything is generated and sent; only trailing transcription
+// deltas can still be in flight. Shrink the watchdog to this tail so the turn finalizes promptly
+// instead of holding the socket (and a pooled key/token slot) through the playback-paced wait for
+// turnComplete — which can be the entire remaining duration of the spoken reply.
+const GENERATION_TAIL_MS = 2_000;
+// A tool dispatch (our backend round-trips) must be bounded: while it runs the server is silently
+// waiting for the response, so an unbounded hang would leave the turn stuck streaming forever.
+const TOOL_DISPATCH_TIMEOUT_MS = 20_000;
 // A slow connect shouldn't buffer unbounded audio; ~30 s of 16 kHz chunks is far more than any message.
 const MAX_PENDING_CHUNKS = 400;
 
@@ -84,9 +96,21 @@ export class LiveVoiceMessage {
   private modelText = "";
   private modelPcm: Uint8Array[] = [];
   private turnDone = false;
-  /** The model signalled turnComplete — set even if awaitReply hasn't started yet, so a reply that
-   *  completes before it's awaited resolves immediately instead of hanging. */
+  /** The reply finished (turnComplete / generationComplete / graceful finalize) — set even if
+   *  awaitReply hasn't started yet, so a reply that completes before it's awaited resolves
+   *  immediately instead of hanging, and a socket close after it is ignored as normal. */
   private replyComplete = false;
+  /** Tool calls we're currently executing (the server is legitimately silent while it waits for the
+   *  responses, and a generationComplete seen mid-dispatch can't mean the whole turn is done). */
+  private toolCallsPending = 0;
+  /** generationComplete seen with no tool call in flight — the reply is fully generated; the watchdog
+   *  drops to GENERATION_TAIL_MS so the turn ends as soon as the trailing deltas have drained. */
+  private generationDone = false;
+  /** A tool response has been sent and the model hasn't produced any content since. While set, a
+   *  generationComplete is stale (it belonged to the PRE-tool segment — the real one follows the
+   *  post-tool content), and a stall must reject rather than finalize: the only text on hand is the
+   *  pre-tool filler ("let me check that…"), which must not be presented as the whole answer. */
+  private awaitingPostToolContent = false;
 
   private settled = false;
   private resolveReply?: () => void;
@@ -206,15 +230,74 @@ export class LiveVoiceMessage {
     return data.token;
   }
 
-  /** The socket errored/closed or connect failed. Flip the flags and reject a reply that's being awaited. */
+  /** Whether enough of the reply arrived to stand as the answer: non-empty TEXT, specifically.
+   *  Audio-only content must not count — the first audio chunks precede the first transcription
+   *  delta, and finalizing in that window would hand the caller an empty-text bubble that
+   *  MessageList renders as typing dots forever (with no fallback ever coming — worse than the
+   *  cut-and-regenerate this fix removes). */
+  private hasUsableReply(): boolean {
+    return this.modelText.trim().length > 0;
+  }
+
+  /** The reply is done — resolve a pending awaitReply (or mark it done for one that hasn't started),
+   *  then drop the socket: the reply audio is already scheduled in the player and plays on without it. */
+  private completeReply() {
+    this.replyComplete = true;
+    if (!this.settled) {
+      this.settled = true;
+      if (this.replyTimer) clearTimeout(this.replyTimer);
+      this.resolveReply?.();
+    }
+    this.closeSession();
+  }
+
+  /** (Re)start the stall clock. Only runs while a reply is actively awaited; every server message
+   *  re-arms it, so it fires solely after REPLY_STALL_MS of genuine silence without the turn ending. */
+  private armReplyWatchdog() {
+    if (this.settled || !this.rejectReply) return;
+    if (this.replyTimer) clearTimeout(this.replyTimer);
+    this.replyTimer = setTimeout(() => this.onReplyStalled(), this.generationDone ? GENERATION_TAIL_MS : REPLY_STALL_MS);
+  }
+
+  /** The stream went quiet without the turn ending. With reply text already streamed, keep it — the
+   *  common cause is the server sitting out its playback-paced wait before turnComplete, and cutting
+   *  audio the user is hearing to regenerate a *different* answer via TTS is exactly the reported bug.
+   *  With nothing usable, reject so the caller falls back to TTS and the user still gets an answer. */
+  private onReplyStalled() {
+    if (this.settled) return;
+    // A tool dispatch is still running — the silence is OUR backend's latency, not a server stall,
+    // and finalizing now would drop the tool response and kill the post-tool answer. Wait another
+    // round; the dispatch itself is bounded (TOOL_DISPATCH_TIMEOUT_MS), so this cannot loop forever.
+    if (this.toolCallsPending > 0) {
+      this.armReplyWatchdog();
+      return;
+    }
+    // awaitingPostToolContent: the model went silent right after our tool response, so the only text
+    // on hand is the pre-tool filler — regenerating via TTS beats presenting that as the answer.
+    if (this.hasUsableReply() && !this.awaitingPostToolContent) {
+      this.completeReply();
+    } else {
+      this.settled = true;
+      this.rejectReply?.(new Error("live-timeout"));
+    }
+  }
+
+  /** The socket errored/closed or connect failed. A close after the reply completed is normal. One
+   *  mid-reply keeps the streamed reply ONLY when generation had already finished (generationDone —
+   *  nothing was lost with the socket); a death mid-generation means a truncated answer, and the TTS
+   *  fallback's full regeneration serves the user better than half a sentence presented as complete. */
   private onSocketDown() {
-    if (this.replyComplete) return; // a close AFTER the reply completed is normal — ignore it
+    if (this.replyComplete) return;
     this.connected = false;
     this.failed = true;
     if (!this.settled && this.rejectReply) {
-      this.settled = true;
-      if (this.replyTimer) clearTimeout(this.replyTimer);
-      this.rejectReply(new Error("live-unavailable"));
+      if (this.generationDone && this.hasUsableReply()) {
+        this.completeReply();
+      } else {
+        this.settled = true;
+        if (this.replyTimer) clearTimeout(this.replyTimer);
+        this.rejectReply(new Error("live-unavailable"));
+      }
     }
   }
 
@@ -231,16 +314,54 @@ export class LiveVoiceMessage {
   }
 
   private async onMessage(m: LiveServerMessage) {
+    // Anything from the server proves the reply is alive — give the stall watchdog fresh rope.
+    this.armReplyWatchdog();
     if (m.toolCall?.functionCalls?.length) {
-      this.session?.sendToolResponse({
-        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls, this.opts.conversationId),
-      });
+      const calls = m.toolCall.functionCalls;
+      // The turn continues past this call, so a generationComplete latched for the PRE-tool segment
+      // is stale: left set, the 2s tail would fire during the post-tool first-token wait and cut the
+      // actual answer down to the pre-tool filler ("let me check that…"). Cleared here, again after
+      // the dispatch, and gated by awaitingPostToolContent below — between them a stale pre-tool
+      // generationComplete can't shrink the post-tool window no matter where its frame landed.
+      this.generationDone = false;
+      this.toolCallsPending += 1;
+      const errorResponses = () =>
+        calls.map((c) => ({ id: c.id, name: c.name, response: { output: "The tool failed to run — answer without it." } }));
+      let responses: Awaited<ReturnType<typeof dispatchLiveToolCalls>>;
+      let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // Bounded and error-proof: with no response the model would wait for the tool result forever,
+        // the turn would never complete, and the stall watchdog would kill a healthy reply.
+        const dispatched = dispatchLiveToolCalls(calls, this.opts.conversationId);
+        dispatched.catch(() => {}); // a dispatch that loses the race must not become an unhandled rejection
+        responses = await Promise.race([
+          dispatched,
+          new Promise<never>((_, rej) => {
+            dispatchTimer = setTimeout(() => rej(new Error("tool-timeout")), TOOL_DISPATCH_TIMEOUT_MS);
+          }),
+        ]);
+      } catch {
+        responses = errorResponses();
+      }
+      if (dispatchTimer) clearTimeout(dispatchTimer);
+      try {
+        this.session?.sendToolResponse({ functionResponses: responses });
+      } catch {
+        /* socket may already be down — onSocketDown handles the turn */
+      } finally {
+        this.toolCallsPending -= 1;
+        this.generationDone = false; // a stale pre-tool generationComplete processed mid-dispatch must not shrink the post-tool window
+        this.awaitingPostToolContent = true; // …and one processed after this finally is stale too, until new content proves otherwise
+        this.armReplyWatchdog(); // the dispatch time was ours, not the server's — restart the clock
+      }
       return;
     }
     const sc = m.serverContent;
     for (const p of sc?.modelTurn?.parts ?? []) {
       const data = p.inlineData?.data;
       if (data) {
+        this.generationDone = false; // new audio = generation is demonstrably NOT done — back to the full stall window
+        this.awaitingPostToolContent = false; // the post-tool generation is underway
         this.player.enqueue(data); // stream the spoken reply as it arrives
         this.modelPcm.push(b64ToBytes(data)); // and keep it for the bubble's replay button
       }
@@ -250,19 +371,22 @@ export class LiveVoiceMessage {
       this.opts.onUserText?.(sc.inputTranscription.text);
     }
     if (sc?.outputTranscription?.text) {
+      this.awaitingPostToolContent = false; // model content in any form counts
       this.modelText += sc.outputTranscription.text;
       this.opts.onModelText(sc.outputTranscription.text);
     }
+    // generationComplete = the model finished generating ALL content — only trailing transcription
+    // deltas can still be on the wire, so drop the watchdog to the short tail (see armReplyWatchdog)
+    // rather than waiting out turnComplete, which the server paces to the reply's "assumed playback"
+    // and can lag by the whole remaining duration of the clip. Not resolved immediately: an in-flight
+    // delta finalized away would truncate the bubble text. Guarded on in-flight tool calls — a
+    // mid-dispatch turn genuinely isn't done (the model continues after our tool response).
+    if (sc?.generationComplete && this.toolCallsPending === 0 && !this.awaitingPostToolContent) {
+      this.generationDone = true;
+      this.armReplyWatchdog();
+    }
     if (sc?.turnComplete) {
-      // Mark complete even if awaitReply hasn't started yet (its entry checks replyComplete), then close
-      // the socket — the reply audio is already scheduled in the player and plays on without it.
-      this.replyComplete = true;
-      if (!this.settled) {
-        this.settled = true;
-        if (this.replyTimer) clearTimeout(this.replyTimer);
-        this.resolveReply?.();
-      }
-      this.closeSession();
+      this.completeReply();
     }
   }
 
@@ -293,21 +417,26 @@ export class LiveVoiceMessage {
     setAudioSessionType("playback"); // the mic is closed now — make the reply audible through the Silent switch
     void this.player.resume(); // re-confirm the playback context within the send-tap gesture (iOS)
     this.session.sendRealtimeInput({ activityEnd: {} });
-    // Wait for turnComplete — unless it already arrived (a reply that completed before we started awaiting),
-    // in which case resolve immediately rather than hang.
+    // Wait for the turn to end — unless it already did (a reply that completed before we started
+    // awaiting), in which case resolve immediately rather than hang. The watchdog armed here is a
+    // STALL detector, not a deadline: every server message re-arms it (see onMessage), so a healthy
+    // reply can stream for any length; only a genuinely quiet stream settles early (kept if content
+    // arrived, rejected to the TTS fallback if nothing did — see onReplyStalled).
     if (!this.replyComplete) {
       await new Promise<void>((resolve, reject) => {
         this.resolveReply = resolve;
         this.rejectReply = reject;
-        this.replyTimer = setTimeout(() => {
-          if (!this.settled) {
-            this.settled = true;
-            reject(new Error("live-timeout"));
-          }
-        }, REPLY_TIMEOUT_MS);
+        this.armReplyWatchdog();
       });
     }
     this.turnDone = true;
+    // If the scheduled audio already drained before turnDone was set, its onended-driven onIdle was
+    // swallowed by the turnDone guard and will never refire — run the idle path now so the player is
+    // released. (The caller's registerLivePlayback also handles !playing; close() is idempotent.)
+    if (!this.player.isPlaying) {
+      this.onPlaybackIdle?.();
+      void this.player.close();
+    }
     const audio = this.modelPcm.length
       ? { base64: bytesToBase64(concatBytes(this.modelPcm)), sampleRate: MODEL_SAMPLE_RATE }
       : null;

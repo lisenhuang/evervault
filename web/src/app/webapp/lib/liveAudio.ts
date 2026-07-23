@@ -238,7 +238,9 @@ export class AudioPlayer {
 
   async close() {
     this.clear();
-    await this.ctx.close();
+    // Idempotent: closing an already-closed AudioContext rejects, and callers legitimately overlap
+    // (a drained reply's idle cleanup and the caller's stopPlayback can both close the same player).
+    if (this.ctx.state !== "closed") await this.ctx.close();
   }
 }
 
