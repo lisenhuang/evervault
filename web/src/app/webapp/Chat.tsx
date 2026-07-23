@@ -1175,7 +1175,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: m.text + delta } : m)));
   }
 
-  async function startVoice() {
+  async function startVoice(files?: PreparedFile[]) {
     // Guard against a second mic tap during the getUserMedia acquisition window: voiceState is still
     // "idle" (it flips to "recording" only after acquisition resolves), so the button stays enabled —
     // a double-tap would otherwise spawn a second recorder/Live driver and orphan the first.
@@ -1200,7 +1200,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // comes back as audio + text in a single streaming call and remembers the whole mixed text+voice
     // conversation. The driver opens the mic now and connects in the background; on ANY Live failure the
     // recorded clip is still captured locally and stopVoice falls back to the classic TTS pipeline.
-    if (voiceMode === "live") {
+    //
+    // Skipped when the message carries attachments: a per-message Live session only receives prior
+    // context as a TEXT transcript in its system instruction (see renderConversation), so there is
+    // nowhere to put an image or a document — the model would answer a clip about a picture it never
+    // saw. The classic path sends the files as real inline parts alongside the clip, so it's used
+    // whenever anything is attached. The reply is still spoken either way.
+    if (voiceMode === "live" && !files?.length) {
       const driver = new LiveVoiceMessage({
         model: voiceLiveModel,
         voice,
@@ -1243,16 +1249,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }
 
-  async function stopVoice() {
+  /** Ends the recording and sends it (with `files`, if any, as attachments on the same message).
+   *  Resolves true if the clip was actually sent — false if it was dropped or failed, so the composer
+   *  can keep the attachments staged instead of losing them along with the discarded recording. */
+  async function stopVoice(files?: PreparedFile[]): Promise<boolean> {
     // A Gemini Live voice message is in flight — end the turn on that session.
     const driver = liveVoiceRef.current;
     if (driver) {
       liveVoiceRef.current = null;
-      await stopVoiceLive(driver);
-      return;
+      return await stopVoiceLive(driver, files);
     }
     const rec = recorderRef.current;
-    if (!rec) return;
+    if (!rec) return false;
     recorderRef.current = null;
     // Snapshot the message this recording is replying to (the composer's reply bar), so a voice
     // message quotes it exactly as a typed reply does. The bar is cleared only once the clip clears the
@@ -1286,7 +1294,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           ...cur,
           { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true },
         ]);
-        return; // finally() below resets the mic state
+        return false; // finally() below resets the mic state
       }
       // Long enough, but the mic caught no speech (nothing said / only room tone). Drop it rather than
       // let the transcription model invent words out of the silence — and the assistant answer them.
@@ -1295,7 +1303,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           ...cur,
           { id: uid(), role: "assistant", text: t.chat.noSpeechDetected, error: true },
         ]);
-        return; // finally() below resets the mic state
+        return false; // finally() below resets the mic state
       }
       // The recording is being sent — retire the composer's reply bar and quote the message on the
       // voice bubble, matching the typed-reply flow (see sendText). QuotedReply renders above the
@@ -1305,7 +1313,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         id: uid(),
         role: "user",
         text: "",
+        // Stays "voice" even with attachments — the bubble renders the files above the voice line, and
+        // toContents replays both parts for later turns.
         kind: "voice",
+        ...(files?.length ? { files } : {}),
         ...(replyRef ? { replyTo: replyRef } : {}),
       };
       const asstId = uid();
@@ -1321,12 +1332,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         userMsg,
         { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true },
       ]);
-      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, turnConvId, isCurrent });
+      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, files, turnConvId, isCurrent });
+      return true;
     } catch (e) {
       // rec.stop() itself failed (rare) — surface it before anything was queued.
       const fe = friendlyAiError(e, t);
       reportAiError(fe, "chat.voice");
       applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: fe.text, error: true }]);
+      return false;
     } finally {
       // The clip is captured and queued (or was dropped) — the mic is free again, so a subsequent
       // voice reply may auto-play. This turn's OWN reply is the newest voice message now, so it's the
@@ -1345,11 +1358,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     asstId: string;
     wav: { base64: string; mimeType: string };
     replyRef: ReplyRef | null;
+    /** Attachments sent with the clip — inlined into this turn and stored for recall, exactly as a
+     *  typed message's attachments are (see sendText). */
+    files?: PreparedFile[];
     turnConvId: string;
     isCurrent: () => boolean;
   }) {
-    const { userMsg, asstId, wav, replyRef, turnConvId, isCurrent } = p;
+    const { userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent } = p;
     const { base64, mimeType } = wav;
+    const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
     // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready (see
     // runAssistant), so the text doesn't appear ahead of the slower voice. (Also resets a Live bubble
     // that had already started streaming text, when this is the fallback path.)
@@ -1370,16 +1387,22 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         const voiceInstruction =
           "Respond conversationally to this spoken message. Act on what they say the same as if " +
           "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
-          "share feedback with the team, call record_suggestion).";
+          "share feedback with the team, call record_suggestion)." +
+          // The clip and the attachments are one message: what's spoken is usually *about* what's
+          // attached ("what's wrong with this screenshot?"), so say so explicitly.
+          (files?.length ? " The file(s) attached to this message were sent with it — the spoken message refers to them." : "");
         // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript: wait
         // for it (transcription stays a Gemini call), then send it as text. An empty transcript degrades
         // to the raw-audio Gemini path so the user still gets an answer. Gemini-primary hears the audio.
         const serverTranscript = serverChat ? await transcriptPromise : "";
         const replyParts = replyRef ? [{ text: replyContext(replyRef) }] : [];
+        // Attachments go in as real parts, ahead of the clip — same shape a typed message produces via
+        // toContents, so the model sees the picture/document it's being asked about.
+        const fileParts = (files ?? []).map(fileToPart);
         const lastTurn: Content =
           serverChat && serverTranscript
-            ? { role: "user", parts: [...replyParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
-            : { role: "user", parts: [...replyParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
+            ? { role: "user", parts: [...replyParts, ...fileParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
+            : { role: "user", parts: [...replyParts, ...fileParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
         // TTS runs in the background inside runAssistant, so it never holds the queue. Retry across an iOS
         // tab suspension (which kills the in-flight request) by rebuilding `contents` fresh each attempt.
         const reply = await runWithSuspensionRetry((attempt) => {
@@ -1392,14 +1415,42 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         });
         const transcript = await transcriptPromise; // already resolved in practice; never throws
         const userText = transcript || "(voice message)";
-        void recordTextTurns(
-          [
-            { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
-            { role: "assistant", text: reply, modality: "voice" },
-          ],
-          { audioBase64: base64 },
-          turnConvId,
-        );
+        if (files?.length) {
+          // Same treatment a typed message's attachments get (see sendText): each file becomes a memory
+          // line (type + name + extracted content) appended to the spoken transcript, and each is stored
+          // durably so find_files/send_file can hand it back later. Best-effort — never blocks the chat.
+          void (async () => {
+            const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
+            const userContent = [replyRef ? replyContext(replyRef) : "", userText, ...lines].filter(Boolean).join("\n");
+            void recordTextTurns(
+              [
+                { role: "user", text: userContent, modality: "voice" },
+                { role: "assistant", text: reply, modality: "voice" },
+              ],
+              // The clip *and* the first image, so the stored turn carries both halves of the message.
+              { audioBase64: base64, ...(images[0] ? { imageBase64: images[0].base64, imageMime: images[0].mimeType } : {}) },
+              turnConvId,
+            );
+            if (memoryOn) {
+              await Promise.all(
+                files.map(async (f, i) => {
+                  const desc = lines[i];
+                  const embedding = (await embedDocument(desc)) ?? undefined;
+                  await uploadChatFile(turnConvId, f, desc, embedding);
+                }),
+              );
+            }
+          })();
+        } else {
+          void recordTextTurns(
+            [
+              { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
+              { role: "assistant", text: reply, modality: "voice" },
+            ],
+            { audioBase64: base64 },
+            turnConvId,
+          );
+        }
       } catch (e) {
         const fe = friendlyAiError(e, t);
         reportAiError(fe, "chat.voice");
@@ -1439,7 +1490,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // End a Gemini Live voice message: stop the mic, gate the clip, then stream the reply (audio + both
   // transcripts) from the same session. Falls back to the classic TTS pipeline (with the recorded clip)
   // if Live never came up or fails mid-reply, so the user always gets an answer.
-  async function stopVoiceLive(driver: LiveVoiceMessage) {
+  async function stopVoiceLive(driver: LiveVoiceMessage, files?: PreparedFile[]): Promise<boolean> {
     const replyRef: ReplyRef | null = replyTo
       ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
       : null;
@@ -1454,12 +1505,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (wav.seconds < MIN_VOICE_MESSAGE_SECONDS) {
         void driver.abandon();
         applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: t.chat.recordingTooShort, error: true }]);
-        return;
+        return false;
       }
       if (wav.voicedSeconds < MIN_VOICED_SECONDS) {
         void driver.abandon();
         applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: t.chat.noSpeechDetected, error: true }]);
-        return;
+        return false;
       }
       if (replyRef) setReplyTo(null);
       const userMsg: ChatMessage = {
@@ -1469,6 +1520,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // in via onUserText (appendVoiceUserText) as it arrives.
         text: driver.currentUserText,
         kind: "voice",
+        ...(files?.length ? { files } : {}),
         ...(replyRef ? { replyTo: replyRef } : {}),
       };
       const asstId = uid();
@@ -1484,13 +1536,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       liveVoiceUserIdRef.current = userMsg.id;
       liveVoiceAsstIdRef.current = asstId;
 
-      if (!connected) {
-        // Live never came up (token mint / connect failed while recording) — fall back to TTS.
+      // Live never came up (token mint / connect failed while recording) — fall back to TTS. Same for a
+      // clip that carries attachments: a Live session has no way to receive them (startVoice normally
+      // routes those away from Live to begin with; this is the backstop).
+      if (!connected || files?.length) {
         void driver.abandon();
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
-        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, turnConvId, isCurrent });
-        return;
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent });
+        return true;
       }
       try {
         const reply = await driver.awaitReply();
@@ -1524,14 +1578,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
         driver.stopPlayback();
-        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, turnConvId, isCurrent });
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent });
       }
+      return true; // the message is in the transcript either way (Live reply or TTS fallback)
     } catch (e) {
       // endCapture / an unexpected failure before a reply was set up.
       void driver.abandon();
       const fe = friendlyAiError(e, t);
       reportAiError(fe, "chat.voice");
       applyMessages((cur) => [...cur, { id: uid(), role: "assistant", text: fe.text, error: true }]);
+      return false;
     } finally {
       liveVoiceUserIdRef.current = null;
       liveVoiceAsstIdRef.current = null;

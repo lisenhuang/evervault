@@ -23,8 +23,12 @@ export default function Composer({
   onCancelReply,
 }: {
   onSendText: (text: string, files?: PreparedFile[]) => void;
-  onStartVoice: () => void;
-  onStopVoice: () => void;
+  /** Staged attachments ride along with the voice message, so a clip can be sent WITH files. They're
+   *  handed over at record time too, because the send path is chosen up front (see Chat.startVoice). */
+  onStartVoice: (files?: PreparedFile[]) => void;
+  /** Resolves true if the clip was actually sent — false if it was dropped (too short / no speech), in
+   *  which case the composer keeps the attachments staged rather than losing them with the recording. */
+  onStopVoice: (files?: PreparedFile[]) => Promise<boolean>;
   onStartCall: () => void;
   voiceState: VoiceState;
   /** A realtime voice call is active. The call owns the mic, so recording a voice message and
@@ -61,6 +65,9 @@ export default function Composer({
   const dragDepthRef = useRef(0);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attachFilesRef = useRef<(incoming: File[]) => void>(() => {});
+  // Mirror of stopAndSend, so the countdown's auto-send always calls the latest one (it closes over the
+  // staged attachments) without re-running the timer effect on every keystroke.
+  const stopAndSendRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -100,9 +107,9 @@ export default function Composer({
   useEffect(() => {
     if (voiceState === "recording" && recordLeft === 0 && !autoSentRef.current) {
       autoSentRef.current = true;
-      onStopVoice();
+      stopAndSendRef.current();
     }
-  }, [voiceState, recordLeft, onStopVoice]);
+  }, [voiceState, recordLeft]);
 
   function setFilesSync(next: PreparedFile[]) {
     filesRef.current = next;
@@ -235,9 +242,20 @@ export default function Composer({
     if (picked.length) void attachFiles(picked);
   }
 
+  // Stop-and-send, carrying whatever is staged so the clip and its attachments arrive as one message.
+  // The staged files are only cleared once the turn is actually sent.
+  async function stopAndSend() {
+    const staged = filesRef.current;
+    const sent = await onStopVoice(staged.length ? staged : undefined);
+    if (sent) setFilesSync([]);
+  }
+  useEffect(() => {
+    stopAndSendRef.current = () => void stopAndSend();
+  });
+
   function micClick() {
-    if (voiceState === "recording") onStopVoice();
-    else if (voiceState === "idle") onStartVoice();
+    if (voiceState === "recording") stopAndSendRef.current();
+    else if (voiceState === "idle") onStartVoice(filesRef.current.length ? filesRef.current : undefined);
   }
 
   function callClick() {
@@ -247,6 +265,43 @@ export default function Composer({
   const recording = voiceState === "recording";
   const processing = voiceState === "processing";
   const busy = busyCount > 0;
+
+  // The mic, shared by both layouts (only the circle size differs). Kept as one renderer so the
+  // countdown/stop behaviour can't drift between the idle row and the composing box.
+  function micButton(compact: boolean) {
+    return (
+      <button
+        onClick={micClick}
+        // Don't open the mic while an attachment is still being prepared — the send path is picked from
+        // the staged files at record time, so they have to be settled first.
+        disabled={processing || inCall || (!recording && busy)}
+        title={recording ? t.composer.stopRecording : t.composer.recordVoice}
+        aria-label={recording ? t.composer.stopRecording : t.composer.recordVoice}
+        className={`${compact ? "h-9 w-9" : "h-11 w-11"} flex shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
+          recording
+            ? "bg-red-600 text-white hover:bg-red-700"
+            : "border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+        }`}
+      >
+        {processing ? (
+          <Loader2 size={18} className="animate-spin" />
+        ) : recording ? (
+          // Fixed w/h keeps the circle from reshaping as the digit count changes; tabular-nums
+          // keeps the number from shifting as it counts down. Tapping still stops-and-sends.
+          <span className="text-sm font-semibold leading-none tabular-nums">{recordLeft}</span>
+        ) : (
+          <Mic size={18} />
+        )}
+      </button>
+    );
+  }
+
+  // The composing box keeps the mic as long as a voice message is still what you'd send — i.e. nothing
+  // typed. That covers the two cases where the box opens without any text of its own: replying to a
+  // message (picking "Reply" expands it with an empty field) and staging attachments. So a quote can be
+  // answered by voice, and a clip can be sent WITH files. Once you actually start typing, the mic steps
+  // aside as before — that turn is a text turn, and the send button owns it.
+  const canRecordExpanded = recording || processing || !text.trim();
   // Two-state layout. Idle (collapsed) keeps today's single row — call · voice · field (with the
   // paperclip inside) · send. Once you're actually composing we switch to the stacked box — the
   // textarea on top with just "+" (add file) bottom-left and send bottom-right — and the call/voice
@@ -354,27 +409,8 @@ export default function Composer({
           >
             <Phone size={18} />
           </button>
-          {/* Voice message — idle row only; also hidden while composing. */}
-          <button
-            onClick={micClick}
-            disabled={processing || inCall}
-            title={recording ? t.composer.stopRecording : t.composer.recordVoice}
-            className={`${expanded ? "hidden" : "flex"} h-11 w-11 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40 ${
-              recording
-                ? "bg-red-600 text-white hover:bg-red-700"
-                : "border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-            }`}
-          >
-            {processing ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : recording ? (
-              // Fixed w/h keeps the circle from reshaping as the digit count changes; tabular-nums
-              // keeps the number from shifting as it counts down. Tapping still stops-and-sends.
-              <span className="text-sm font-semibold leading-none tabular-nums">{recordLeft}</span>
-            ) : (
-              <Mic size={18} />
-            )}
-          </button>
+          {/* Voice message — idle row; the composing box gets its own copy in the controls row. */}
+          {!expanded && micButton(false)}
 
           {/* The field. In the idle row it's the bordered pill (paperclip inside); when composing it
               becomes the full-width top of the rounded box. Same <textarea> node in both — never
@@ -441,16 +477,19 @@ export default function Composer({
               Idle it collapses to `contents`, so send flows back into the single row and this attach
               button is hidden in favour of the inline paperclip above. */}
           <div className={expanded ? "flex items-center justify-between" : "contents"}>
-            {/* Composing attach: bottom-left. Same paperclip icon as the idle row, kept consistent. */}
-            <button
-              onClick={attachClick}
-              disabled={recording}
-              title={t.composer.attachFiles}
-              aria-label={t.composer.attachFiles}
-              className={`${expanded ? "flex" : "hidden"} h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/15 text-black/60 transition hover:bg-black/5 disabled:opacity-40 dark:border-white/20 dark:text-white/60 dark:hover:bg-white/10`}
-            >
-              <Paperclip size={18} />
-            </button>
+            {/* Composing attach + mic: bottom-left. Same paperclip icon as the idle row, kept consistent. */}
+            <div className={expanded ? "flex items-center gap-2" : "contents"}>
+              <button
+                onClick={attachClick}
+                disabled={recording}
+                title={t.composer.attachFiles}
+                aria-label={t.composer.attachFiles}
+                className={`${expanded ? "flex" : "hidden"} h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/15 text-black/60 transition hover:bg-black/5 disabled:opacity-40 dark:border-white/20 dark:text-white/60 dark:hover:bg-white/10`}
+              >
+                <Paperclip size={18} />
+              </button>
+              {expanded && canRecordExpanded && micButton(true)}
+            </div>
             <button
               onClick={send}
               disabled={recording || busy || (!text.trim() && files.length === 0)}
