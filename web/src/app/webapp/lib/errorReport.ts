@@ -62,12 +62,24 @@ export async function flushErrorReports(): Promise<void> {
   if (flushing) return;
   flushing = true;
   try {
-    // Snapshot the codes to attempt, but re-read localStorage at each write so a report queued by
-    // reportAiError() during an in-flight deliver() isn't clobbered by a stale snapshot.
-    const snapshot = readQueue();
-    for (const report of snapshot) {
-      if (!(await deliver(report))) break; // server still unreachable — stop, keep the rest
-      writeQueue(readQueue().filter((r) => r.code !== report.code));
+    // Drain the whole queue, re-reading it each pass. A report enqueued by reportAiError() while a
+    // deliver() was in flight no-ops its own flush (the `flushing` guard), so this run must pick it up
+    // rather than leaving it parked until the next trigger — otherwise a long-lived tab that never
+    // reloads can sit on a shown code indefinitely. Re-reading also avoids clobbering with a stale
+    // snapshot. Stops as soon as a deliver() fails (server still unreachable) or the queue is empty.
+    for (;;) {
+      const queue = readQueue();
+      if (queue.length === 0) break;
+      let failed = false;
+      for (const report of queue) {
+        if (!(await deliver(report))) {
+          failed = true; // server still unreachable — stop, keep this and the rest queued
+          break;
+        }
+        writeQueue(readQueue().filter((r) => r.code !== report.code));
+      }
+      if (failed) break;
+      // A full pass landed — loop once more to catch any report enqueued mid-flush; an empty queue ends it.
     }
   } finally {
     flushing = false;
