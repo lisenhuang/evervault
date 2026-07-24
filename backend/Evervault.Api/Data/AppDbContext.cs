@@ -15,6 +15,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<ChatConfig> ChatConfigs => Set<ChatConfig>();
     public DbSet<WebappAiConfig> WebappAiConfigs => Set<WebappAiConfig>();
     public DbSet<GoogleAuthConfig> GoogleAuthConfigs => Set<GoogleAuthConfig>();
+    public DbSet<BraveSearchConfig> BraveSearchConfigs => Set<BraveSearchConfig>();
     public DbSet<OpenAiOAuthConfig> OpenAiOAuthConfigs => Set<OpenAiOAuthConfig>();
     public DbSet<EndUser> EndUsers => Set<EndUser>();
     public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();

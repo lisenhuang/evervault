@@ -37,6 +37,13 @@ import { maybeRollupDigests } from "./lib/digest";
 import { FILE_TOOL_DECLARATIONS, FILES_PERSONA, isFileTool, runFileTool } from "./lib/fileTools";
 import { fetchChatFileContent, type StoredFileMeta, uploadChatFile } from "./lib/filesApi";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA, type SuggestionImage } from "./lib/suggestionTool";
+import {
+  isWebSearchTool,
+  runWebSearchTool,
+  SEARCH_PERSONA_AVAILABLE,
+  SEARCH_PERSONA_UNAVAILABLE,
+  SEARCH_WEB_DECLARATION,
+} from "./lib/webSearchTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { catchUpRecurring, getTasks, localDateStr, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
@@ -226,6 +233,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // /api/chat/ai/text instead of the direct Gemini proxy. Session-only (re-read on every mount) and
   // defaults to false, so an old backend or a failed config fetch keeps the plain Gemini path.
   const [serverChat, setServerChat] = useState(false);
+  // Whether the assistant can search the live web (an admin web-search key is configured). Session-only
+  // (re-read on every mount) and defaults to false, so an old backend or a failed config fetch keeps the
+  // assistant in the honest "can't browse" state and never offers the tool. See the `webSearch` flag on
+  // GET /api/chat/ai/config — only this boolean crosses the wire, never the key.
+  const [searchAvailable, setSearchAvailable] = useState(false);
   const [voice, setVoice] = useState(store.getVoice());
   // Chat text size, stepped from the mobile header's A− / % / A+ control. Per-browser (see the
   // store), and applied to the transcript only — chrome keeps its own sizes, so growing the text
@@ -543,7 +555,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       if (!res.ok) return;
       const cfg = (await res.json()) as {
         textModel: string; audioModel: string; liveModel: string; defaultVoice: string; serverChat?: boolean;
-        liveIdleTimeoutSeconds?: number; voiceLiveModel?: string; voiceMode?: string;
+        liveIdleTimeoutSeconds?: number; voiceLiveModel?: string; voiceMode?: string; webSearch?: boolean;
       };
       if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
       if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
@@ -562,6 +574,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       }
       if (cfg.voiceLiveModel) { store.setVoiceLiveModel(cfg.voiceLiveModel); setVoiceLiveModel(cfg.voiceLiveModel); }
       setServerChat(!!cfg.serverChat);
+      setSearchAvailable(!!cfg.webSearch);
     } catch {
       /* keep the defaults */
     }
@@ -943,6 +956,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         styleDir,
         CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
+        // Exactly one of these always survives .filter(Boolean): tell the model it can search the web
+        // when a key is configured, or that it can't right now when it isn't.
+        searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
         SAFETY_BOUNDS,
         MEMORY_PERSONA,
         FILES_PERSONA,
@@ -961,6 +977,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             ...FILE_TOOL_DECLARATIONS,
             ...FORGET_TOOL_DECLARATIONS,
             RECORD_SUGGESTION_DECLARATION,
+            // Only offered when a web-search key is configured; the persona above matches this.
+            ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
           ],
         },
       ];
@@ -980,16 +998,34 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
                 ? runForgetTool(name, args, (items, note) => {
                     if (isCurrent()) offerForget(items, note);
                   })
-                : runRecallTool(args);
+                : isWebSearchTool(name)
+                  ? runWebSearchTool(args)
+                  : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
     } else {
-      const sys = [langDirective, styleDir, CONFIDENTIALITY, CAPABILITY_BOUNDS, SUGGESTION_PERSONA, currentTimeContext()]
+      const sys = [
+        langDirective,
+        styleDir,
+        CONFIDENTIALITY,
+        CAPABILITY_BOUNDS,
+        searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
+        SUGGESTION_PERSONA,
+        currentTimeContext(),
+      ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = [{ functionDeclarations: [RECORD_SUGGESTION_DECLARATION] }];
-      const runTool = (name: string, args: Record<string, unknown>) => runSuggestion(args);
+      const tools = [
+        {
+          functionDeclarations: [
+            RECORD_SUGGESTION_DECLARATION,
+            ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
+          ],
+        },
+      ];
+      const runTool = (name: string, args: Record<string, unknown>) =>
+        isWebSearchTool(name) ? runWebSearchTool(args) : runSuggestion(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -1211,6 +1247,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         model: voiceLiveModel,
         voice,
         memoryEnabled: memoryOn,
+        searchAvailable,
         profileBlock: memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined,
         stateBlock: memoryOn ? renderStateBlock(statesRef.current) ?? undefined : undefined,
         eventsBlock: memoryOn ? renderEventsBlock(eventsRef.current) ?? undefined : undefined,
@@ -1718,6 +1755,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       model: liveModel,
       voice,
       memoryEnabled: memoryOn,
+      searchAvailable,
       profileBlock,
       stateBlock,
       eventsBlock,

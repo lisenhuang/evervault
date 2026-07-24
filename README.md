@@ -90,6 +90,52 @@ took. Fix — unlock on the user's **first tap anywhere**, before any capture ex
 > 🖥️ macOS never suppresses playback for capture, so it worked there all along — the unlock dance is
 > purely an iOS concern.
 
+## 🧰 How the AI calls the tools we build
+
+The model can't touch the app on its own. Each turn the browser hands it a list of **tool
+declarations** (name + description + params) alongside the persona and transcript; the model, mid-reply,
+can *ask* to call one instead of writing text. The browser runs it and feeds the result back. Repeat
+until the model answers in plain text.
+
+```
+ each turn:  persona + transcript + tool declarations  ─▶  🤖 model
+                                                              │
+                      💬 shown to user ◀── plain text ────────┤ final answer
+                                                              │
+                                                              │ …or wants a tool
+                                                              ▼
+                                              functionCall { name, args }
+                                                              │
+                                       🖥️ runTool(name, args) — routes by name
+                                                              │
+                    ┌──────────────┬──────────────────┬───────┴───────────┐
+                    ▼              ▼                  ▼                    ▼
+              recall_memory   record_suggestion   search_web       …tasks · files
+                                                    │ POST /api/chat/websearch
+                                                    ▼ (Brave key stays server-side 🔑)
+                                              { results:[ … ] } ──┐
+                                                              JSON │ string
+                    🤖 model reads the result ◀─────────────────────┘
+                          (calls again, or writes the answer)
+```
+
+**Anatomy of a tool** — `web/src/app/webapp/lib/webSearchTool.ts` is the smallest example:
+
+| Piece | Role |
+|---|---|
+| `*_DECLARATION` | name + description + JSON-schema params the model sees |
+| `*_PERSONA` | one line telling the model *when* to reach for it |
+| `is*Tool(name)` | routes a call to this family |
+| `run*Tool(args)` | does the work, returns a JSON **string**, and **never throws** (a throw breaks the loop) |
+
+- **One definition, every surface.** Text chat (`gemini.ts` / `serverChat.ts`) and voice (`liveShared.ts`)
+  share the same declarations + dispatcher, so a new tool lights up while typing *and* talking.
+- **Dispatch ends in a fallthrough.** Any name without its own `is*Tool` arm is silently answered by
+  `recall_memory` — so each new family needs an explicit arm *before* that fallthrough.
+- **Secrets stay server-side.** `run*Tool` calls a backend endpoint; the browser never holds the key.
+  `search_web` is offered only when an admin saved a key (the `webSearch` flag on
+  `GET /api/chat/ai/config`) — with none, the model is simply told it can't browse.
+
 ## 🔌 Ports
 
 | Port | Service | Exposed |

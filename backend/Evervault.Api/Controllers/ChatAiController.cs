@@ -64,7 +64,7 @@ public class ChatAiController : ControllerBase
 
     public record WebappConfigDto(
         string TextModel, string AudioModel, string LiveModel, string DefaultVoice, bool ServerChat,
-        int LiveIdleTimeoutSeconds, string VoiceLiveModel, string VoiceMode);
+        int LiveIdleTimeoutSeconds, string VoiceLiveModel, string VoiceMode, bool WebSearch);
     public record LiveTokenDto(string Token, string? ExpiresAt);
 
     /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks).
@@ -83,10 +83,14 @@ public class ChatAiController : ControllerBase
     public async Task<ActionResult<WebappConfigDto>> Config()
     {
         var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
+        // WebSearch tells the client whether the assistant can search the live web. It's derived solely
+        // from whether an admin Brave key is stored — only this boolean crosses the wire, never the key.
+        var brave = await _db.BraveSearchConfigs.AsNoTracking().FirstOrDefaultAsync();
+        var webSearch = brave is not null && !string.IsNullOrEmpty(brave.ApiKeyEncrypted);
         return Ok(new WebappConfigDto(
             WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
             WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider,
-            WebappAiDefaults.LiveIdle(c), WebappAiDefaults.VoiceLive(c), WebappAiDefaults.VoiceModeOf(c)));
+            WebappAiDefaults.LiveIdle(c), WebappAiDefaults.VoiceLive(c), WebappAiDefaults.VoiceModeOf(c), webSearch));
     }
 
     // --- Server-side voice-message reply audio ---

@@ -61,6 +61,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<IBraveSearchService, BraveSearchService>();
 builder.Services.AddScoped<IErrorReportService, ErrorReportService>();
 builder.Services.AddScoped<IAiCallLogService, AiCallLogService>();
 
@@ -69,6 +70,8 @@ builder.Services.AddHttpClient();
 // ChatGPT (OAuth) chat streams the Responses API over SSE; a reasoning turn can far exceed the default
 // 100s client timeout while we hold the stream, so this named client gets a long timeout.
 builder.Services.AddHttpClient(OpenAiProvider.HttpClientName, c => c.Timeout = TimeSpan.FromMinutes(10));
+// Web search (Brave) is a quick REST call; the factory default 100s timeout is ample.
+builder.Services.AddHttpClient(BraveSearchService.HttpClientName);
 builder.Services.AddSingleton<OpenRouterProvider>();
 builder.Services.AddSingleton<GeminiProvider>();
 builder.Services.AddSingleton<OpenAiProvider>();

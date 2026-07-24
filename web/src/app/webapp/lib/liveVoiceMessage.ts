@@ -34,6 +34,8 @@ export type LiveVoiceOpts = {
   model: string;
   voice: string;
   memoryEnabled: boolean;
+  /** Whether the assistant may search the live web (admin web-search key configured). Defaults off. */
+  searchAvailable?: boolean;
   profileBlock?: string;
   stateBlock?: string;
   eventsBlock?: string;
@@ -169,9 +171,10 @@ export class LiveVoiceMessage {
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.opts.voice } } },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          tools: buildLiveToolDeclarations(this.opts.memoryEnabled),
+          tools: buildLiveToolDeclarations(this.opts.memoryEnabled, this.opts.searchAvailable),
           systemInstruction: buildLiveSystemInstruction({
             memoryEnabled: this.opts.memoryEnabled,
+            searchAvailable: this.opts.searchAvailable,
             profileBlock: this.opts.profileBlock,
             stateBlock: this.opts.stateBlock,
             eventsBlock: this.opts.eventsBlock,

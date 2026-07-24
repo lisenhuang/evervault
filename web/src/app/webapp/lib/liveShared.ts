@@ -11,6 +11,13 @@ import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "
 import { FORGET_PERSONA, FORGET_TOOL_DECLARATIONS, isForgetTool, runForgetTool } from "./forgetTool";
 import { FILES_PERSONA, FILE_TOOL_DECLARATIONS, isFileTool, runFileTool } from "./fileTools";
 import { isSuggestionTool, RECORD_SUGGESTION_DECLARATION, runSuggestionTool, SUGGESTION_PERSONA } from "./suggestionTool";
+import {
+  isWebSearchTool,
+  runWebSearchTool,
+  SEARCH_PERSONA_AVAILABLE,
+  SEARCH_PERSONA_UNAVAILABLE,
+  SEARCH_WEB_DECLARATION,
+} from "./webSearchTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
@@ -35,6 +42,9 @@ export type LiveContextOpts = {
   /** The user's chosen response-style directive ("" on default) — layered after the base voice persona. */
   styleInstruction?: string;
   language?: Lang;
+  /** Whether the assistant may search the live web (an admin web-search key is configured). Independent
+   *  of memory. Defaults to off, matching the honest "can't browse" persona. */
+  searchAvailable?: boolean;
 };
 
 /**
@@ -57,6 +67,8 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     mem ? TASKS_PERSONA : "",
     mem ? FORGET_PERSONA : "",
     SUGGESTION_PERSONA,
+    // Exactly one always survives .filter(Boolean): "you can search the web" vs "you can't right now".
+    o.searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
     LIVE_VOICE_SYSTEM_INSTRUCTION,
     o.styleInstruction || "",
     CONFIDENTIALITY,
@@ -74,7 +86,7 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
  * doesn't need memory); when memory is on the model also gets recall_memory + the task, file and forget
  * tools, so it can search past chats, manage tasks and look up files the user sent mid-conversation.
  */
-export function buildLiveToolDeclarations(memoryEnabled: boolean) {
+export function buildLiveToolDeclarations(memoryEnabled: boolean, searchAvailable = false) {
   return [
     {
       functionDeclarations: [
@@ -87,6 +99,8 @@ export function buildLiveToolDeclarations(memoryEnabled: boolean) {
             ]
           : []),
         RECORD_SUGGESTION_DECLARATION,
+        // Independent of memory — offered only when a web-search key is configured.
+        ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
       ],
     },
   ];
@@ -115,7 +129,9 @@ export async function dispatchLiveToolCalls(
             ? runFileTool(name, args)
             : isForgetTool(name)
               ? runForgetTool(name, args)
-              : runRecallTool(args);
+              : isWebSearchTool(name)
+                ? runWebSearchTool(args)
+                : runRecallTool(args);
     }),
   );
   return calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } }));

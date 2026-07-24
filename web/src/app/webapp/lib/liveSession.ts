@@ -110,6 +110,8 @@ export class LiveSession {
   private readonly model: string;
   private readonly voice: string;
   private readonly memoryEnabled: boolean;
+  /** Whether the assistant may search the live web this call (admin web-search key configured). */
+  private readonly searchAvailable: boolean;
   private readonly profileBlock?: string;
   private readonly stateBlock?: string;
   private readonly eventsBlock?: string;
@@ -134,6 +136,7 @@ export class LiveSession {
     model: string;
     voice: string;
     memoryEnabled?: boolean;
+    searchAvailable?: boolean;
     profileBlock?: string;
     stateBlock?: string;
     eventsBlock?: string;
@@ -148,6 +151,7 @@ export class LiveSession {
     this.model = opts.model;
     this.voice = opts.voice;
     this.memoryEnabled = opts.memoryEnabled ?? false;
+    this.searchAvailable = opts.searchAvailable ?? false;
     this.profileBlock = opts.profileBlock;
     this.stateBlock = opts.stateBlock;
     this.eventsBlock = opts.eventsBlock;
@@ -296,9 +300,10 @@ export class LiveSession {
         // Same tools + persona/context assembly a voice message uses (see liveShared.ts): record_suggestion
         // always, plus recall/tasks/files/forget when memory is on. Time + agenda are captured at connect;
         // a multi-hour call won't refresh them (the list_tasks tool gives freshness mid-call).
-        tools: buildLiveToolDeclarations(this.memoryEnabled),
+        tools: buildLiveToolDeclarations(this.memoryEnabled, this.searchAvailable),
         systemInstruction: buildLiveSystemInstruction({
           memoryEnabled: this.memoryEnabled,
+          searchAvailable: this.searchAvailable,
           profileBlock: this.profileBlock,
           stateBlock: this.stateBlock,
           eventsBlock: this.eventsBlock,
