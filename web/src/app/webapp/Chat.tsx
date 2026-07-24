@@ -51,6 +51,8 @@ import { styleDirective, type ResponseStyle, type StyleSurface } from "./lib/res
 import { getSettings, putSettings } from "./lib/settings";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
+import { useTranscriptRecorder } from "./lib/transcriptRecorder";
+import { purgeTranscriptOutbox } from "./transcriptApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
 import { friendlyAiError, micErrorMessage } from "./lib/aiError";
@@ -435,6 +437,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   useEffect(() => {
     inCallRef.current = !!callState;
   }, [callState]);
+
+  // The verbatim conversation record: every message on screen, both sides, recorded as text. Driven off
+  // the message list rather than the send/reply path so it also captures what turn bookkeeping drops —
+  // a user message whose reply then failed, the error the assistant showed instead, and a call that
+  // ended mid-sentence. Independent of memory/recall (recordTextTurns), which stays exactly as it was.
+  useTranscriptRecorder(
+    messages,
+    // A message appearing during a call belongs to the call's own conversation, which survives a
+    // "New chat" mid-call; everything else belongs to the conversation on screen.
+    useCallback(() => (inCallRef.current && callConvIdRef.current) || conversationIdRef.current, []),
+    useCallback(() => inCallRef.current, []),
+  );
   // True from the instant the user taps the mic — through the async getUserMedia acquisition and the
   // whole recording — until the clip has been captured and queued. Managed by hand (NOT mirrored from
   // `voiceState`, which only flips to "recording" AFTER acquisition) so it already covers the
@@ -1991,6 +2005,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     try {
       const res = await api("/api/auth/account", { method: "DELETE" });
       if (!res.ok) throw new Error();
+      // The server just erased this account's conversation record; anything still queued on this device
+      // has to go with it, or "everything is erased" would leave the last few messages sitting in
+      // localStorage. This is the one place the queue is thrown away rather than kept for a return.
+      purgeTranscriptOutbox();
       setConfirmDeleteAccount(false);
       onLogout(); // account + cookie gone server-side; reset the UI to the sign-in screen
     } catch {

@@ -20,6 +20,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<EndUser> EndUsers => Set<EndUser>();
     public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();
     public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
+    public DbSet<ChatTranscript> ChatTranscripts => Set<ChatTranscript>();
     public DbSet<ChatFile> ChatFiles => Set<ChatFile>();
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
     public DbSet<UserTask> UserTasks => Set<UserTask>();
@@ -96,6 +97,22 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(m => m.EndUserId);
             e.HasIndex(m => new { m.EndUserId, m.ConversationId });
             e.HasIndex(m => new { m.EndUserId, m.Kind });
+        });
+
+        modelBuilder.Entity<ChatTranscript>(e =>
+        {
+            e.Property(t => t.ConversationId).HasMaxLength(64);
+            e.Property(t => t.ClientMessageId).HasMaxLength(64);
+            e.Property(t => t.Role).HasMaxLength(16);
+            e.Property(t => t.Modality).HasMaxLength(16);
+            // Content stays unbounded text with NO tsvector/trigram expression index — see ChatTranscript.
+            // Idempotency anchor: re-recording the same browser message updates its row instead of
+            // appending a duplicate, which is what makes the client's retry/unload flush safe.
+            e.HasIndex(t => new { t.EndUserId, t.ClientMessageId }).IsUnique();
+            // Read one conversation back in the order it was said.
+            e.HasIndex(t => new { t.EndUserId, t.ConversationId, t.Id });
+            // Newest-first listing across conversations.
+            e.HasIndex(t => new { t.EndUserId, t.CreatedAt });
         });
 
         modelBuilder.Entity<ChatFile>(e =>

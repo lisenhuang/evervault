@@ -101,10 +101,10 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>Permanently delete the signed-in user's account and ALL data derived from it:
-    /// chat memories, the memory profile, tasks, the durable chat files (rows + blobs), every stored
-    /// audio/image blob, and the account row itself. Chat files are retained forever otherwise, so this
-    /// is the only path that removes them. The session cookie is cleared so the browser is signed out.
-    /// Irreversible.</summary>
+    /// chat memories, the verbatim conversation record, the memory profile, tasks, the durable chat files
+    /// (rows + blobs), every stored audio/image blob, and the account row itself. Chat files and the
+    /// conversation record are retained forever otherwise, so this is the only path that removes them.
+    /// The session cookie is cleared so the browser is signed out. Irreversible.</summary>
     [HttpDelete("account")]
     [Authorize(AuthenticationSchemes = Scheme)]
     public async Task<IActionResult> DeleteAccount()
@@ -126,6 +126,11 @@ public class AuthController : ControllerBase
         }
 
         await _db.ChatMemories.Where(m => m.EndUserId == uid).ExecuteDeleteAsync();
+        // The verbatim conversation record. Nothing else ever removes a row from it — it is deliberately
+        // append-only, and the forget flow only takes things out of ChatMemories — so this is the single
+        // path that erases it, and the reason the assistant answers "delete everything" with account
+        // deletion rather than by forgetting things one at a time.
+        await _db.ChatTranscripts.Where(t => t.EndUserId == uid).ExecuteDeleteAsync();
         await _db.ChatFiles.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserMemoryFacts.Where(f => f.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserTasks.Where(t => t.EndUserId == uid).ExecuteDeleteAsync();
