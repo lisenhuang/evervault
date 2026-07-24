@@ -188,6 +188,7 @@ const ko: Messages = {
     playReply: "답변 재생",
     pauseReply: "일시정지",
     resumeReply: "계속",
+    generatingReply: "생성 중…",
     reply: "답장",
     copy: "복사",
     copied: "복사됨",

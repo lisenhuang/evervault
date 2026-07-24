@@ -681,6 +681,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // foreground-resume handler never spin up duplicate loops for the same reply.
   const voiceResolveRef = useRef<Set<string>>(new Set());
 
+  // Typed replies are never voiced automatically (that would spend tokens on audio nobody asked to
+  // hear) — the user taps "Play" to synthesize on demand. These ids are mid-synthesis right now: the
+  // ref is the authoritative copy the async loop dedupes against; the state drives the button's
+  // loading spinner. Kept in sync by markGenerating below.
+  const generatingAudioRef = useRef<Set<string>>(new Set());
+  const [generatingAudio, setGeneratingAudio] = useState<ReadonlySet<string>>(generatingAudioRef.current);
+  const markGenerating = (id: string, on: boolean) => {
+    const next = new Set(generatingAudioRef.current);
+    if (on) next.add(id);
+    else next.delete(id);
+    generatingAudioRef.current = next;
+    setGeneratingAudio(next);
+  };
+
   // Attach a finished spoken clip to its reply and reveal the text. Guarded so a late arrival can't
   // clobber a reply that was already resolved (or deleted). Auto-play is deliberately narrow: with a
   // queue of messages in flight we only ever speak the LAST voice message's reply, and only when the
@@ -820,6 +834,88 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       window.removeEventListener("pageshow", resume);
     };
   }, [ensureVoiceReplyAudio]);
+
+  // --- On-demand spoken audio for typed replies (never auto-synthesized, to save tokens) ---
+
+  // Synthesize `text` as the spoken clip for reply `replyId` and return it (or null on failure).
+  // Reuses the same server-side pipeline as the voice-message path (which survives a backgrounded
+  // tab — see ensureVoiceReplyAudio), falling back to in-browser TTS when that endpoint is missing
+  // or the kickoff fails. `isStale` lets the caller bail if the bubble is deleted mid-synthesis.
+  async function synthesizeReplyOnDemand(
+    replyId: string,
+    text: string,
+    isStale: () => boolean,
+  ): Promise<VoiceReplyAudio | null> {
+    const voice = store.getVoice();
+    try {
+      if (!(await startVoiceReply(replyId, text, voice))) {
+        // Endpoint missing / request failed → in-browser fallback so the reply still gets a voice.
+        try {
+          return await synthesizeSpeech(audioModel, text, voice);
+        } catch {
+          return null;
+        }
+      }
+      let visibleAttempts = 0;
+      const maxVisibleAttempts = 75; // ~75s of FOREGROUND polling; a synthesis normally lands in a few
+      for (;;) {
+        if (isStale()) return null; // the bubble was deleted / the chat was cleared
+        if (typeof document !== "undefined" && document.hidden) {
+          await sleep(1000); // tab suspended — wait without spending the budget
+          continue;
+        }
+        const res = await fetchVoiceReply(replyId);
+        if (res.status === "ready") return { base64: res.base64, sampleRate: res.sampleRate };
+        if (res.status === "failed") return null;
+        if (res.status === "unknown") await startVoiceReply(replyId, text, voice); // lost/swept — re-kick
+        if (++visibleAttempts >= maxVisibleAttempts) return null;
+        await sleep(1000);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  // Tapping "Play" on a typed reply that has no clip yet: synthesize it, attach it to the bubble (so
+  // a second listen doesn't re-synthesize and the button turns into a normal play/pause control),
+  // then play it once. Deduped so a double-tap can't spawn two synthesis loops for the same reply.
+  async function generateAndPlayReplyAudio(m: ChatMessage) {
+    const id = m.id;
+    const text = m.text.trim();
+    if (!text || generatingAudioRef.current.has(id)) return;
+    // The tap that triggered this is a user gesture, and synthesis takes a beat — prime iOS
+    // spoken-reply playback now (synchronously, before the awaited synthesis) so the clip can play
+    // when it lands seconds later without needing its own tap. Best-effort; the button plays it
+    // directly on a later tap if this doesn't land. Mirrors the mic-press priming in startVoice.
+    try {
+      unlockAudioPlayback();
+    } catch {
+      /* playback priming is best-effort — the clip still plays when the button is tapped again */
+    }
+    markGenerating(id, true);
+    try {
+      const isStale = () => !messagesRef.current.some((x) => x.id === id);
+      const audio = await synthesizeReplyOnDemand(id, text, isStale);
+      if (!audio || isStale()) return;
+      applyMessages((cur) => cur.map((x) => (x.id === id ? { ...x, audio } : x)));
+      // Play now unless the audio path was taken over while we were synthesizing (a call started,
+      // the mic opened, or the tab went to the background) — the ready "Play" button covers those.
+      const foreground = typeof document !== "undefined" && document.visibilityState === "visible";
+      if (foreground && !inCallRef.current && !micBusyRef.current) {
+        playAudioClip(id, audio.base64, audio.sampleRate);
+      }
+    } finally {
+      markGenerating(id, false);
+    }
+  }
+
+  // The bubble's audio button. A reply that already has a clip (a voice-message reply, or a text
+  // reply voiced on an earlier tap) plays / pauses / resumes it; a typed reply without one
+  // synthesizes on demand first. Passed to MessageList as onPlayAudio.
+  function handlePlayReplyAudio(m: ChatMessage) {
+    if (m.audio) playAudio(m);
+    else void generateAndPlayReplyAudio(m);
+  }
 
   // --- Stored files: the assistant offers one, the user decides whether it lands in the chat ---
 
@@ -1974,9 +2070,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
               scale={chatScale}
               userName={user.name}
               userPicture={user.picture}
-              onPlayAudio={playAudio}
+              onPlayAudio={handlePlayReplyAudio}
               playingAudioId={audioPlaying?.id ?? null}
               audioPaused={audioPlaying?.paused ?? false}
+              generatingAudioIds={generatingAudio}
               onReply={setReplyTo}
               onDelete={setPendingDelete}
               onSendFile={sendStoredFile}
