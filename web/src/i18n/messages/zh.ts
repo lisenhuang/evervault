@@ -189,6 +189,7 @@ const zh: Messages = {
     playReply: "播放回复",
     pauseReply: "暂停",
     resumeReply: "继续",
+    generatingReply: "生成中…",
     reply: "回复",
     copy: "复制",
     copied: "已复制",

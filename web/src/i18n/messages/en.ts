@@ -189,6 +189,7 @@ const en = {
     playReply: "Play reply",
     pauseReply: "Pause",
     resumeReply: "Resume",
+    generatingReply: "Generating…",
     reply: "Reply",
     copy: "Copy",
     copied: "Copied",

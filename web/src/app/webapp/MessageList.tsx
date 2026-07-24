@@ -110,6 +110,7 @@ export default function MessageList({
   onPlayAudio,
   playingAudioId,
   audioPaused,
+  generatingAudioIds,
   onReply,
   onDelete,
   onSendFile,
@@ -125,6 +126,9 @@ export default function MessageList({
   playingAudioId: string | null;
   /** Whether that loaded reply is currently paused (vs actively playing). */
   audioPaused: boolean;
+  /** Ids of text replies whose spoken audio is being synthesized on demand (tapped "Play", no clip
+   *  yet) — drives the button's loading state until the clip lands. */
+  generatingAudioIds: ReadonlySet<string>;
   /** Start composing a reply that quotes this message. */
   onReply: (m: ChatMessage) => void;
   /** Remove a message from the chat (via the long-press / right-click menu). */
@@ -281,6 +285,7 @@ export default function MessageList({
             m={m}
             flashing={flashId === m.id}
             audioState={playingAudioId === m.id ? (audioPaused ? "paused" : "playing") : "idle"}
+            generating={generatingAudioIds.has(m.id)}
             onPlayAudio={onPlayAudio}
             onReveal={followReveal}
             onOpenMenu={openMenu}
@@ -334,6 +339,7 @@ function AssistantMessage({
   m,
   flashing,
   audioState,
+  generating,
   onPlayAudio,
   onReveal,
   onOpenMenu,
@@ -345,6 +351,8 @@ function AssistantMessage({
   flashing: boolean;
   /** Playback state of this reply's spoken audio: idle, actively playing, or paused mid-clip. */
   audioState: "idle" | "playing" | "paused";
+  /** True while this text reply's audio is being synthesized on demand (tapped "Play", no clip yet). */
+  generating: boolean;
   onPlayAudio: (m: ChatMessage) => void;
   onReveal: () => void;
   onOpenMenu: (m: ChatMessage, x: number, y: number) => void;
@@ -401,6 +409,19 @@ function AssistantMessage({
   // no text at all. That reply is finished, not pending, so it must never fall into the dots below.
   const hasFiles = !!m.files?.length;
 
+  // Whether to show the spoken-audio button under the bubble. A reply that already carries a clip
+  // (a voice-message reply, or a text reply voiced on an earlier tap) plays it; a plain finished
+  // text reply has none — it is never synthesized automatically (that would spend tokens on audio
+  // nobody asked to hear), so its button synthesizes on demand the first time it's tapped. Excludes
+  // errors, streaming/pending replies, the call chip and offer cards, and file-only bubbles.
+  const canSpeakText =
+    !!m.text.trim() &&
+    !m.error &&
+    !m.streaming &&
+    !m.pendingAudio &&
+    (m.kind === undefined || m.kind === "text" || m.kind === "voice");
+  const showAudioButton = !!m.audio || canSpeakText;
+
   // While `pendingAudio` is set the text has streamed in but is deliberately withheld until the
   // spoken audio is ready — keep the bubble on the "typing"/speaking dots as if the reply is still
   // being prepared, so text never races ahead of the voice.
@@ -446,15 +467,26 @@ function AssistantMessage({
             onOpenFile={onOpenFile}
           />
         )}
-        {m.audio && (
+        {showAudioButton && (
           <button
             onClick={() => onPlayAudio(m)}
+            disabled={generating}
             aria-label={
-              audioState === "playing" ? t.message.pauseReply : audioState === "paused" ? t.message.resumeReply : t.message.playReply
+              generating
+                ? t.message.generatingReply
+                : audioState === "playing"
+                  ? t.message.pauseReply
+                  : audioState === "paused"
+                    ? t.message.resumeReply
+                    : t.message.playReply
             }
-            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 chat-text-sm font-medium transition hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 chat-text-sm font-medium transition hover:bg-black/10 disabled:hover:bg-black/5 dark:bg-white/10 dark:hover:bg-white/15 dark:disabled:hover:bg-white/10"
           >
-            {audioState === "playing" ? (
+            {generating ? (
+              <>
+                <Loader2 size={13} className="chat-icon animate-spin" aria-hidden="true" /> {t.message.generatingReply}
+              </>
+            ) : audioState === "playing" ? (
               <>
                 <EqualizerBars /> {t.message.pauseReply}
               </>
