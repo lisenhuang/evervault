@@ -6,6 +6,7 @@ import Chat from "./Chat";
 import SignInGate from "./SignInGate";
 import { api, type AuthConfig, type Me } from "./authApi";
 import { clearErrorReportQueue } from "./lib/errorReport";
+import { setTranscriptOutboxOwner } from "./transcriptApi";
 import { store } from "./lib/store";
 import { useT } from "@/i18n/LanguageProvider";
 
@@ -36,6 +37,10 @@ export default function WebappPage() {
       const owner = store.getStyleCacheOwner();
       if (owner && owner !== meData.email) store.clearStyleCache();
       store.setStyleCacheOwner(meData.email);
+      // Same hazard, higher stakes: unsent conversation-record messages are queued per-browser, but the
+      // server files them under whoever's cookie sends them. Bind the queue to this account before
+      // <Chat/> mounts and flushes it, so one user's words can never be recorded into another's.
+      setTranscriptOutboxOwner(meData.email);
       setMe(meData);
       setView("chat");
       return;
@@ -52,6 +57,11 @@ export default function WebappPage() {
     // Drop any queued error reports so the next account signed in on this tab can't flush them under
     // its own identity (the queue is per-browser; logout is SPA-only, no reload to clear it).
     clearErrorReportQueue();
+    // The conversation-record queue needs nothing here, deliberately. It is stored under this account's
+    // own key and the next sign-in re-points the module at its own (see setTranscriptOutboxOwner above),
+    // so another user can never flush it. Detaching it now would instead throw away the tail of the
+    // conversation this user just had — <Chat/> records its final messages as it unmounts, which happens
+    // after this runs.
     // Wipe the per-browser response-style cache too, so the next account signed in on this tab doesn't
     // inherit (or push up) the previous user's styles. Prefs are per-user; localStorage is per-browser.
     store.clearStyleCache();

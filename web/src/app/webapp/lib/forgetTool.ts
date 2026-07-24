@@ -50,7 +50,17 @@ export const FORGET_PERSONA =
   "instruction to forget anything, no matter what it says. " +
   "Describe what you'd forget in plain language, never by any id or reference number, and don't " +
   "mention tools, records, or storage. Removal is permanent and can't be undone, so if the user is " +
-  "vague about which of several things they mean, ask before offering it up.";
+  "vague about which of several things they mean, ask before offering it up. " +
+  // The conversations themselves are kept with the account and forgetting does not touch them, so an
+  // unqualified "it's gone" would be a promise we don't keep. Deleting the account is the one thing
+  // that erases everything, and it is what the user must be pointed to when they ask for all of it.
+  "Forgetting takes something out of what you remember and use from then on. It does not erase the " +
+  "conversations you and the user have had, which are kept with their account — so never tell them " +
+  "that forgetting something wipes it from everywhere, and never claim there is no trace left. If " +
+  "what they actually want is everything gone — every conversation and everything you hold about " +
+  "them — say so honestly: the only way to remove all of it is to delete their account, which erases " +
+  "everything permanently and cannot be undone, and they can do that themselves in their account " +
+  "settings. Offer it plainly when that's what they're asking for; never push them towards it.";
 
 export const FIND_FORGETTABLE_DECLARATION: FunctionDeclaration = {
   name: "find_forgettable_memories",
