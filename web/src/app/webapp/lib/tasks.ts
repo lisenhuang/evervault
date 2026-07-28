@@ -189,8 +189,11 @@ export function renderAgendaBlock(tasks: Task[], now = new Date()): string | nul
   return (
     "The user's task list (structured, authoritative — this is the ground truth for what they need to " +
     "do; prefer it over conversational memory when they ask what's on their plate, and never invent " +
-    "tasks that aren't listed here or returned by list_tasks). Refer to tasks by their title, not their " +
-    "id number:\n" +
+    "tasks that aren't listed here or returned by list_tasks). Talk about tasks by title, not by id " +
+    "number — but pass the id to the task tools. This is a SNAPSHOT taken before your reply: once you " +
+    "complete, dismiss or reschedule anything, the tool's response is newer than this list, and " +
+    "list_tasks is what tells you the state now — so never re-read this block to check whether a change " +
+    "of yours went through:\n" +
     lines.join("\n")
   );
 }

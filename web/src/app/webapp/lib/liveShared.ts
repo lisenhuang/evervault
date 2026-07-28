@@ -112,10 +112,15 @@ export function buildLiveToolDeclarations(memoryEnabled: boolean, searchAvailabl
  * tool family needs its explicit arm. The file/suggestion tools run without their optional UI callbacks:
  * a Live turn has no chat card to tap, so send_file reports "only in the text chat" while find_files
  * still works, and record_suggestion runs without screenshots.
+ *
+ * `onTasksChanged` is NOT optional in spirit: the caller's cached task list is what renders the agenda
+ * block injected into the next turn as "authoritative", so a spoken change that doesn't refresh it
+ * leaves the model reading dismissed tasks back as still open — dismissing them again, forever.
  */
 export async function dispatchLiveToolCalls(
   calls: FunctionCall[],
   conversationId?: string,
+  onTasksChanged?: () => void,
 ): Promise<Array<{ id?: string; name?: string; response: { output: string } }>> {
   const results = await Promise.all(
     calls.map((c) => {
@@ -124,7 +129,7 @@ export async function dispatchLiveToolCalls(
       return isSuggestionTool(name)
         ? runSuggestionTool(args)
         : isTaskTool(name)
-          ? runTaskTool(name, args, undefined, conversationId)
+          ? runTaskTool(name, args, onTasksChanged, conversationId)
           : isFileTool(name)
             ? runFileTool(name, args)
             : isForgetTool(name)

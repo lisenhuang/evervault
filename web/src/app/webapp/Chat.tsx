@@ -1366,6 +1366,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         styleInstruction: styleDirective(voiceStyle),
         conversationId: conversationIdRef.current,
         history: toContents(messagesRef.current),
+        // Same refresh the typed path does after a task tool call: the agenda block above is rendered
+        // from this cache, so without it the next voice message is told the tasks this one just
+        // dismissed are still open — and the assistant keeps "removing" them, reply after reply.
+        onTasksChanged: () => void refreshTasks(),
         onModelText: appendVoiceAsstText,
         onUserText: appendVoiceUserText,
       });
@@ -1876,6 +1880,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       styleInstruction: styleDirective(liveStyle),
       idleTimeoutSec: liveIdleSec,
       conversationId: callConvIdRef.current ?? conversationIdRef.current,
+      // Keep the task cache current when the model changes the list mid-call — it's what the next
+      // call's and next voice message's agenda block is built from (see startVoice).
+      onTasksChanged: () => void refreshTasks(),
     });
     session.setHeadphones(callHeadphones);
     liveRef.current = session;

@@ -128,6 +128,9 @@ export class LiveSession {
   private readonly idleTimeoutSec: number;
   /** The conversation this call belongs to, so a task the model adds mid-call is attributed to it. */
   private readonly conversationId?: string;
+  /** Fired after the model changes the task list mid-call, so the caller can refresh the cache its
+   *  agenda block comes from — otherwise the next call/voice message is briefed with stale tasks. */
+  private readonly onTasksChanged?: () => void;
 
   // Named options rather than a positional list: every memory feature adds another optional context
   // block here, and appending to a nine-argument positional constructor is how two of them silently
@@ -147,6 +150,7 @@ export class LiveSession {
     styleInstruction?: string;
     idleTimeoutSec?: number;
     conversationId?: string;
+    onTasksChanged?: () => void;
   }) {
     this.model = opts.model;
     this.voice = opts.voice;
@@ -162,6 +166,7 @@ export class LiveSession {
     this.styleInstruction = opts.styleInstruction;
     this.idleTimeoutSec = opts.idleTimeoutSec ?? DEFAULT_IDLE_TIMEOUT_SEC;
     this.conversationId = opts.conversationId;
+    this.onTasksChanged = opts.onTasksChanged;
   }
 
   /** The idle window in ms, or 0 when the admin turned the auto-hang-up off. */
@@ -515,7 +520,11 @@ export class LiveSession {
     if (m.toolCall?.functionCalls?.length) {
       // Run the requested tool(s) and echo the responses (with matching call ids) back over the socket.
       this.session?.sendToolResponse({
-        functionResponses: await dispatchLiveToolCalls(m.toolCall.functionCalls, this.conversationId),
+        functionResponses: await dispatchLiveToolCalls(
+          m.toolCall.functionCalls,
+          this.conversationId,
+          this.onTasksChanged,
+        ),
       });
       return;
     }

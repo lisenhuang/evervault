@@ -45,6 +45,9 @@ export type LiveVoiceOpts = {
   language?: Lang;
   /** The conversation this voice message belongs to, so a task the model adds is attributed to it. */
   conversationId?: string;
+  /** Fired after the model changes the task list, so the caller can refresh the cache its agenda block
+   *  is rendered from — otherwise the NEXT voice message is briefed with tasks this one just removed. */
+  onTasksChanged?: () => void;
   /** The full prior transcript as Gemini Content[] (toContents of everything before this message). */
   history: Content[];
   /** Streams the assistant's transcript as it arrives, for the streaming reply bubble. */
@@ -335,7 +338,7 @@ export class LiveVoiceMessage {
       try {
         // Bounded and error-proof: with no response the model would wait for the tool result forever,
         // the turn would never complete, and the stall watchdog would kill a healthy reply.
-        const dispatched = dispatchLiveToolCalls(calls, this.opts.conversationId);
+        const dispatched = dispatchLiveToolCalls(calls, this.opts.conversationId, this.opts.onTasksChanged);
         dispatched.catch(() => {}); // a dispatch that loses the race must not become an unhandled rejection
         responses = await Promise.race([
           dispatched,
