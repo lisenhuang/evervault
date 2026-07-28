@@ -35,14 +35,29 @@ export const TASKS_PERSONA =
   "instead. Once a task is going on the list, resolve relative dates ('tomorrow', 'next Friday') into a " +
   "YYYY-MM-DD date, and omit the date if they didn't give one. When the user says something is done, " +
   "call complete_task with its id; use update_task to reschedule a task or to dismiss one they no longer " +
-  "want (dismiss, don't complete, when it wasn't actually done). Refer to tasks by their title, never by " +
-  "id number, and never invent tasks that aren't on the list. " +
+  "want (dismiss, don't complete, when it wasn't actually done). Refer to tasks by their title when you " +
+  "talk to the user, never by id number — but always pass the id(s) to the tools themselves — and never " +
+  "invent tasks that aren't on the list. " +
   "If the user says they don't recognise a task you raised, do NOT apologise it away, claim you made it " +
   "up, or tell them to ignore it — the task list shown to you is authoritative. Check it (use list_tasks " +
   "to look it up by name), and if it really is on the list, say so plainly, tell them where it came from " +
   "and when if you have that (you may be shown it was one you added from an earlier chat, one auto-noted " +
   "from a past conversation, or one they added themselves), and offer to remove, reschedule, or keep it. " +
   "Only treat a task as non-existent if it genuinely isn't on the list or returned by list_tasks.\n\n" +
+  // The reported failure: asked by voice to remove five tasks, the assistant said "I've dismissed
+  // those" without the tool ever confirming it, then — asked to check — reported the same tasks as
+  // still there, over and over. Two rules below: do the whole removal in ONE call, and never assert
+  // an outcome the tool hasn't returned (re-reading the snapshot block is not checking).
+  "REMOVING TASKS — ONE CALL, AND ONLY CLAIM WHAT THE TOOL CONFIRMED. When the user asks you to drop " +
+  "several tasks at once (\"remove those items\", \"take those off my list\"), dismiss them ALL in a " +
+  "SINGLE update_task call: pass every id in `ids` (or, when you weren't shown their ids, their names " +
+  "in `titles`) with status 'dismissed'. Never fire one call and describe the rest as handled too. " +
+  "Never tell the user a task is removed, dismissed, done or off their list before the tool has come " +
+  "back and confirmed it: report exactly what the response shows, and when it comes back with " +
+  "notFound or ambiguous entries, name those tasks and ask which they meant rather than claiming " +
+  "everything is gone. If they ask you to check whether something really came off, call list_tasks " +
+  "and answer from that — the task list you were shown at the start of your reply is a snapshot taken " +
+  "before your changes, so re-reading it is not checking.\n\n" +
   // Without this the whole reminder feature is invisible: the agenda is passive context, so the model
   // reads it and says nothing, and the user has to ask "what's on my list" to ever be reminded.
   "BRING UP WHAT'S DUE. A reminder is only useful if you actually raise it. When a conversation starts " +
@@ -71,9 +86,11 @@ export const LIST_TASKS_DECLARATION: FunctionDeclaration = {
   name: "list_tasks",
   description:
     "List the user's tasks. Use for 'what do I need to do', 'what's due this week', to look up a " +
-    "task's id before completing or updating it, or to look up a specific task BY NAME (pass query) " +
-    "when the user asks about or disputes one. Results include each task's origin (where/when it came " +
-    "from). Defaults to open tasks.",
+    "task's id before completing or updating it, to look up a specific task BY NAME (pass query) " +
+    "when the user asks about or disputes one, and to VERIFY a change you just made when they ask you " +
+    "to double-check (this reads the list live; the task list in your instructions is a snapshot from " +
+    "before your changes). Results include each task's origin (where/when it came from). Defaults to " +
+    "open tasks.",
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -134,31 +151,61 @@ export const ADD_TASK_DECLARATION: FunctionDeclaration = {
   },
 };
 
+// Targeting several tasks in ONE call is deliberate: a spoken "remove those five" that depends on the
+// model emitting five separate calls in a single turn routinely lands as two, with all five narrated
+// as done. Shared by complete_task and update_task so both mutations have the same reach.
+const IDS_PARAM = {
+  type: Type.ARRAY,
+  items: { type: Type.INTEGER },
+  description:
+    "Ids of SEVERAL tasks to act on in this one call. Always prefer this over one call per task when " +
+    "the user names more than one.",
+};
+
+const TITLES_PARAM = {
+  type: Type.ARRAY,
+  items: { type: Type.STRING },
+  description:
+    "Which tasks to act on, BY NAME — only for tasks whose id you weren't shown (use list_tasks to " +
+    "look ids up when you can). Matched against the user's open tasks; a name matching nothing, or " +
+    "more than one task, is left untouched and reported back to you.",
+};
+
 export const COMPLETE_TASK_DECLARATION: FunctionDeclaration = {
   name: "complete_task",
   description:
-    "Mark a task done when the user says they finished it. Use the id from the task list or " +
-    "list_tasks. For a repeating task this completes THIS occurrence and automatically schedules the " +
-    "next one — the response tells you the next date — so don't describe it as finished for good.",
+    "Mark task(s) done when the user says they finished them. Use the id from the task list or " +
+    "list_tasks — and finish several in ONE call by passing `ids`. For a repeating task this completes " +
+    "THIS occurrence and automatically schedules the next one — the response tells you the next date — " +
+    "so don't describe it as finished for good.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       id: { type: Type.INTEGER, description: "The task's id (shown as [#id] in the task list)." },
+      ids: IDS_PARAM,
+      titles: TITLES_PARAM,
     },
-    required: ["id"],
   },
 };
 
 export const UPDATE_TASK_DECLARATION: FunctionDeclaration = {
   name: "update_task",
   description:
-    "Reschedule, edit, or dismiss a task. Use to change its date/title, or to dismiss one the user no " +
-    "longer wants (dismiss rather than complete when it wasn't actually done).",
+    "Reschedule, edit, or dismiss task(s). Use to change a task's date/title, or to dismiss ones the " +
+    "user no longer wants (dismiss rather than complete when they weren't actually done). Dismiss " +
+    "several in ONE call by passing every id in `ids` with status 'dismissed'.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       id: { type: Type.INTEGER, description: "The task's id (shown as [#id] in the task list)." },
-      title: { type: Type.STRING, description: "New title." },
+      ids: IDS_PARAM,
+      titles: TITLES_PARAM,
+      title: {
+        type: Type.STRING,
+        description:
+          "New title — this RENAMES the task, so only send it when the user wants the wording changed " +
+          "(and only with a single id). To say WHICH tasks to change by name, use `titles`.",
+      },
       dueDate: {
         type: Type.STRING,
         description: "New due date as YYYY-MM-DD, resolved from the current local date/time. Pass an empty string to clear it.",
@@ -172,7 +219,6 @@ export const UPDATE_TASK_DECLARATION: FunctionDeclaration = {
       },
       status: { type: Type.STRING, description: "'open' to reopen, or 'dismissed' to drop it." },
     },
-    required: ["id"],
   },
 };
 
@@ -211,6 +257,110 @@ const brief = (t: Task) => ({
   ...(t.recurrence ? { repeats: describeRecurrence(t.recurrence) } : {}),
 });
 
+// --- Which tasks a mutating call is aimed at ---
+
+/** Shortest normalized text allowed to match a title by containment: fragments like "pay" would
+ *  otherwise sweep in every unrelated task that happens to contain them. */
+const MIN_PARTIAL_MATCH_CHARS = 3;
+
+/** Case-, spacing- and punctuation-insensitive form of a title, so "Buy a bedside table." and
+ *  "buy a bedside table" are the same name. Strips punctuation/symbols only — CJK titles survive. */
+const normalizeTitle = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+type Targets = {
+  /** Ids to act on, de-duplicated, in the order the model named them. */
+  ids: number[];
+  /** Names that matched no open task — reported back so the model can say so instead of assuming. */
+  notFound: string[];
+  /** Names that matched several open tasks — left untouched; the model has to ask which one. */
+  ambiguous: { name: string; matches: string[] }[];
+};
+
+/**
+ * Resolve the tasks a mutating call targets: a single `id`, a list of `ids`, and/or a list of `titles`
+ * matched against the user's OPEN tasks. Bulk targeting is what makes "remove those five" a single
+ * tool call; title matching is the safety net for tasks whose id the model was never shown (the agenda
+ * block caps each section). A name that matches nothing — or more than one task — is never guessed at:
+ * it comes back in notFound/ambiguous so the reply can be honest about what wasn't touched.
+ */
+async function resolveTargets(args: Record<string, unknown>): Promise<Targets> {
+  const out: Targets = { ids: [], notFound: [], ambiguous: [] };
+  const seen = new Set<number>();
+  const add = (n: number) => {
+    if (!Number.isFinite(n) || seen.has(n)) return;
+    seen.add(n);
+    out.ids.push(n);
+  };
+  if (args.id !== undefined && args.id !== null) add(Number(args.id));
+  // A model that means "12 and 14" sometimes sends the string "12, 14" for an array-typed field.
+  // Reading it is free; ignoring it is a call that silently changes nothing — the failure mode this
+  // whole path exists to prevent.
+  const idList = Array.isArray(args.ids)
+    ? args.ids
+    : typeof args.ids === "string"
+      ? args.ids.split(/[^0-9]+/).filter(Boolean)
+      : [];
+  for (const v of idList) add(Number(v));
+
+  const rawNames = Array.isArray(args.titles) ? args.titles : typeof args.titles === "string" ? [args.titles] : [];
+  const names = rawNames.map((v) => (typeof v === "string" ? v.trim() : "")).filter(Boolean);
+  if (names.length === 0) return out;
+
+  // Exact (normalized) match wins; only then containment, which is length-guarded so a fragment can't
+  // sweep in half the list.
+  const pick = (list: Task[], q: string) => {
+    const exact = list.filter((t) => normalizeTitle(t.title) === q);
+    if (exact.length) return exact;
+    return list.filter((t) => {
+      const title = normalizeTitle(t.title);
+      if (q.length >= MIN_PARTIAL_MATCH_CHARS && title.includes(q)) return true;
+      return title.length >= MIN_PARTIAL_MATCH_CHARS && q.includes(title);
+    });
+  };
+
+  const open = await getTasks("open");
+  let closed: Task[] | null = null;
+  for (const name of names) {
+    const q = normalizeTitle(name);
+    if (!q) continue;
+    let hits = pick(open, q);
+    if (hits.length === 0) {
+      // Nothing open by that name: look at the closed ones too, so reopening by name works and the
+      // model can say "that one's already off your list" instead of "I can't find it".
+      closed ??= (await getTasks("all")).filter((t) => t.status !== "open");
+      hits = pick(closed, q);
+    }
+    if (hits.length === 1) add(hits[0].id);
+    else if (hits.length === 0) out.notFound.push(name);
+    else out.ambiguous.push({ name, matches: hits.map((t) => t.title) });
+  }
+  return out;
+}
+
+/** The unmatched names, folded into a tool response only when there are any. */
+const missedNames = (t: Targets) => ({
+  ...(t.notFound.length ? { notFound: t.notFound } : {}),
+  ...(t.ambiguous.length ? { ambiguous: t.ambiguous } : {}),
+});
+
+/** How many open tasks are left (with the first few), read back from the server AFTER a change. The
+ *  agenda block in the model's instructions is a snapshot from before the call, so without this the
+ *  reply's "that's off your list now" is asserted against stale context — the exact loop where the
+ *  assistant kept reporting just-dismissed tasks as still there. */
+const STILL_OPEN_SHOWN = 12;
+async function remainingOpen(): Promise<{ openCount: number; stillOpen: { id: number; title: string }[] }> {
+  const open = await getTasks("open");
+  return {
+    openCount: open.length,
+    stillOpen: open.slice(0, STILL_OPEN_SHOWN).map((t) => ({ id: t.id, title: t.title })),
+  };
+}
+
 /**
  * Execute a task tool call. `args` is the model-supplied object (untyped per the SDK), so every field
  * is coerced defensively. `onChanged` fires after any successful mutation so the caller can refresh its
@@ -224,7 +374,6 @@ export async function runTaskTool(
   conversationId?: string,
 ): Promise<string> {
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-  const id = Number(args.id);
 
   if (name === "list_tasks") {
     const status = str(args.status) ?? "open";
@@ -262,31 +411,50 @@ export async function runTaskTool(
     return JSON.stringify({ ok: true, task: brief(task) });
   }
 
+  // Both mutations below act on however many tasks the call named (see resolveTargets): one PATCH per
+  // target, run together, with every outcome reported. Nothing is reported as changed unless the
+  // server said so — a task that couldn't be found comes back in noSuchTask rather than silently.
+  const noTargets = (t: Targets) =>
+    JSON.stringify({
+      error: "no task matched — pass the id(s) from the task list, or the exact titles",
+      ...missedNames(t),
+    });
+
   if (name === "complete_task") {
-    if (!Number.isFinite(id)) return JSON.stringify({ error: "a task id is required" });
-    const existing = (await getTasks("open")).find((t) => t.id === id);
-    // A repeating task is never "done": the server ticks the occurrence and keeps the row open, and we
-    // move it on to its next date in the same request so the agenda is correct immediately.
-    if (existing?.recurrence) {
-      const next = nextOccurrence(existing.recurrence, existing.dueDate ?? localDateStr());
-      const task = await patchTask(id, { status: "done", ...(next ? { dueDate: next } : {}) });
-      if (!task) return JSON.stringify({ error: "no such task" });
-      onChanged?.();
-      return JSON.stringify({
-        ok: true,
-        occurrenceDone: true,
-        nextDue: task.dueDate,
-        task: brief(task),
-      });
-    }
-    const task = await patchTask(id, { status: "done" });
-    if (!task) return JSON.stringify({ error: "no such task" });
+    const targets = await resolveTargets(args);
+    if (targets.ids.length === 0) return noTargets(targets);
+    const open = await getTasks("open");
+    const results = await Promise.all(
+      targets.ids.map(async (tid) => {
+        const existing = open.find((t) => t.id === tid);
+        // A repeating task is never "done": the server ticks the occurrence and keeps the row open, and
+        // we move it on to its next date in the same request so the agenda is correct immediately.
+        if (existing?.recurrence) {
+          const next = nextOccurrence(existing.recurrence, existing.dueDate ?? localDateStr());
+          return { id: tid, occurrence: true, task: await patchTask(tid, { status: "done", ...(next ? { dueDate: next } : {}) }) };
+        }
+        return { id: tid, occurrence: false, task: await patchTask(tid, { status: "done" }) };
+      }),
+    );
+    const done = results.filter((r) => r.task);
+    const missing = results.filter((r) => !r.task).map((r) => r.id);
+    if (done.length === 0) return JSON.stringify({ error: "no such task", noSuchTask: missing, ...missedNames(targets) });
     onChanged?.();
-    return JSON.stringify({ ok: true, task: brief(task) });
+    return JSON.stringify({
+      ok: true,
+      completed: done.map((r) => ({
+        ...brief(r.task!),
+        ...(r.occurrence ? { occurrenceDone: true, nextDue: r.task!.dueDate } : {}),
+      })),
+      ...(missing.length ? { noSuchTask: missing } : {}),
+      ...missedNames(targets),
+      ...(await remainingOpen()),
+    });
   }
 
   if (name === "update_task") {
-    if (!Number.isFinite(id)) return JSON.stringify({ error: "a task id is required" });
+    const targets = await resolveTargets(args);
+    if (targets.ids.length === 0) return noTargets(targets);
     const patch: {
       title?: string;
       dueDate?: string;
@@ -294,9 +462,20 @@ export async function runTaskTool(
       recurrence?: string;
       status?: string;
     } = {};
-    if (typeof args.title === "string") patch.title = args.title.trim();
+    if (typeof args.title === "string") {
+      // `title` renames, so it can only mean one task. Refusing beats quietly renaming five tasks to
+      // the same thing — and the model most likely meant `titles` (which selects, not renames).
+      if (targets.ids.length > 1) {
+        return JSON.stringify({
+          error:
+            "title renames ONE task — pass a single id to rename, or use titles (not title) to choose which tasks to change",
+        });
+      }
+      patch.title = args.title.trim();
+    }
     if (typeof args.dueDate === "string") patch.dueDate = args.dueDate.trim(); // "" clears it
     if (typeof args.dueTime === "string") patch.dueTime = args.dueTime.trim();
+    let anchorRepeat: string | undefined;
     if (typeof args.repeat === "string") {
       const repeat = args.repeat.trim(); // "" stops it repeating
       if (repeat && !isRecurring(repeat)) {
@@ -307,17 +486,33 @@ export async function runTaskTool(
       }
       patch.recurrence = repeat;
       // Newly repeating with no date of its own — anchor it, or it can never come due.
-      if (repeat && patch.dueDate === undefined) {
-        const seed = (await getTasks("open")).find((t) => t.id === id);
-        if (seed && !seed.dueDate) patch.dueDate = firstOccurrence(repeat) ?? undefined;
-      }
+      if (repeat && patch.dueDate === undefined) anchorRepeat = repeat;
     }
     const status = str(args.status);
     if (status === "open" || status === "dismissed") patch.status = status;
-    const task = await patchTask(id, patch);
-    if (!task) return JSON.stringify({ error: "no such task" });
+    const seeds = anchorRepeat ? await getTasks("open") : [];
+    const results = await Promise.all(
+      targets.ids.map(async (tid) => {
+        const p = { ...patch };
+        if (anchorRepeat) {
+          const seed = seeds.find((t) => t.id === tid);
+          if (seed && !seed.dueDate) p.dueDate = firstOccurrence(anchorRepeat) ?? undefined;
+        }
+        return { id: tid, task: await patchTask(tid, p) };
+      }),
+    );
+    const updated = results.filter((r) => r.task);
+    const missing = results.filter((r) => !r.task).map((r) => r.id);
+    if (updated.length === 0) return JSON.stringify({ error: "no such task", noSuchTask: missing, ...missedNames(targets) });
     onChanged?.();
-    return JSON.stringify({ ok: true, task: brief(task) });
+    return JSON.stringify({
+      ok: true,
+      updated: updated.map((r) => brief(r.task!)),
+      ...(missing.length ? { noSuchTask: missing } : {}),
+      ...missedNames(targets),
+      // Only when the change moved tasks on or off the list — a reschedule/rename doesn't need it.
+      ...(patch.status ? await remainingOpen() : {}),
+    });
   }
 
   return JSON.stringify({ error: `unknown tool: ${name}` });
