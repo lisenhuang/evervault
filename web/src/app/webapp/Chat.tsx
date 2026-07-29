@@ -20,7 +20,7 @@ import { LiveSession, type LiveState } from "./lib/liveSession";
 import { LiveVoiceMessage, renderConversation } from "./lib/liveVoiceMessage";
 import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
-import { CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
+import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
 import {
@@ -1068,6 +1068,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         renderStateBlock(statesRef.current),
         renderEventsBlock(eventsRef.current),
         renderAgendaBlock(tasksRef.current),
+        // Directly after the blocks that invite the assistant to raise something itself: whatever they
+        // suggest, the user's message is what the reply is for. Without this the model would answer a
+        // plain question with a check-in about their week and never get to the question at all.
+        ANSWER_FIRST,
         langDirective,
         styleDir,
         CONFIDENTIALITY,
