@@ -4,6 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Licensing: AGPL-3.0 plus the Section 7 attribution/origin terms in /NOTICE. -->
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 Ethan Huang</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

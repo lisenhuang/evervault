@@ -1,0 +1,93 @@
+EverVault
+Copyright (c) 2026 Ethan Huang
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License, version 3, as published by
+the Free Software Foundation. The full text is in the LICENSE file in this
+repository.
+
+This program is distributed WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+Affero General Public License for more details.
+
+
+================================================================================
+ADDITIONAL TERMS under Section 7 of the GNU AGPL v3
+================================================================================
+
+Section 7 of the AGPL lets the copyright holder supplement the license with a
+limited set of additional terms. The two below are added under 7(b) and 7(c).
+They are the "applicable terms" that Section 7 requires a notice to point to,
+and they travel with every copy and every modified version of this work.
+
+Nothing here restricts what the AGPL already grants. In particular you MAY use
+this software commercially, and you MAY charge money for a fork or for a service
+built on one. Attribution and source availability are the only conditions.
+
+
+1. ATTRIBUTION  (AGPL-3.0 Section 7(b))
+
+   You must preserve the copyright notice above, and you must state that the
+   work originates from the EverVault project.
+
+   If your version has an interactive user interface, that statement must appear
+   in the Appropriate Legal Notices the interface displays — meaning, per the
+   license, a convenient and prominently visible feature such as an "About",
+   "Credits", "Settings" or menu entry. Wording to this effect satisfies it:
+
+       Based on EverVault, originally created by Ethan Huang.
+       Source: https://github.com/lisenhuang/evervault
+
+   The notice must remain legible and reachable by an ordinary user. Removing
+   it, hiding it behind a developer-only flag, or burying it somewhere a user
+   would not find is a breach of this term.
+
+
+2. ORIGIN AND NAMING  (AGPL-3.0 Section 7(c))
+
+   You must not misrepresent the origin of this work, and you must mark your
+   modified version in a reasonable way as different from the original.
+
+   Concretely: do not present a modified version as if it were the original
+   EverVault, and do not imply it is endorsed by, affiliated with, or maintained
+   by the EverVault project or its author. Give your version its own name.
+
+   Stating accurately that your version is derived from, based on, or a fork of
+   EverVault is not only permitted, it is required by term 1 above.
+
+
+================================================================================
+TRADEMARK
+================================================================================
+
+"EverVault" is a name used by this project to identify it. The AGPL is a
+copyright license and grants no rights in names or logos (see Section 7(e) of
+the license, which permits declining to grant trademark rights).
+
+You may — and must — use the name factually to say where your version came from
+("based on EverVault", "a fork of EverVault"). You may not use it as the name
+of your own product or service, or in a way that suggests the EverVault project
+published or endorses it.
+
+
+================================================================================
+COMMERCIAL LICENSING
+================================================================================
+
+The copyright in this work is held entirely by the author named above, who is
+therefore not bound by the AGPL when licensing it to others. If the AGPL's
+source-disclosure requirement does not suit your use, a separate commercial
+license can be negotiated. Contact: lisen8018@gmail.com
+
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+This project depends on third-party software distributed under its own licenses.
+Those licenses continue to govern those components; the terms above apply to
+EverVault's own source code. See the dependency manifests for the full list:
+
+  backend/Evervault.Api/Evervault.Api.csproj   (.NET / NuGet)
+  web/package.json                             (Next.js / npm)
+  app/package.json                             (Expo / npm)

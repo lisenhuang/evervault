@@ -233,3 +233,20 @@ dotnet run --project backend/Evervault.Api   # ⚙️  api  → :38372
 cd web && pnpm dev                            # 🖥️  web  → :38373
 cd app && pnpm start                          # 📱  expo → QR / w·i·a
 ```
+
+## 📄 License
+
+**[AGPL-3.0](LICENSE)** plus two Section 7 terms in **[NOTICE](NOTICE)**. In short:
+
+| You may | You must |
+|---|---|
+| Fork it and make your own version | Publish your source — **including if you only host it** (AGPL §13) |
+| Use it commercially and charge for it | Credit EverVault where users can see it (§7(b)) |
+| Modify anything | Give your version its own name, and not imply endorsement (§7(c)) |
+
+Because §13 treats network use like distribution, a hosted fork can't stay closed —
+the loophole that makes MIT/Apache attribution unenforceable for a web app.
+
+Copyright is held solely by the author, who is not bound by the AGPL when licensing
+to others — **commercial licenses** are available for use that the source-disclosure
+term doesn't suit. See [NOTICE](NOTICE).
