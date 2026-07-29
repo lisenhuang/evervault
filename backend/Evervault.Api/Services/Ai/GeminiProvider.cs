@@ -184,6 +184,122 @@ public class GeminiProvider : IAiProvider
         return new AiCompletion(textSb.Length > 0 ? textSb.ToString() : null, calls, Usage: usage);
     }
 
+    /// <summary>
+    /// Run one search-grounded generation: hand the query to the model with Google's built-in
+    /// <c>google_search</c> tool so it searches the live web and answers from what it finds. Used as the
+    /// web-search fallback when the primary search provider is rate-limited or down.
+    ///
+    /// The built-in tool is sent ALONE — Gemini 2.x rejects a request that mixes <c>google_search</c> with
+    /// <c>function_declarations</c> ("Usage of built-in Google tools are not supported with external tools"),
+    /// so this is deliberately a standalone call rather than something folded into the normal tool loop.
+    /// Thinking is left at the model default: the search itself is the expensive part and a grounded lookup
+    /// gains nothing from a bigger reasoning budget.
+    ///
+    /// The returned source URIs are Google redirect links, not real pages — the caller MUST resolve them
+    /// (see <c>GeminiWebSearchService</c>) before they reach a user.
+    /// </summary>
+    public async Task<GroundedSearch> SearchWebAsync(
+        string rawKey, string model, string query, CancellationToken ct)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["contents"] = new[] { new { role = "user", parts = new[] { new { text = query } } } },
+            ["tools"] = new object[] { new { google_search = new { } } },
+        };
+
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        // A key with no grounding entitlement answers 429 RESOURCE_EXHAUSTED with a zero quota, which maps to
+        // Quota → KeyFailoverRunner rolls to the next key. Malformed-request 400s map to Other and surface
+        // immediately, so a coding mistake can never burn the whole key pool one 400 at a time.
+        if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
+
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var usage = ParseUsage(root);
+        if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
+            return new GroundedSearch(null, Array.Empty<GroundedSearchSource>(), usage);
+
+        var candidate = candidates[0];
+
+        var answer = new StringBuilder();
+        if (candidate.TryGetProperty("content", out var content)
+            && content.TryGetProperty("parts", out var parts))
+        {
+            foreach (var part in parts.EnumerateArray())
+                if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                    answer.Append(t.GetString());
+        }
+
+        return new GroundedSearch(
+            answer.Length > 0 ? answer.ToString() : null,
+            ParseGroundingSources(candidate),
+            usage);
+    }
+
+    /// <summary>
+    /// Pull the cited web sources out of <c>groundingMetadata</c>. Each <c>groundingChunk</c> carries a
+    /// <c>web.uri</c> (a redirect) and <c>web.title</c> (usually just the domain); the per-claim snippet comes
+    /// from <c>groundingSupports</c>, which maps a span of the answer to the chunks backing it.
+    ///
+    /// Snippets are taken from <c>segment.text</c> verbatim rather than sliced out of the answer with
+    /// <c>startIndex</c>/<c>endIndex</c>. Those offsets are UTF-8 BYTE offsets, not character indices, so
+    /// slicing a C# string with them silently corrupts any non-ASCII answer — which for this app's CJK users
+    /// would be every answer. Google supplies the resolved text anyway, so the offsets are never needed.
+    /// </summary>
+    private static IReadOnlyList<GroundedSearchSource> ParseGroundingSources(JsonElement candidate)
+    {
+        if (!candidate.TryGetProperty("groundingMetadata", out var meta)
+            || meta.ValueKind != JsonValueKind.Object
+            || !meta.TryGetProperty("groundingChunks", out var chunks)
+            || chunks.ValueKind != JsonValueKind.Array)
+            return Array.Empty<GroundedSearchSource>();
+
+        // chunk index → the first answer span that cited it, used as that source's snippet.
+        var snippets = new Dictionary<int, string>();
+        if (meta.TryGetProperty("groundingSupports", out var supports)
+            && supports.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var s in supports.EnumerateArray())
+            {
+                if (!s.TryGetProperty("segment", out var seg)
+                    || !seg.TryGetProperty("text", out var segText)
+                    || segText.ValueKind != JsonValueKind.String) continue;
+                var text = segText.GetString() ?? "";
+                if (text.Length == 0) continue;
+
+                if (!s.TryGetProperty("groundingChunkIndices", out var idxs)
+                    || idxs.ValueKind != JsonValueKind.Array) continue;
+                foreach (var i in idxs.EnumerateArray())
+                    if (i.ValueKind == JsonValueKind.Number && i.TryGetInt32(out var idx))
+                        snippets.TryAdd(idx, text);
+            }
+        }
+
+        var sources = new List<GroundedSearchSource>();
+        var n = 0;
+        foreach (var chunk in chunks.EnumerateArray())
+        {
+            var index = n++;
+            // groundingChunk is a oneof (web | retrievedContext | maps); google_search always yields web,
+            // but a chunk without it is skipped rather than trusted.
+            if (!chunk.TryGetProperty("web", out var web) || web.ValueKind != JsonValueKind.Object) continue;
+            var uri = Str(web, "uri");
+            if (uri.Length == 0) continue;
+            sources.Add(new GroundedSearchSource(
+                Str(web, "title"),
+                uri,
+                snippets.TryGetValue(index, out var snip) ? snip : ""));
+        }
+        return sources;
+    }
+
+    private static string Str(JsonElement e, string prop) =>
+        e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+
     /// <summary>Lift token counts out of Gemini's <c>usageMetadata</c> (promptTokenCount /
     /// candidatesTokenCount / totalTokenCount). Best-effort — returns null if absent.</summary>
     private static AiUsage? ParseUsage(JsonElement root)
@@ -515,7 +631,12 @@ public class GeminiProvider : IAiProvider
         var message = ExtractError(body, status);
         var lower = body.ToLowerInvariant();
         AiErrorKind kind;
-        if (lower.Contains("api_key_invalid") || lower.Contains("api key not valid") || (int)status == 403)
+        // 401 is included deliberately: Google's newer service-account-bound "auth keys" (the AQ.* format
+        // AI Studio now issues) can come back 401 UNAUTHENTICATED / ACCESS_TOKEN_TYPE_UNSUPPORTED on the
+        // native endpoint for some accounts. Without this, a 401 fell through to Other and aborted the whole
+        // request on the first bad key instead of failing over to the next one.
+        if (lower.Contains("api_key_invalid") || lower.Contains("api key not valid")
+            || (int)status == 401 || (int)status == 403)
             kind = AiErrorKind.Auth;
         else if ((int)status == 429 || lower.Contains("resource_exhausted"))
             kind = AiErrorKind.Quota;

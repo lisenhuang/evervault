@@ -38,10 +38,12 @@ public class ChatAiController : ControllerBase
     private readonly IErrorReportService _errors;
     private readonly IAiCallLogService _callLog;
     private readonly VoiceReplySynthesizer _voiceReplies;
+    private readonly IWebSearchService _search;
 
     public ChatAiController(
         KeyFailoverRunner failover, GeminiProvider gemini, AppDbContext db,
-        IErrorReportService errors, IAiCallLogService callLog, VoiceReplySynthesizer voiceReplies)
+        IErrorReportService errors, IAiCallLogService callLog, VoiceReplySynthesizer voiceReplies,
+        IWebSearchService search)
     {
         _failover = failover;
         _gemini = gemini;
@@ -49,6 +51,7 @@ public class ChatAiController : ControllerBase
         _errors = errors;
         _callLog = callLog;
         _voiceReplies = voiceReplies;
+        _search = search;
     }
 
     private int? Uid =>
@@ -83,10 +86,10 @@ public class ChatAiController : ControllerBase
     public async Task<ActionResult<WebappConfigDto>> Config()
     {
         var c = await _db.WebappAiConfigs.AsNoTracking().FirstOrDefaultAsync();
-        // WebSearch tells the client whether the assistant can search the live web. It's derived solely
-        // from whether an admin Brave key is stored — only this boolean crosses the wire, never the key.
-        var brave = await _db.BraveSearchConfigs.AsNoTracking().FirstOrDefaultAsync();
-        var webSearch = brave is not null && !string.IsNullOrEmpty(brave.ApiKeyEncrypted);
+        // WebSearch tells the client whether the assistant can search the live web. True when ANY search tier
+        // can serve a query — a stored search-API key, or a pooled Gemini key that can run a grounded search.
+        // Only this boolean crosses the wire, never a key or which tier would answer.
+        var webSearch = await _search.IsConfiguredAsync();
         return Ok(new WebappConfigDto(
             WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
             WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider,

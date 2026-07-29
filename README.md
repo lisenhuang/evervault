@@ -108,16 +108,24 @@ until the model answers in plain text.
                                                               │
                                        🖥️ runTool(name, args) — routes by name
                                                               │
-                    ┌──────────────┬──────────────────┬───────┴───────────┐
-                    ▼              ▼                  ▼                    ▼
-              recall_memory   record_suggestion   search_web       …tasks · files
-                                                    │ POST /api/chat/websearch
-                                                    ▼ (Brave key stays server-side 🔑)
-                                              { results:[ … ] } ──┐
+                    ┌──────────────┬─────────────┬────────┴────┬──────────────┐
+                    ▼              ▼             ▼             ▼              ▼
+              recall_memory  record_suggestion  search_web  fetch_url   …tasks · files
+                                                    │           │
+                              POST /api/chat/websearch          │ POST /api/chat/fetchurl
+                                                    ▼           ▼ (credentials stay server-side 🔑)
+                                              { results:[ … ] } │ { title, content(markdown) }
                                                               JSON │ string
                     🤖 model reads the result ◀─────────────────────┘
                           (calls again, or writes the answer)
 ```
+
+**Web tools** — two tiers, so a rate limit degrades instead of going dark:
+
+| Tool | Path | Notes |
+|---|---|---|
+| `search_web` | Brave → Gemini `google_search` grounding | Fallback reuses the pooled AI keys (no extra subscription); free tier is 500 grounded req/day |
+| `fetch_url` | Server-side fetch → Readability → markdown | No JS rendering; SSRF-guarded (connections pinned to vetted public IPs) |
 
 **Anatomy of a tool** — `web/src/app/webapp/lib/webSearchTool.ts` is the smallest example:
 
@@ -132,9 +140,10 @@ until the model answers in plain text.
   share the same declarations + dispatcher, so a new tool lights up while typing *and* talking.
 - **Dispatch ends in a fallthrough.** Any name without its own `is*Tool` arm is silently answered by
   `recall_memory` — so each new family needs an explicit arm *before* that fallthrough.
-- **Secrets stay server-side.** `run*Tool` calls a backend endpoint; the browser never holds the key.
-  `search_web` is offered only when an admin saved a key (the `webSearch` flag on
-  `GET /api/chat/ai/config`) — with none, the model is simply told it can't browse.
+- **Secrets stay server-side.** `run*Tool` calls a backend endpoint; the browser never holds a key.
+  `search_web` is offered when *any* provider can serve it (the `webSearch` flag on
+  `GET /api/chat/ai/config`) — with none, the model is simply told it can't browse. `fetch_url` needs no
+  key, so it is always offered.
 
 ## 🔌 Ports
 

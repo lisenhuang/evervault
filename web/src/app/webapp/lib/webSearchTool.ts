@@ -1,10 +1,12 @@
 // The `search_web` tool — lets the model look things up on the live web mid-reply (current events,
 // prices, schedules, facts that may have changed). Shared by the text chat (gemini.ts / Chat.tsx) and
-// the realtime/voice surfaces (liveShared.ts) so every surface exposes the same capability. The Brave
-// key lives only on the backend; the browser just posts a query to POST /api/chat/websearch and relays
-// the results to the model. Availability is gated by the `webSearch` flag on GET /api/chat/ai/config —
-// the tool is only offered (and SEARCH_PERSONA_AVAILABLE injected) when a key is configured; otherwise
-// SEARCH_PERSONA_UNAVAILABLE tells the model it can't browse.
+// the realtime/voice surfaces (liveShared.ts) so every surface exposes the same capability. Credentials
+// live only on the backend; the browser just posts a query to POST /api/chat/websearch and relays the
+// results to the model. Which provider actually served the query is a backend concern the client never
+// sees — it tries a dedicated search API first and falls back to a grounded model search when that one is
+// rate-limited or unconfigured. Availability is gated by the `webSearch` flag on GET /api/chat/ai/config —
+// the tool is only offered (and SEARCH_PERSONA_AVAILABLE injected) when some provider can serve it;
+// otherwise SEARCH_PERSONA_UNAVAILABLE tells the model it can't browse.
 
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { api } from "../authApi";
@@ -21,9 +23,11 @@ export const SEARCH_PERSONA_AVAILABLE =
   "researching after you reply or come back later with results — so look it up now, or answer from what " +
   "you already know, and never promise to go find something afterward. Never say you searched, checked, " +
   "or found something online unless you actually called search_web and got results back. " +
-  "You may share your sources: each result carries a title and a web address (URL) — those are the " +
+  "You may share your sources: most results carry a title and a web address (URL) — those are the " +
   "found page's own public links, not an internal detail, so it's fine to include them, and you SHOULD " +
   "give the relevant one(s) whenever the user asks for a link, a source, or where something came from. " +
+  "Some results are a plain summary with no URL; use them for the facts, but don't invent a link for one " +
+  "or present it as a page you can point the user to. " +
   "Because tool results aren't kept once the turn ends, include or offer the source link in the SAME " +
   "reply where you use a result (so the user doesn't have to make you look it up again just to get the " +
   "link) — e.g. when you mention a news item, add its link or offer to. In a spoken reply, long URLs are " +

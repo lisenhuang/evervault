@@ -1,3 +1,4 @@
+using System.Net;
 using Evervault.Api.Controllers;
 using Evervault.Api.Data;
 using Evervault.Api.Services;
@@ -62,6 +63,11 @@ builder.Services.AddSingleton<IEmbedder, HashingEmbedder>();
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 builder.Services.AddScoped<IBraveSearchService, BraveSearchService>();
+// Web search is tiered: the dedicated search API first, Gemini's Google Search grounding (on the shared AI
+// key pool) as the fallback when it is rate-limited or unconfigured. WebSearchService owns that chain.
+builder.Services.AddScoped<IGeminiWebSearchService, GeminiWebSearchService>();
+builder.Services.AddScoped<IWebSearchService, WebSearchService>();
+builder.Services.AddScoped<IUrlFetchService, UrlFetchService>();
 builder.Services.AddScoped<IErrorReportService, ErrorReportService>();
 builder.Services.AddScoped<IAiCallLogService, AiCallLogService>();
 
@@ -72,6 +78,22 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient(OpenAiProvider.HttpClientName, c => c.Timeout = TimeSpan.FromMinutes(10));
 // Web search (Brave) is a quick REST call; the factory default 100s timeout is ample.
 builder.Services.AddHttpClient(BraveSearchService.HttpClientName);
+// Resolving a grounding redirect means reading its Location header, NOT fetching the page behind it — so
+// auto-redirect is off and each hop is inspected by hand (see GeminiWebSearchService.ResolveAsync).
+builder.Services.AddHttpClient(GeminiWebSearchService.HttpClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+// Fetching a model-supplied URL is an SSRF sink, so this handler is locked down: connections are pinned to
+// addresses vetted at connect time (closing the DNS-rebinding window), and redirects are NOT auto-followed
+// so each hop can be re-validated. See UrlFetchService for the full rationale.
+builder.Services.AddHttpClient(UrlFetchService.HttpClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        AutomaticDecompression = DecompressionMethods.All,   // byte cap is applied post-decompression
+        ConnectTimeout = TimeSpan.FromSeconds(8),
+        ConnectCallback = UrlFetchService.SafeConnectAsync,
+    });
 builder.Services.AddSingleton<OpenRouterProvider>();
 builder.Services.AddSingleton<GeminiProvider>();
 builder.Services.AddSingleton<OpenAiProvider>();

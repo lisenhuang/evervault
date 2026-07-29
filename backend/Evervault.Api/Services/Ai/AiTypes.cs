@@ -42,6 +42,17 @@ public record AiModelInfo(
 /// JSON-Schema string describing the arguments.</summary>
 public record AiToolSchema(string Name, string Description, string ParametersJson);
 
+/// <summary>One source behind a grounded search answer. <see cref="Uri"/> is exactly what the provider
+/// returned — for Gemini that is an opaque <c>grounding-api-redirect</c> link, NOT the real page — so it
+/// must be resolved before it can be shown to anyone (see <c>GeminiWebSearchService</c>).
+/// <see cref="Title"/> is typically the bare domain rather than the page's headline.</summary>
+public record GroundedSearchSource(string Title, string Uri, string Snippet);
+
+/// <summary>The result of one search-grounded generation: the model's synthesized answer plus the web
+/// sources it drew on. <see cref="Sources"/> is empty when the model chose to answer without searching,
+/// which is a normal outcome rather than an error.</summary>
+public record GroundedSearch(string? Answer, IReadOnlyList<GroundedSearchSource> Sources, AiUsage? Usage);
+
 /// <summary>Per-call generation tuning, provider-agnostic. Today only carries reasoning effort;
 /// add temperature/max-tokens/etc. here later. <see cref="ReasoningEffort"/> is one of
 /// "auto" | "off" | "low" | "medium" | "high" (null/"auto" → providers send nothing special).</summary>

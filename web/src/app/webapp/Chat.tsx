@@ -44,6 +44,12 @@ import {
   SEARCH_PERSONA_UNAVAILABLE,
   SEARCH_WEB_DECLARATION,
 } from "./lib/webSearchTool";
+import {
+  FETCH_URL_DECLARATION,
+  isUrlFetchTool,
+  runUrlFetchTool,
+  URL_FETCH_PERSONA,
+} from "./lib/urlFetchTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { catchUpRecurring, getTasks, localDateStr, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
@@ -1069,6 +1075,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // Exactly one of these always survives .filter(Boolean): tell the model it can search the web
         // when a key is configured, or that it can't right now when it isn't.
         searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
+        // Reading a page needs no key, so unlike search this is unconditional.
+        URL_FETCH_PERSONA,
         SAFETY_BOUNDS,
         MEMORY_PERSONA,
         FILES_PERSONA,
@@ -1089,6 +1097,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             RECORD_SUGGESTION_DECLARATION,
             // Only offered when a web-search key is configured; the persona above matches this.
             ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
+            // Always offered: reading a page is keyless, so there is nothing to gate it on.
+            FETCH_URL_DECLARATION,
           ],
         },
       ];
@@ -1110,7 +1120,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
                   })
                 : isWebSearchTool(name)
                   ? runWebSearchTool(args)
-                  : runRecallTool(args);
+                  : isUrlFetchTool(name)
+                    ? runUrlFetchTool(args)
+                    : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -1121,6 +1133,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
         searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
+        URL_FETCH_PERSONA,
         SUGGESTION_PERSONA,
         currentTimeContext(),
       ]
@@ -1131,11 +1144,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           functionDeclarations: [
             RECORD_SUGGESTION_DECLARATION,
             ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
+            FETCH_URL_DECLARATION,
           ],
         },
       ];
       const runTool = (name: string, args: Record<string, unknown>) =>
-        isWebSearchTool(name) ? runWebSearchTool(args) : runSuggestion(args);
+        isWebSearchTool(name)
+          ? runWebSearchTool(args)
+          : isUrlFetchTool(name)
+            ? runUrlFetchTool(args)
+            : runSuggestion(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }

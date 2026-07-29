@@ -18,12 +18,12 @@ namespace Evervault.Api.Controllers;
 [Authorize(AuthenticationSchemes = AuthController.Scheme)]
 public class ChatSearchController : ControllerBase
 {
-    private readonly IBraveSearchService _brave;
+    private readonly IWebSearchService _search;
     private readonly IErrorReportService _errors;
 
-    public ChatSearchController(IBraveSearchService brave, IErrorReportService errors)
+    public ChatSearchController(IWebSearchService search, IErrorReportService errors)
     {
-        _brave = brave;
+        _search = search;
         _errors = errors;
     }
 
@@ -48,7 +48,9 @@ public class ChatSearchController : ControllerBase
         var count = Math.Clamp(req.Count ?? 5, 1, 10);
         try
         {
-            var results = await _brave.SearchAsync(query, count, HttpContext.RequestAborted);
+            // Provider tiering (dedicated search API → Gemini grounding) lives in the service; from here a
+            // search either produces results or doesn't, regardless of which tier served it.
+            var results = await _search.SearchAsync(query, count, Uid, HttpContext.RequestAborted);
             return Ok(new { results });
         }
         catch (AiProviderException ex) when (ex.Kind == AiErrorKind.Auth)
@@ -61,14 +63,15 @@ public class ChatSearchController : ControllerBase
         {
             return new EmptyResult(); // client navigated away / aborted — nothing to return
         }
-        catch (Exception ex) when (ex is AiProviderException or HttpRequestException or IOException or OperationCanceledException)
+        catch (Exception ex) when (ex is AiProviderException or AllKeysFailedException or HttpRequestException or IOException or OperationCanceledException)
         {
-            // A genuine upstream/transport failure: a bad Brave status (non-Auth), a network-level error
+            // Every configured tier genuinely failed: a bad upstream status (non-Auth), a network-level error
             // (DNS / connection refused / TLS / unreachable, which throw HttpRequestException BEFORE any
-            // response), or the HttpClient's own timeout (an OperationCanceledException that is NOT a
-            // client abort — those were peeled off above). EV-coded 502, mirroring the AI proxy.
+            // response), the HttpClient's own timeout (an OperationCanceledException that is NOT a client
+            // abort — those were peeled off above), or AllKeysFailed from the grounded fallback exhausting the
+            // key pool. EV-coded 502, mirroring the AI proxy.
             var code = await _errors.CaptureAsync("backend", "web-search", Uid, 502,
-                "Brave Search request failed.", ex.Message, UserAgent);
+                "Web search failed on every configured provider.", ex.Message, UserAgent);
             return StatusCode(502, new { error = "Web search is temporarily unavailable. Please try again.", referenceCode = code });
         }
     }

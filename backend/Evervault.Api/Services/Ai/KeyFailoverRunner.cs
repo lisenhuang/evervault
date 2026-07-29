@@ -14,6 +14,8 @@ namespace Evervault.Api.Services.Ai;
 /// each enabled key in <c>SortOrder</c>; on an auth/quota/transient failure it records the error on
 /// that key and advances to the next. When every key fails it throws <see cref="AllKeysFailedException"/>
 /// carrying the real provider error message for each key. Non-key errors (Other) propagate immediately.
+/// A caller whose operation only works on some keys can narrow the pool with a <c>keyFilter</c> predicate
+/// without affecting any other call site.
 ///
 /// Because it is also the single point that sees the key identity and the full failover chain, it is where
 /// every call is logged (best-effort) to <see cref="AiCallLog"/> when the caller supplies an
@@ -47,12 +49,20 @@ public class KeyFailoverRunner
     /// <param name="usageOf">Optional extractor that pulls token counts out of the successful result, for the
     /// log row. Callers whose result carries no usage (or who patch tokens later, like the streaming proxy)
     /// pass null.</param>
+    /// <param name="keyFilter">Optional predicate on the DECRYPTED key, letting a caller restrict failover to
+    /// the subset of keys that can actually serve its operation — e.g. web-search grounding only works on
+    /// classic "AIza…" Gemini keys, so the search path filters out the newer "AQ." ones rather than burning a
+    /// round-trip discovering that per key. Keys that fail the predicate are skipped silently (never logged as
+    /// errors, never counted as attempts). When it filters out everything, this throws the same Auth
+    /// "no keys configured" exception as an empty key list, so callers treat both alike. Null = try every key,
+    /// which is what every pre-existing call site does.</param>
     public async Task<T> RunAsync<T>(
         string provider,
         Func<IAiProvider, string, Task<T>> op,
         int skip = 0,
         AiCallContext? log = null,
-        Func<T, AiUsage?>? usageOf = null)
+        Func<T, AiUsage?>? usageOf = null,
+        Func<string, bool>? keyFilter = null)
     {
         var sw = Stopwatch.StartNew();
         var p = _factory.Get(provider);
@@ -95,6 +105,7 @@ public class KeyFailoverRunner
         var errors = new List<string>();
         var attempts = new List<KeyAttempt>();
         var lastKind = AiErrorKind.Other;
+        var eligible = 0;
 
         foreach (var k in keys)
         {
@@ -106,6 +117,13 @@ public class KeyFailoverRunner
                 attempts.Add(new KeyAttempt(k.KeyHint, "stored key could not be decrypted."));
                 continue;
             }
+
+            // Ineligible for THIS operation (see keyFilter) — not a failure, so it is skipped without an
+            // error, an attempt row, or a log entry. It stays perfectly usable for every other call site.
+            // Under AI_FAKE the stored keys are placeholders that need not look like real provider keys, so
+            // the filter is bypassed — otherwise offline testing would see "no eligible keys".
+            if (keyFilter is not null && !_factory.IsFake && !keyFilter(raw)) continue;
+            eligible++;
 
             try
             {
@@ -129,6 +147,17 @@ public class KeyFailoverRunner
                 await RecordFailAsync(log, provider, k.KeyHint, attempts.Count, attempts, ex.Kind, ex.Message, sw);
                 throw;
             }
+        }
+
+        // Every key was filtered out (and none even failed to decrypt): the caller has no usable credential
+        // at all, which is the same situation as an empty key list — surface it identically so callers need
+        // only one "not configured" branch, and never an AllKeysFailedException carrying zero errors.
+        if (eligible == 0 && errors.Count == 0)
+        {
+            var none = new AiProviderException(AiErrorKind.Auth,
+                $"No {provider} API keys eligible for this operation are configured.");
+            await RecordFailAsync(log, provider, null, 0, null, none.Kind, none.Message, sw);
+            throw none;
         }
 
         await RecordFailAsync(log, provider, keys[^1].KeyHint, attempts.Count, attempts, lastKind,

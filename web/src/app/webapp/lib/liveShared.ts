@@ -18,6 +18,7 @@ import {
   SEARCH_PERSONA_UNAVAILABLE,
   SEARCH_WEB_DECLARATION,
 } from "./webSearchTool";
+import { FETCH_URL_DECLARATION, isUrlFetchTool, runUrlFetchTool, URL_FETCH_PERSONA } from "./urlFetchTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
@@ -69,6 +70,8 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     SUGGESTION_PERSONA,
     // Exactly one always survives .filter(Boolean): "you can search the web" vs "you can't right now".
     o.searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
+    // Reading a page needs no key, so unlike search this is unconditional.
+    URL_FETCH_PERSONA,
     LIVE_VOICE_SYSTEM_INSTRUCTION,
     o.styleInstruction || "",
     CONFIDENTIALITY,
@@ -101,6 +104,8 @@ export function buildLiveToolDeclarations(memoryEnabled: boolean, searchAvailabl
         RECORD_SUGGESTION_DECLARATION,
         // Independent of memory — offered only when a web-search key is configured.
         ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
+        // Always offered: reading a page is keyless, so there is nothing to gate it on.
+        FETCH_URL_DECLARATION,
       ],
     },
   ];
@@ -136,7 +141,9 @@ export async function dispatchLiveToolCalls(
               ? runForgetTool(name, args)
               : isWebSearchTool(name)
                 ? runWebSearchTool(args)
-                : runRecallTool(args);
+                : isUrlFetchTool(name)
+                  ? runUrlFetchTool(args)
+                  : runRecallTool(args);
     }),
   );
   return calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } }));

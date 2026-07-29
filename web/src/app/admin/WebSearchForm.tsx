@@ -97,10 +97,19 @@ export default function WebSearchForm() {
             fast-changing information, and answer from what it finds.
           </li>
           <li>
-            With no key, the assistant simply tells users it can’t look things up right now — it never mentions a
-            key or any setup detail.
+            <strong>Fallback:</strong> the free Brave plan allows about one query per second, which a burst of
+            questions trips easily. When a search is rate-limited or fails, it automatically falls back to your
+            existing Gemini keys, so search keeps working without a paid plan.
           </li>
-          <li>The key stays on the server and is never sent to the browser; only a “configured” flag is exposed.</li>
+          <li>
+            The fallback only runs on classic <code>AIzaSy…</code> Gemini keys — newer <code>AQ.…</code> keys are
+            skipped, since they land in projects with no search quota.
+          </li>
+          <li>
+            With no key here and no eligible Gemini key, the assistant simply tells users it can’t look things up
+            right now — it never mentions a key or any setup detail.
+          </li>
+          <li>Keys stay on the server and are never sent to the browser; only a “configured” flag is exposed.</li>
         </ul>
       </Card>
     </div>
