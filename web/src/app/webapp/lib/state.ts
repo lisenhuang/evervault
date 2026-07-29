@@ -106,8 +106,9 @@ export function renderStateBlock(states: UserState[], now = new Date()): string 
     "How this user has been lately, in their own words. This is NOT current fact — it is what they " +
     "said at the time, and things change. Use it the way a friend would: it may prompt you to ask how " +
     "something turned out, or to be a bit gentler, and that's all. Do NOT open with it, do not bring " +
-    "up more than one of these in a conversation, and never treat something from over a week ago as " +
-    "how they feel right now — ask, don't assume. Never diagnose, label, or infer any medical or " +
+    "up more than one of these in a conversation, and never let it displace what they actually said — " +
+    "answer that first, then add anything of your own at the end. Never treat something from over a " +
+    "week ago as how they feel right now — ask, don't assume. Never diagnose, label, or infer any medical or " +
     "mental-health condition from it, and never imply you have been monitoring their mood. If they " +
     "don't want to get into it, drop it immediately and don't return to it:\n" +
     lines.join("\n")

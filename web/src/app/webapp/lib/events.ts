@@ -115,18 +115,22 @@ export function renderEventsBlock(events: LifeEvent[], now = new Date()): string
   const parts: string[] = [];
   if (justHappened.length > 0) {
     parts.push(
-      "Things in this user's life that have just happened and you haven't asked about yet. Ask about " +
-      "ONE of these, naturally and early, the way a friend who remembered would — \"how did the " +
-      "interview go?\" — then let them steer. Ask each of these only once, ever; if they'd rather not " +
-      "talk about it, drop it and don't raise it again. Don't assume how it went, and don't congratulate " +
-      "or commiserate before they've told you:\n" +
+      "Things in this user's life that have just happened and you haven't asked about yet. When the " +
+      "conversation has room for it, ask about ONE of these, the way a friend who remembered would — " +
+      "\"how did the interview go?\" — then let them steer. This NEVER comes ahead of what they " +
+      "actually said: answer their message in full first and put the question at the end of that same " +
+      "reply, or leave it for another turn if it would cut across what they came for. Never send a " +
+      "reply that is only this question while their own message sits unanswered. Ask each of these " +
+      "only once, ever; if they'd rather not talk about it, drop it and don't raise it again. Don't " +
+      "assume how it went, and don't congratulate or commiserate before they've told you:\n" +
       justHappened.slice(0, FOLLOW_UP_CAP).join("\n"),
     );
   }
   if (upcoming.length > 0) {
     parts.push(
       "Coming up for this user. Only bring these up if it fits what they're already talking about, or " +
-      "if it's today or tomorrow — don't recite the list:\n" + upcoming.slice(0, UPCOMING_CAP).join("\n"),
+      "if it's today or tomorrow — and even then only after you've answered them, never as the reply " +
+      "itself. Don't recite the list:\n" + upcoming.slice(0, UPCOMING_CAP).join("\n"),
     );
   }
   return parts.join("\n\n");
