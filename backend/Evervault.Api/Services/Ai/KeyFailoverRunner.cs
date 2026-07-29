@@ -54,8 +54,9 @@ public class KeyFailoverRunner
     /// classic "AIza…" Gemini keys, so the search path filters out the newer "AQ." ones rather than burning a
     /// round-trip discovering that per key. Keys that fail the predicate are skipped silently (never logged as
     /// errors, never counted as attempts). When it filters out everything, this throws the same Auth
-    /// "no keys configured" exception as an empty key list, so callers treat both alike. Null = try every key,
-    /// which is what every pre-existing call site does.</param>
+    /// "no keys configured" exception as an empty key list, so callers treat both alike — except when some
+    /// key also failed to decrypt, in which case that more actionable error is reported instead. Null = try
+    /// every key, which is what every pre-existing call site does.</param>
     public async Task<T> RunAsync<T>(
         string provider,
         Func<IAiProvider, string, Task<T>> op,
@@ -149,9 +150,13 @@ public class KeyFailoverRunner
             }
         }
 
-        // Every key was filtered out (and none even failed to decrypt): the caller has no usable credential
-        // at all, which is the same situation as an empty key list — surface it identically so callers need
-        // only one "not configured" branch, and never an AllKeysFailedException carrying zero errors.
+        // Nothing was attempted and nothing errored — i.e. the filter rejected every key. That is the same
+        // situation as an empty key list, so it is surfaced identically and callers need only one "not
+        // configured" branch, never an AllKeysFailedException carrying zero errors.
+        //
+        // `errors.Count == 0` is required, not incidental: a key that failed to DECRYPT also never counts as
+        // eligible, and "stored key could not be decrypted" is a far more actionable message for an operator
+        // than "no eligible keys". So whenever any such error exists it wins, and this path is skipped.
         if (eligible == 0 && errors.Count == 0)
         {
             var none = new AiProviderException(AiErrorKind.Auth,

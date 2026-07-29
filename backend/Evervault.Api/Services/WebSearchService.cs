@@ -78,8 +78,18 @@ public class WebSearchService : IWebSearchService
             // failed with Auth, into a bogus "web search is not configured").
             if (primaryFailure is null) return Array.Empty<WebSearchResult>();
 
-            // Both tiers are genuinely out. Surface the PRIMARY failure: it is the more diagnostic of the two
-            // (an expired key, a rate limit) where the fallback's is usually just "no eligible keys".
+            // Both tiers are out. Report whichever failure actually explains it.
+            //
+            // The primary throws Auth("no key configured") whenever no search key is stored — which in a
+            // deployment that deliberately runs on the grounded tier alone is EVERY request. Preferring the
+            // primary unconditionally would therefore mistranslate a real fallback outage (quota exhausted,
+            // upstream down) into "web search is not configured", telling the user search was never set up
+            // when in truth it was set up and just failed. So a mere config gap yields to a genuine failure;
+            // only when the primary failed for a real reason does it win, being the more diagnostic of the two.
+            var primaryIsConfigGap = primaryFailure is AiProviderException { Kind: AiErrorKind.Auth };
+            var secondaryIsConfigGap = ex is AiProviderException { Kind: AiErrorKind.Auth };
+            if (primaryIsConfigGap && !secondaryIsConfigGap) throw;
+
             // Rethrown via ExceptionDispatchInfo so the original stack trace survives into the error report.
             ExceptionDispatchInfo.Capture(primaryFailure).Throw();
             throw;   // unreachable — keeps the compiler's definite-assignment analysis happy

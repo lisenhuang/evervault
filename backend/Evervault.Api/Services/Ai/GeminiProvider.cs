@@ -208,6 +208,10 @@ public class GeminiProvider : IAiProvider
         };
 
         var client = _http.CreateClient();
+        // A grounded generation runs a live search before it answers, so it is slower than a plain
+        // completion — but it also sits in the middle of a user's turn (including a spoken one), so the
+        // ceiling is deliberately tight rather than the factory's 100s.
+        client.Timeout = TimeSpan.FromSeconds(25);
         var req = Req(HttpMethod.Post, $"/v1beta/models/{model}:generateContent", rawKey);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var res = await client.SendAsync(req, ct);
@@ -217,7 +221,18 @@ public class GeminiProvider : IAiProvider
         // immediately, so a coding mistake can never burn the whole key pool one 400 at a time.
         if (!res.IsSuccessStatusCode) throw MapError(res.StatusCode, body);
 
-        using var doc = JsonDocument.Parse(body);
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(body); }
+        catch (JsonException ex)
+        {
+            // A 2xx carrying something that isn't JSON — a captive portal or an intercepting proxy on the
+            // container's egress. Transient so failover tries the next key; unguarded this escaped every
+            // catch filter upstream and became a bare 500 with no EV reference code.
+            throw new AiProviderException(AiErrorKind.Transient,
+                $"Gemini returned a non-JSON response to a grounded search. {ex.Message}");
+        }
+
+        using var _ = doc;
         var root = doc.RootElement;
         var usage = ParseUsage(root);
         if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
@@ -631,12 +646,17 @@ public class GeminiProvider : IAiProvider
         var message = ExtractError(body, status);
         var lower = body.ToLowerInvariant();
         AiErrorKind kind;
-        // 401 is included deliberately: Google's newer service-account-bound "auth keys" (the AQ.* format
-        // AI Studio now issues) can come back 401 UNAUTHENTICATED / ACCESS_TOKEN_TYPE_UNSUPPORTED on the
-        // native endpoint for some accounts. Without this, a 401 fell through to Other and aborted the whole
-        // request on the first bad key instead of failing over to the next one.
+        // access_token_type_unsupported is matched deliberately: Google's newer service-account-bound "auth
+        // keys" (the AQ.* format AI Studio now issues) come back 401 UNAUTHENTICATED with that reason on the
+        // native endpoint for some accounts. Without it such a key fell through to Other and aborted the
+        // whole request instead of failing over to the next key.
+        //
+        // Matched on the reason rather than on status 401 alone, because Other is load-bearing elsewhere:
+        // SynthOnceAsync uses `Kind == Other` as its signal to retry TTS on the Interactions API, so
+        // reclassifying every 401 as Auth would silently disable the Gemini 3.x TTS fallback.
         if (lower.Contains("api_key_invalid") || lower.Contains("api key not valid")
-            || (int)status == 401 || (int)status == 403)
+            || lower.Contains("access_token_type_unsupported")
+            || (int)status == 403)
             kind = AiErrorKind.Auth;
         else if ((int)status == 429 || lower.Contains("resource_exhausted"))
             kind = AiErrorKind.Quota;

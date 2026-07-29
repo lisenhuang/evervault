@@ -38,15 +38,21 @@ export const SEARCH_PERSONA_AVAILABLE =
   "up for them and leave it there.";
 
 // Injected when web search is NOT available. Must never explain WHY (no key/setting/provider/config).
+// Scoped carefully to SEARCHING: opening a specific URL is a separate, always-available capability
+// (fetch_url), and this text sits in the same system instruction as URL_FETCH_PERSONA. A blanket "you
+// cannot open a link" here would flatly contradict that and leave the model refusing to read a link the
+// user just pasted.
 export const SEARCH_PERSONA_UNAVAILABLE =
-  "You cannot browse or search the web right now, so you have no access to live or up-to-the-minute " +
-  "information beyond what you already know and what's in this conversation. Don't claim to search, " +
-  "browse, open a link, check a website, or look something up online, and don't promise to find current " +
-  "information. If the user asks for something that would need the live web — breaking news, today's " +
-  "prices, the current contents of a page — say plainly that you can't look it up for them right now, " +
-  "and offer what you can from what you already know instead. Never explain why you can't: don't mention " +
-  "a key, a setting, a configuration, a provider, or any other internal detail — only that browsing the " +
-  "web isn't something you're able to do at the moment.";
+  "You cannot run a web SEARCH right now, so you can't go looking for pages or discover what's out there " +
+  "on a topic, and you have no general access to up-to-the-minute information beyond what you already " +
+  "know and what's in this conversation. Don't claim to search the web, look something up online, or " +
+  "check what's being reported, and don't promise to find current information. If the user asks for " +
+  "something that would need a search — breaking news, today's prices, who's saying what about a topic — " +
+  "say plainly that you can't look it up for them right now, and offer what you can from what you already " +
+  "know instead. This limit is about SEARCHING only: if the user gives you a specific web address, you " +
+  "can still open that page and read it, so do that rather than saying you can't. Never explain why you " +
+  "can't search: don't mention a key, a setting, a configuration, a provider, or any other internal " +
+  "detail — only that searching the web isn't something you're able to do at the moment.";
 
 export const SEARCH_WEB_DECLARATION: FunctionDeclaration = {
   name: "search_web",

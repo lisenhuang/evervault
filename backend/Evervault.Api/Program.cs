@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using Evervault.Api.Controllers;
 using Evervault.Api.Data;
 using Evervault.Api.Services;
@@ -9,6 +10,12 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Pgvector.EntityFrameworkCore;
+
+// Teach Encoding.GetEncoding the legacy code pages. .NET ships only UTF-*/ASCII/Latin1 by default, so
+// without this a page served as gb2312, gbk, big5, shift_jis or windows-1252 throws on lookup and gets
+// decoded as UTF-8 instead — turning a Chinese article into replacement characters. Registered once,
+// process-wide, before anything can read a response body.
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -80,8 +87,18 @@ builder.Services.AddHttpClient(OpenAiProvider.HttpClientName, c => c.Timeout = T
 builder.Services.AddHttpClient(BraveSearchService.HttpClientName);
 // Resolving a grounding redirect means reading its Location header, NOT fetching the page behind it — so
 // auto-redirect is off and each hop is inspected by hand (see GeminiWebSearchService.ResolveAsync).
+// It gets the SAME address vetting as the page fetcher: a redirect chain is attacker-influenced (whoever
+// controls a page that ranks for the query also controls where it redirects), so without this a citation
+// lookup could be steered into the private network just like a direct fetch.
 builder.Services.AddHttpClient(GeminiWebSearchService.HttpClientName)
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+        ConnectCallback = UrlFetchService.SafeConnectAsync,
+        UseProxy = false,   // see the url-fetch client below for why this must not be left at its default
+    });
 // Fetching a model-supplied URL is an SSRF sink, so this handler is locked down: connections are pinned to
 // addresses vetted at connect time (closing the DNS-rebinding window), and redirects are NOT auto-followed
 // so each hop can be re-validated. See UrlFetchService for the full rationale.
@@ -93,6 +110,12 @@ builder.Services.AddHttpClient(UrlFetchService.HttpClientName)
         AutomaticDecompression = DecompressionMethods.All,   // byte cap is applied post-decompression
         ConnectTimeout = TimeSpan.FromSeconds(8),
         ConnectCallback = UrlFetchService.SafeConnectAsync,
+        // UseProxy MUST stay false. It defaults to true, and a proxy inverts the whole defence: the
+        // ConnectCallback would then be handed the PROXY's endpoint instead of the target's, so the address
+        // check would vet the proxy and the real destination would never be inspected at all. It also breaks
+        // outright on any machine with a system proxy configured — the callback sees 127.0.0.1, matches
+        // loopback, and every fetch fails as "private network".
+        UseProxy = false,
     });
 builder.Services.AddSingleton<OpenRouterProvider>();
 builder.Services.AddSingleton<GeminiProvider>();

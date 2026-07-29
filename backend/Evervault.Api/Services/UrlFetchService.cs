@@ -77,9 +77,20 @@ public class UrlFetchService : IUrlFetchService
     /// addresses and refuses to follow redirects on its own.</summary>
     public const string HttpClientName = "url-fetch";
 
-    /// <summary>Cap on decompressed response bytes. Comfortably larger than any article, far below anything
-    /// that would pressure the container's memory.</summary>
-    private const int MaxBytes = 5 * 1024 * 1024;
+    /// <summary>Cap on decompressed response bytes.
+    ///
+    /// Sized for CPU, not memory. Readability's scoring is superlinear in DOM size, and on adversarial markup
+    /// (deeply nested divs, a huge link list) it degrades badly — a 5 MB page of that shape was measured
+    /// holding a core at 100% for over seven minutes. Extraction is synchronous CPU work that no
+    /// CancellationToken can interrupt once started, so the only real control is refusing to start with too
+    /// much input. 2 MB still comfortably clears real articles (a full Wikipedia biography is under 800 KB),
+    /// and together with the concurrency cap in ChatUrlController it bounds the worst case.</summary>
+    private const int MaxBytes = 2 * 1024 * 1024;
+
+    /// <summary>Cap on each metadata field. These come from page markup a stranger controls — a 4 MB
+    /// &lt;title&gt; is a perfectly legal document — and unlike Content they were otherwise passed through
+    /// with only a Trim(), so a single page could return megabytes of "title" into the model's context.</summary>
+    private const int MaxMetaChars = 300;
 
     /// <summary>Cap on the markdown handed back, so one huge page can't blow out the model's context. Chosen
     /// to leave room for the conversation around it.</summary>
@@ -89,6 +100,9 @@ public class UrlFetchService : IUrlFetchService
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
 
     private const int MaxRedirects = 5;
+
+    /// <summary>The only ports a page may be fetched from — see <see cref="Validate"/>.</summary>
+    private static readonly int[] AllowedPorts = { 80, 443 };
 
     private readonly IHttpClientFactory _http;
 
@@ -248,7 +262,7 @@ public class UrlFetchService : IUrlFetchService
                     Blank(article.Title),
                     Blank(article.Author),
                     Blank(article.SiteName),
-                    article.PublicationDate is { } d ? new DateTimeOffset(d) : null,
+                    ToOffset(article.PublicationDate),
                     Clip(markdown, out var clipped),
                     truncated || clipped);
         }
@@ -293,15 +307,25 @@ public class UrlFetchService : IUrlFetchService
     /// </summary>
     private static string Tidy(string markdown)
     {
-        markdown = ImageRe.Replace(markdown, "");
-        markdown = EmptyLinkRe.Replace(markdown, "");
-        markdown = BlankRunRe.Replace(markdown, "\n\n");
+        try
+        {
+            markdown = ImageRe.Replace(markdown, "");
+            markdown = EmptyLinkRe.Replace(markdown, "");
+            markdown = BlankRunRe.Replace(markdown, "\n\n");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // Tidying is an optimisation, not a requirement — keep the content we already have.
+        }
         return markdown.Trim();
     }
 
-    private static readonly Regex ImageRe = new(@"!\[[^\]]*\]\([^)\s]*(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
-    private static readonly Regex EmptyLinkRe = new(@"\[\s*\]\([^)\s]*(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
-    private static readonly Regex BlankRunRe = new(@"(?:[ \t]*\r?\n){3,}", RegexOptions.Compiled);
+    // Bounded: these run over up to 5 MB of attacker-chosen text, so a pathological page must not be able to
+    // pin a request thread on backtracking. On timeout Tidy falls back to the untidied markdown.
+    private static readonly TimeSpan RegexBudget = TimeSpan.FromSeconds(2);
+    private static readonly Regex ImageRe = new(@"!\[[^\]]*\]\([^)\s]*(?:\s+""[^""]*"")?\)", RegexOptions.Compiled, RegexBudget);
+    private static readonly Regex EmptyLinkRe = new(@"\[\s*\]\([^)\s]*(?:\s+""[^""]*"")?\)", RegexOptions.Compiled, RegexBudget);
+    private static readonly Regex BlankRunRe = new(@"(?:[ \t]*\r?\n){3,}", RegexOptions.Compiled, RegexBudget);
 
     private static string Clip(string s, out bool clipped)
     {
@@ -309,22 +333,67 @@ public class UrlFetchService : IUrlFetchService
         return clipped ? s[..MaxContentChars] : s;
     }
 
-    private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+    /// <summary>Normalise a metadata string: null when empty, trimmed, and bounded — see
+    /// <see cref="MaxMetaChars"/> for why the bound matters.</summary>
+    private static string? Blank(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim();
+        return s.Length > MaxMetaChars ? s[..MaxMetaChars] : s;
+    }
 
-    /// <summary>Decode using the charset the server declared, falling back to UTF-8. Getting this wrong is
-    /// what turns a CJK page into mojibake.</summary>
+    /// <summary>A page's own published-date metadata, which is arbitrary text SmartReader did its best with.
+    /// An Unspecified DateTime is read as local time, so a value near DateTime.MinValue lands outside
+    /// DateTimeOffset's range in any timezone ahead of UTC and throws — a malformed date on an otherwise
+    /// perfectly readable page must not cost the whole fetch.</summary>
+    private static DateTimeOffset? ToOffset(DateTime? d)
+    {
+        if (d is null) return null;
+        try { return new DateTimeOffset(d.Value); }
+        catch (ArgumentOutOfRangeException) { return null; }
+    }
+
+    /// <summary>
+    /// Decode the body, preferring the charset the server declared and falling back to the one the document
+    /// declares about itself. Getting this wrong is what turns a CJK page into mojibake.
+    ///
+    /// The in-document fallback is not an edge case: plenty of sites — Chinese ones especially — send a bare
+    /// <c>Content-Type: text/html</c> and state the encoding only in <c>&lt;meta charset="gb2312"&gt;</c>.
+    /// Header-only detection therefore lands on UTF-8 and produces replacement characters for the entire
+    /// page, and because the extractor is handed a STRING rather than the raw bytes, the HTML parser never
+    /// gets its own chance to notice the meta tag and correct us.
+    /// </summary>
     private static string Decode(byte[] body, string? contentType)
     {
-        var charset = contentType?.Split("charset=", StringSplitOptions.None) is { Length: > 1 } parts
-            ? parts[1].Trim().Trim('"')
-            : null;
-        if (!string.IsNullOrWhiteSpace(charset))
+        var declared = CharsetOf(contentType) ?? SniffCharset(body);
+        if (!string.IsNullOrWhiteSpace(declared))
         {
-            try { return Encoding.GetEncoding(charset).GetString(body); }
+            try { return Encoding.GetEncoding(declared).GetString(body); }
             catch (ArgumentException) { /* unknown charset name — fall through to UTF-8 */ }
         }
         return Encoding.UTF8.GetString(body);
     }
+
+    private static string? CharsetOf(string? contentType) =>
+        contentType?.Split("charset=", StringSplitOptions.None) is { Length: > 1 } parts
+            ? parts[1].Trim().Trim('"', '\'', ';')
+            : null;
+
+    /// <summary>Read the encoding out of the document's own markup. Only the head matters and charset
+    /// declarations are required to appear early, so this looks at the first chunk only — decoded as Latin1
+    /// because every candidate encoding is ASCII-compatible in that region, so the tag is always legible
+    /// there regardless of what the body turns out to be.</summary>
+    private static string? SniffCharset(byte[] body)
+    {
+        var head = Encoding.Latin1.GetString(body, 0, Math.Min(body.Length, 4096));
+        var m = MetaCharsetRe.Match(head);
+        return m.Success ? m.Groups[1].Value.Trim().Trim('"', '\'', ';') : null;
+    }
+
+    // Covers both <meta charset="x"> and the legacy <meta http-equiv="Content-Type" content="…; charset=x">.
+    private static readonly Regex MetaCharsetRe = new(
+        @"<meta[^>]+charset\s*=\s*[""']?([a-zA-Z0-9_\-]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
 
     private static string Combine(string? mediaType, string? charset) =>
         charset is null ? mediaType ?? "" : $"{mediaType}; charset={charset}";
@@ -364,6 +433,11 @@ public class UrlFetchService : IUrlFetchService
             throw new UrlFetchException(UrlFetchFailure.Blocked, "Only http and https links can be opened.");
         // Credentials in the authority are a classic way to confuse a naive host check.
         if (!string.IsNullOrEmpty(uri.UserInfo))
+            throw new UrlFetchException(UrlFetchFailure.Blocked, "That URL isn't one I can open.");
+        // Web pages live on the web ports. Allowing arbitrary ones turns this into a port scanner that
+        // reports, per response, whether a given host:port answered — run from production's own address.
+        // Real content behind :8080/:8443 is rare enough to be worth losing.
+        if (!AllowedPorts.Contains(uri.Port))
             throw new UrlFetchException(UrlFetchFailure.Blocked, "That URL isn't one I can open.");
         return uri;
     }
@@ -428,6 +502,11 @@ public class UrlFetchService : IUrlFetchService
 
     private static readonly IPNetwork[] BlockedV6 =
     {
+        // ::/96 covers the deprecated IPv4-COMPATIBLE form (::a.b.c.d). Unlike the IPv4-mapped form
+        // (::ffff:a.b.c.d) it is not caught by IsIPv4MappedToIPv6, so ::127.0.0.1 would otherwise be judged
+        // an ordinary global IPv6 address and allowed straight through to loopback. It subsumes ::/128 and
+        // ::1/128, which are kept only for legibility. Nothing legitimate uses this form.
+        IPNetwork.Parse("::/96"),
         IPNetwork.Parse("::/128"), IPNetwork.Parse("::1/128"), IPNetwork.Parse("fc00::/7"),
         IPNetwork.Parse("fe80::/10"), IPNetwork.Parse("ff00::/8"), IPNetwork.Parse("2001:db8::/32"),
         IPNetwork.Parse("64:ff9b::/96"),
