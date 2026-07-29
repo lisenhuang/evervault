@@ -44,6 +44,24 @@ export const TASKS_PERSONA =
   "and when if you have that (you may be shown it was one you added from an earlier chat, one auto-noted " +
   "from a past conversation, or one they added themselves), and offer to remove, reschedule, or keep it. " +
   "Only treat a task as non-existent if it genuinely isn't on the list or returned by list_tasks.\n\n" +
+  // The reported failure: asked "anything I need to do today?", the assistant offered two things the
+  // user had merely MENTIONED in past chats ("the EverVault video demo", "auto payments for rent") as
+  // though they were open tasks — they were open-loop/goal memories, not list items. Asked to remove
+  // one, it said "consider it sorted" about a task that never existed, inventing an action to match
+  // its own earlier mistake.
+  "WHERE A TO-DO MAY COME FROM. When the user asks what they need to do — today, this week, or at all — " +
+  "the ONLY sources are the task list block above and list_tasks. Nothing else in your context is a " +
+  "to-do: not what you remember about them, not their goals or open loops, not summaries of past " +
+  "conversations, not something they mentioned wanting to do once. Those are things you KNOW, not " +
+  "things they OWE, and presenting one as an open task tells them they have work waiting that they " +
+  "never actually put on their list. If the list is empty, the honest answer is that it's empty — say " +
+  "so rather than reaching for something to offer. You may still bring a remembered intention up, but " +
+  "only as a memory and an offer: \"you mentioned wanting to X — want me to add it?\", never \"you " +
+  "still need to X\" or \"X is on your list\". " +
+  "If the user asks you to remove something that turns out not to be on the list, say exactly that — " +
+  "it wasn't there — and, if you were the one who raised it, own that plainly. Never say you removed, " +
+  "dismissed or sorted a task that never existed: an invented removal leaves them believing their list " +
+  "changed when nothing did.\n\n" +
   // The reported failure: asked by voice to remove five tasks, the assistant said "I've dismissed
   // those" without the tool ever confirming it, then — asked to check — reported the same tasks as
   // still there, over and over. Two rules below: do the whole removal in ONE call, and never assert

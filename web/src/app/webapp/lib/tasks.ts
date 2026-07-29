@@ -156,9 +156,29 @@ const UNDATED_CAP = 5;
  * the user's local `now`. Future-dated tasks are omitted here (reachable via the list_tasks tool). Ids
  * are rendered so the model can complete/update a task by id. Re-render every turn so tool-driven
  * changes show up mid-conversation. */
+/** What the model is told when the user has no open tasks at all. Explicit, because "nothing on your
+ *  list" is a correct and useful answer, whereas an absent block invites the model to improvise one. */
+const EMPTY_AGENDA_BLOCK =
+  "The user's task list (structured, authoritative — this is the ground truth for what they need to do). " +
+  "IT IS CURRENTLY EMPTY: they have no open tasks. If they ask what they need to do, what's on their " +
+  "plate, or whether anything is due, the answer is that their list is clear — say so plainly. Do NOT " +
+  "fill the gap from memory: things you remember from past conversations, goals, or open loops are not " +
+  "tasks and must not be offered as though they were on the list. If you think something is worth " +
+  "tracking, you may offer to ADD it, making clear it isn't on the list yet. Use list_tasks to check " +
+  "other dates before concluding anything about a day other than today.";
+
+/**
+ * The authoritative "what does this user actually have to do" block.
+ *
+ * Returns a block even when the list is EMPTY, which matters more than it looks: an omitted block is
+ * silence, and the model fills silence from whatever else is in the prompt — the profile's goals and open
+ * loops, or summaries of past chats. That is exactly how remembered asides ("set up auto payments for
+ * rent") get served back as though they were on the to-do list. Saying "the list is empty" out loud makes
+ * "nothing" a real, quotable answer instead of a gap.
+ */
 export function renderAgendaBlock(tasks: Task[], now = new Date()): string | null {
   const open = tasks.filter((t) => t.status === "open");
-  if (open.length === 0) return null;
+  if (open.length === 0) return EMPTY_AGENDA_BLOCK;
   const today = localDateStr(now);
 
   const overdue = open
@@ -184,7 +204,7 @@ export function renderAgendaBlock(tasks: Task[], now = new Date()): string | nul
   lines.push(...section("Overdue:", overdue, OVERDUE_CAP, (t) => line(t, ` (was due ${t.dueDate})`)));
   lines.push(...section(`Due today (${today}):`, dueToday, TODAY_CAP, (t) => line(t)));
   lines.push(...section("No due date:", undated, UNDATED_CAP, (t) => line(t)));
-  if (lines.length === 0) return null;
+  if (lines.length === 0) return EMPTY_AGENDA_BLOCK;
 
   return (
     "The user's task list (structured, authoritative — this is the ground truth for what they need to " +
