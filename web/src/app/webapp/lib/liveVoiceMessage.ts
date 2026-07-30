@@ -14,6 +14,7 @@ import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS, setAudioSessionType } from "./liveAudio";
 import { arrayBufferToBase64, encodeWav, mergeFloat32, voicedSeconds } from "./audio";
+import { fixSpokenBrandName } from "./brandName";
 import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
 import { type OutgoingLink } from "./linkTool";
 import type { Content } from "./gemini";
@@ -452,7 +453,16 @@ export class LiveVoiceMessage {
     const audio = this.modelPcm.length
       ? { base64: bytesToBase64(concatBytes(this.modelPcm)), sampleRate: MODEL_SAMPLE_RATE }
       : null;
-    return { userText: this.userText.trim(), modelText: this.modelText.trim(), audio };
+    // Repair the app's own name before either transcript leaves this class — this is the text that
+    // finalizes both bubbles, goes into the durable record, and is fed back as history. The Live
+    // input transcription comes from the recognizer rather than from a prompt we write, so unlike
+    // the classic path there is nothing to instruct here; the repair is the whole fix. See
+    // brandName.ts, and Chat.tsx's append helpers for the same pass over the streaming deltas.
+    return {
+      userText: fixSpokenBrandName(this.userText.trim()),
+      modelText: fixSpokenBrandName(this.modelText.trim()),
+      audio,
+    };
   }
 
   /** Whether reply audio is still (about to be) sounding — drives the caller's play-state cleanup. */
@@ -463,7 +473,7 @@ export class LiveVoiceMessage {
   /** The user's transcription so far — used to seed the human bubble with anything the Live model
    *  transcribed before the send tap (subsequent deltas stream in via onUserText). */
   get currentUserText(): string {
-    return this.userText;
+    return fixSpokenBrandName(this.userText, { streaming: true }); // the user is still mid-sentence
   }
 
   /** Pause / resume the streamed reply audio (the bubble's Play button, while the clip is still streaming). */
