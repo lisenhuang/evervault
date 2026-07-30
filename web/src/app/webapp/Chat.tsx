@@ -23,7 +23,8 @@ import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
-import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./lib/taskTools";
+import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA, type TaskChange } from "./lib/taskTools";
+import { buildTaskReceipt } from "./lib/taskReceipt";
 import {
   applyForget,
   FORGET_PERSONA,
@@ -1089,6 +1090,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       serverChat && contentsAreTextOnly(contents)
         ? streamServerChatWithTools(toNeutralMessages(contents), sys, tools, runTool)
         : streamTextWithTools(textModel, contents, sys, tools, runTool);
+    // Every to-do change this turn actually made, straight from the tool responses. The reply is
+    // checked against it once the text has finished (see buildTaskReceipt below) so a change the model
+    // forgot to mention still reaches the user — the reported failure was a first message asking for
+    // something to go on the list and getting back a greeting, with no way to tell whether it had.
+    const taskChanges: TaskChange[] = [];
     if (memoryOn) {
       // A tab open since yesterday still holds yesterday's agenda; roll repeating tasks onto today
       // before the block below is rendered, or the model is told a chore is overdue when it is due now.
@@ -1151,7 +1157,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         isSuggestionTool(name)
           ? runSuggestion(args)
           : isTaskTool(name)
-            ? runTaskTool(name, args, () => void refreshTasks(), conversationIdRef.current)
+            ? runTaskTool(
+                name,
+                args,
+                (change) => {
+                  if (change) taskChanges.push(change);
+                  void refreshTasks();
+                },
+                conversationIdRef.current,
+              )
             : isFileTool(name)
               ? runFileTool(name, args, (meta, note) => {
                   if (isCurrent()) offerFile(meta, note);
@@ -1210,6 +1224,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
+    }
+    // Close the loop on anything the reply changed but never said. Appended BEFORE the voice branch on
+    // purpose: `acc` is what gets synthesised, so a spoken reply says it out loud too rather than
+    // showing text its own audio doesn't contain. Silent when the model did confirm the change itself.
+    const receipt = buildTaskReceipt(taskChanges, acc, t, lang);
+    if (receipt) {
+      acc = acc ? `${acc}\n\n${receipt}` : receipt;
+      applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
     }
     const finalText = acc || "_(no response)_";
     if (speak && acc) {

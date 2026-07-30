@@ -25,7 +25,13 @@ export const TASKS_PERSONA =
   "X\", \"add X to my to-do list\"), that request IS their go-ahead: resolving it is the first thing your " +
   "next reply does — add it and confirm what you saved, the title plus the date if there is one (\"Done — " +
   "renewing your CMB card is on your list for 1 Sep\"), never re-asking something they've already " +
-  "answered and never leaving them to chase you to find out whether it happened. When a to-do instead " +
+  "answered and never leaving them to chase you to find out whether it happened. " +
+  // The user should never have to send a second message to learn whether the first one landed.
+  "NEVER END SUCH A REPLY WITHOUT SAYING WHETHER IT IS NOW ON THE LIST. Whatever else the reply " +
+  "contains — a greeting, a heads-up, an answer to some other part of their message — it has to " +
+  "state, in words, either that the task is saved (with its title and date) or that it isn't and why. " +
+  "Silence about the list after they asked you to put something on it is always a failed reply, even " +
+  "when the rest of it is friendly and useful. When a to-do instead " +
   "just COMES UP in passing, with no request to track it, don't add it silently: first ASK whether they " +
   "want it on the list, and add it only once they say yes — every task added this way needs their " +
   "go-ahead. Stop to ask a clarifying question only when a genuinely required detail is missing or " +
@@ -79,10 +85,17 @@ export const TASKS_PERSONA =
   // Without this the whole reminder feature is invisible: the agenda is passive context, so the model
   // reads it and says nothing, and the user has to ask "what's on my list" to ever be reminded.
   "BRING UP WHAT'S DUE. A reminder is only useful if you actually raise it. When a conversation starts " +
-  "and something is overdue or due today, mention it yourself, early and briefly, without waiting to be " +
-  "asked — warmly and in one line, not as a recited list (\"Morning! Just so you know, cleaning the room " +
-  "is on for today.\"). But a request the user just made always comes first — handle that, and let the " +
-  "heads-up ride alongside it, never in its place. Raise a given task only once per conversation; if " +
+  "and something is overdue or due today, mention it yourself, without waiting to be asked — warmly and " +
+  "in one line, not as a recited list. WHERE it goes depends entirely on what they said. If their " +
+  "message asked for nothing (a hello, small talk), lead with it: \"Morning! Just so you know, cleaning " +
+  "the room is on for today.\" If their message asked for ANYTHING — a question, something to do, " +
+  // The prod failure this clause exists for: an opening message that asked for a task to be added came
+  // back as a greeting plus a due-today heads-up, with the request untouched. "The conversation just
+  // started" is precisely when the model reaches for the heads-up as the whole reply.
+  "something to add or remember — deal with that FIRST, say what you did, and let the heads-up follow " +
+  "at the end of the same reply. This holds on the very first message of a conversation too: an opening " +
+  "reply that delivers a greeting and a what's-due heads-up while their actual request sits unanswered " +
+  "is the exact failure this rule exists to prevent. Raise a given task only once per conversation; if " +
   "they've already told you they " +
   "did it, or they're clearly in the middle of something else, let it go rather than repeating yourself. " +
   "Nothing due means say nothing about tasks at all.\n\n" +
@@ -379,16 +392,42 @@ async function remainingOpen(): Promise<{ openCount: number; stillOpen: { id: nu
   };
 }
 
+// --- What actually changed, reported back to the surface ---
+
+/** The four ways a turn can move a task on or around the list. */
+export type TaskChangeKind = "added" | "completed" | "dismissed" | "updated";
+
+/** One task a mutating call actually changed, as the SERVER came back with it. */
+export type ChangedTask = {
+  id: number;
+  title: string;
+  /** "YYYY-MM-DD", or null/absent when the task has no date. Only meaningful for added/updated. */
+  due?: string | null;
+  /** "HH:mm", when the task carries a clock time. */
+  time?: string | null;
+};
+
+export type TaskChange = { kind: TaskChangeKind; tasks: ChangedTask[] };
+
+/**
+ * Fired after every successful mutation. The caller has always used this to refresh its agenda cache;
+ * it now also receives WHAT changed, so a surface can check the model's reply against what really
+ * happened and tell the user itself when the reply didn't (see lib/taskReceipt.ts). Optional argument,
+ * so an existing `() => void` handler keeps working untouched.
+ */
+export type OnTasksChanged = (change?: TaskChange) => void;
+
 /**
  * Execute a task tool call. `args` is the model-supplied object (untyped per the SDK), so every field
  * is coerced defensively. `onChanged` fires after any successful mutation so the caller can refresh its
- * agenda cache. Returns a compact JSON string for the model to read; never throws (a thrown error would
- * break the function-call loop) — failures come back as a JSON `{ error }` the model can relay.
+ * agenda cache and see what changed. Returns a compact JSON string for the model to read; never throws
+ * (a thrown error would break the function-call loop) — failures come back as a JSON `{ error }` the
+ * model can relay.
  */
 export async function runTaskTool(
   name: string,
   args: Record<string, unknown>,
-  onChanged?: () => void,
+  onChanged?: OnTasksChanged,
   conversationId?: string,
 ): Promise<string> {
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
@@ -425,7 +464,10 @@ export async function runTaskTool(
       "ai",
     );
     if (!task) return JSON.stringify({ error: "could not add the task" });
-    onChanged?.();
+    onChanged?.({
+      kind: "added",
+      tasks: [{ id: task.id, title: task.title, due: task.dueDate, time: task.dueTime }],
+    });
     return JSON.stringify({ ok: true, task: brief(task) });
   }
 
@@ -457,7 +499,10 @@ export async function runTaskTool(
     const done = results.filter((r) => r.task);
     const missing = results.filter((r) => !r.task).map((r) => r.id);
     if (done.length === 0) return JSON.stringify({ error: "no such task", noSuchTask: missing, ...missedNames(targets) });
-    onChanged?.();
+    // No date on a completion receipt: for a one-off there is nothing left to be due, and for a
+    // repeating task the row's date has already rolled to the next occurrence — showing it here would
+    // read as "done, and also due then".
+    onChanged?.({ kind: "completed", tasks: done.map((r) => ({ id: r.task!.id, title: r.task!.title })) });
     return JSON.stringify({
       ok: true,
       completed: done.map((r) => ({
@@ -522,7 +567,15 @@ export async function runTaskTool(
     const updated = results.filter((r) => r.task);
     const missing = results.filter((r) => !r.task).map((r) => r.id);
     if (updated.length === 0) return JSON.stringify({ error: "no such task", noSuchTask: missing, ...missedNames(targets) });
-    onChanged?.();
+    onChanged?.({
+      kind: patch.status === "dismissed" ? "dismissed" : "updated",
+      tasks: updated.map((r) => ({
+        id: r.task!.id,
+        title: r.task!.title,
+        // A dismissal is about the task leaving the list, not about when it was due.
+        ...(patch.status === "dismissed" ? {} : { due: r.task!.dueDate, time: r.task!.dueTime }),
+      })),
+    });
     return JSON.stringify({
       ok: true,
       updated: updated.map((r) => brief(r.task!)),

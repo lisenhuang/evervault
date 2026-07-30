@@ -124,6 +124,14 @@ const zh: Messages = {
     textSizeIncrease: "放大字号",
     textSizeReset: "恢复默认字号（100%）",
     textSizeValue: (percent: number) => `字号 ${percent}%`,
+    taskReceipt: {
+      added: (items: string) => `已加入你的待办清单：${items}。`,
+      completed: (items: string) => `已标记为完成：${items}。`,
+      dismissed: (items: string) => `已从你的待办清单中移除：${items}。`,
+      updated: (items: string) => `已更新你的待办清单：${items}。`,
+      itemWhen: (title: string, when: string) => `${title}（${when}）`,
+      separator: "；",
+    },
   },
   composer: {
     recording: "正在录音…完成后点击停止按钮。",

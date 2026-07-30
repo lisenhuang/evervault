@@ -123,6 +123,14 @@ const ko: Messages = {
     textSizeIncrease: "글자 크게",
     textSizeReset: "글자 크기를 100%로 되돌리기",
     textSizeValue: (percent: number) => `글자 크기 ${percent}%`,
+    taskReceipt: {
+      added: (items: string) => `할 일 목록에 추가했어요: ${items}.`,
+      completed: (items: string) => `완료로 표시했어요: ${items}.`,
+      dismissed: (items: string) => `할 일 목록에서 뺐어요: ${items}.`,
+      updated: (items: string) => `할 일 목록을 업데이트했어요: ${items}.`,
+      itemWhen: (title: string, when: string) => `${title}(${when})`,
+      separator: "; ",
+    },
   },
   composer: {
     recording: "녹음 중… 끝나면 정지 버튼을 누르세요.",

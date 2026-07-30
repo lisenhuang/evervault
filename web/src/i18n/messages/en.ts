@@ -124,6 +124,16 @@ const en = {
     textSizeIncrease: "Increase text size",
     textSizeReset: "Reset text size to 100%",
     textSizeValue: (percent: number) => `Text size ${percent}%`,
+    // Appended to a reply that changed the to-do list without saying so — see lib/taskReceipt.ts.
+    // Plain prose with no markup or symbols: on a voice reply these lines are read aloud too.
+    taskReceipt: {
+      added: (items: string) => `Added to your to-do list: ${items}.`,
+      completed: (items: string) => `Marked as done: ${items}.`,
+      dismissed: (items: string) => `Taken off your to-do list: ${items}.`,
+      updated: (items: string) => `Updated on your to-do list: ${items}.`,
+      itemWhen: (title: string, when: string) => `${title} (${when})`,
+      separator: "; ",
+    },
   },
   composer: {
     recording: "Recording… tap the stop button when you're done.",
