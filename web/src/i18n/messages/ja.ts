@@ -123,6 +123,14 @@ const ja: Messages = {
     textSizeIncrease: "文字を大きく",
     textSizeReset: "文字サイズを100%に戻す",
     textSizeValue: (percent: number) => `文字サイズ ${percent}%`,
+    taskReceipt: {
+      added: (items: string) => `やることリストに追加しました：${items}。`,
+      completed: (items: string) => `完了にしました：${items}。`,
+      dismissed: (items: string) => `やることリストから削除しました：${items}。`,
+      updated: (items: string) => `やることリストを更新しました：${items}。`,
+      itemWhen: (title: string, when: string) => `${title}（${when}）`,
+      separator: "、",
+    },
   },
   composer: {
     recording: "録音中… 終わったら停止ボタンをタップしてください。",

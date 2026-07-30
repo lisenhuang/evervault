@@ -1,0 +1,124 @@
+// The guarantee that a to-do change is never invisible.
+//
+// Everything else about the task list is prompt: the model is told to act on an explicit "add this to
+// my to-do list" first and confirm what it saved. In prod it kept not doing it — most sharply on the
+// FIRST message of a conversation, where a request to add a locksmith's number came back as "Morning!
+// Just a heads-up that you have a hospital visit today", the task neither added nor mentioned. The user
+// had to send a second message to find out whether anything had happened at all.
+//
+// Prompt rules can lose; a tool result cannot. So this closes the loop deterministically: the surface
+// collects what the task tools ACTUALLY changed during the turn, checks the finished reply against it,
+// and appends a short factual line for anything the reply never mentioned. It reports only what the
+// server confirmed — the same rule the task persona holds the model to — and stays silent when the
+// model already did its job, so a well-behaved reply reads exactly as it does today.
+
+import { htmlLang, type Lang } from "@/i18n/config";
+import type { Messages } from "@/i18n/messages/en";
+import type { ChangedTask, TaskChange, TaskChangeKind } from "./taskTools";
+
+/** Case-, spacing- and punctuation-insensitive form, so "Fix the door lock." and "fix the door lock"
+ *  are the same words. Strips punctuation/symbols only — CJK survives. Mirrors taskTools' normalizer. */
+const normalize = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Words shorter than this ("a", "to", "的") carry no identifying signal, so they don't count towards
+ *  coverage — otherwise a reply containing "the" would look like it named the task. */
+const MIN_TOKEN_CHARS = 3;
+/** How much of a title the reply must echo to count as having mentioned it. Deliberately generous:
+ *  a false "already mentioned" just leaves today's behaviour alone, whereas a false "never mentioned"
+ *  only costs a redundant line — the cheaper mistake by far. */
+const TOKEN_COVERAGE = 0.6;
+
+/**
+ * Did the finished reply actually tell the user about this task? Exact (normalized) containment first,
+ * then a word-overlap fallback so a model that reflows the title ("your door lock repair") still counts
+ * as having said it. A title with no separable words (CJK, which normalize can't tokenize) falls back
+ * to containment alone.
+ */
+export function replyMentionsTask(reply: string, title: string): boolean {
+  const t = normalize(title);
+  if (!t) return true; // nothing identifiable to check for — don't manufacture a line about it
+  const r = normalize(reply);
+  if (!r) return false;
+  if (r.includes(t)) return true;
+  const tokens = t.split(" ").filter((w) => w.length >= MIN_TOKEN_CHARS);
+  if (tokens.length < 2) return false;
+  const hits = tokens.filter((w) => r.includes(w)).length;
+  return hits / tokens.length >= TOKEN_COVERAGE;
+}
+
+/** "2026-08-13" → "13 Aug 2026" in the user's chosen display language. Parsed field-by-field as a
+ *  LOCAL date: `new Date("2026-08-13")` is UTC midnight, which renders as the day before east of UTC. */
+function humanDate(due: string, lang: Lang): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due.trim());
+  if (!m) return due;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return due;
+  try {
+    return d.toLocaleDateString(htmlLang(lang), { dateStyle: "medium" });
+  } catch {
+    return due;
+  }
+}
+
+/** The "when" half of a receipt item, or "" for a task with no date. */
+function whenLabel(task: ChangedTask, lang: Lang): string {
+  const date = task.due ? humanDate(task.due, lang) : "";
+  if (!date) return "";
+  return task.time ? `${date}, ${task.time}` : date;
+}
+
+/**
+ * One entry per task, newest snapshot wins. A task added and then edited in the same turn stays
+ * "added" — that it is now on the list at all is the news, and the merged entry still carries the
+ * final date.
+ */
+function mergeChanges(changes: TaskChange[]): { kind: TaskChangeKind; task: ChangedTask }[] {
+  const byId = new Map<number, { kind: TaskChangeKind; task: ChangedTask }>();
+  for (const change of changes) {
+    for (const task of change.tasks) {
+      if (!Number.isFinite(task.id)) continue;
+      const prev = byId.get(task.id);
+      byId.set(task.id, { kind: prev?.kind === "added" ? "added" : change.kind, task });
+    }
+  }
+  return [...byId.values()];
+}
+
+/** Reported in a stable order rather than call order, so a turn that adds and completes things reads
+ *  the same way every time. */
+const KIND_ORDER: TaskChangeKind[] = ["added", "completed", "dismissed", "updated"];
+
+/**
+ * The line(s) to append to a finished reply, or null when there's nothing to add — either because the
+ * turn changed no tasks, or because the reply already named every task it changed.
+ *
+ * `reply` is the model's finished text. Kept pure (no React, no network) so it can be reasoned about
+ * and reused by any surface.
+ */
+export function buildTaskReceipt(
+  changes: TaskChange[],
+  reply: string,
+  t: Messages,
+  lang: Lang,
+): string | null {
+  if (changes.length === 0) return null;
+
+  const groups = new Map<TaskChangeKind, string[]>();
+  for (const { kind, task } of mergeChanges(changes)) {
+    if (!task.title?.trim()) continue;
+    if (replyMentionsTask(reply, task.title)) continue;
+    const when = whenLabel(task, lang);
+    const item = when ? t.chat.taskReceipt.itemWhen(task.title, when) : task.title;
+    groups.set(kind, [...(groups.get(kind) ?? []), item]);
+  }
+  if (groups.size === 0) return null;
+
+  return KIND_ORDER.filter((k) => groups.has(k))
+    .map((k) => t.chat.taskReceipt[k](groups.get(k)!.join(t.chat.taskReceipt.separator)))
+    .join("\n");
+}
