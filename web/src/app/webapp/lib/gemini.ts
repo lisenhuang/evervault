@@ -3,6 +3,7 @@
 // never holds a key. Uses the official @google/genai SDK pointed at the proxy via httpOptions.baseUrl.
 
 import { GoogleGenAI, Modality, type Content, type FunctionCall, type Part, type Schema, type Tool } from "@google/genai";
+import { fixSpokenBrandName, TRANSCRIPTION_VOCABULARY_HINT } from "./brandName";
 
 export type { Content, Tool };
 
@@ -114,6 +115,11 @@ export async function generateJson<T>(
  * Transcribe a spoken clip to text — one-shot, non-streamed. Returns the verbatim words, or "" when
  * there's no intelligible speech. Uses the chat text model (audio-capable — it already answers the
  * spoken reply from the same inline audio). Best-effort: callers treat "" as "no transcript".
+ *
+ * The prompt carries the app's own vocabulary (see brandName.ts): "EverVault" is not a word any
+ * recognizer knows, so unprompted it comes back as "everybody" / "ever vault" — and it is the word
+ * users say most often, since it's how they address the assistant. The result is repaired as well,
+ * for the times naming it in the prompt isn't enough.
  */
 export async function transcribeAudio(
   model: string,
@@ -131,13 +137,14 @@ export async function transcribeAudio(
           {
             text:
               "Transcribe this audio verbatim. Return ONLY the spoken words, with no commentary, " +
-              "quotes, or labels. If there is no intelligible speech, return an empty string.",
+              "quotes, or labels. If there is no intelligible speech, return an empty string.\n\n" +
+              TRANSCRIPTION_VOCABULARY_HINT,
           },
         ],
       },
     ],
   });
-  return (res.text ?? "").trim();
+  return fixSpokenBrandName((res.text ?? "").trim());
 }
 
 /**

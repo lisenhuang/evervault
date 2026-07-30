@@ -5,6 +5,7 @@
 // surfaces is how audio flows (continuous duplex vs. a single push-to-talk turn).
 
 import { type FunctionCall } from "@google/genai";
+import { BRAND_NAME_HEARING } from "./brandName";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
@@ -87,6 +88,10 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     LINK_PERSONA,
     LIVE_VOICE_SYSTEM_INSTRUCTION,
     o.styleInstruction || "",
+    // Matters most where the user is speaking: "EverVault" is the word they say to get the
+    // assistant's attention, and it is the word the recognizer is least able to hear (see
+    // brandName.ts). Without this the model takes "hello everybody" at face value.
+    BRAND_NAME_HEARING,
     CONFIDENTIALITY,
     CAPABILITY_BOUNDS,
     SAFETY_BOUNDS,

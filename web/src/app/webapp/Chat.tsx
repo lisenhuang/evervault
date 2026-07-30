@@ -11,6 +11,7 @@ import MessageList from "./MessageList";
 import TextSizeControl from "./TextSizeControl";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { playPcm16Handle, startRecording, unlockAudioPlayback, type Recorder } from "./lib/audio";
+import { BRAND_NAME_HEARING, fixSpokenBrandName } from "./lib/brandName";
 import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
@@ -1105,6 +1106,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         ANSWER_FIRST,
         langDirective,
         styleDir,
+        // Right before the identity block, because it's the same subject: what the assistant is
+        // called. This path answers spoken clips too (the classic voice turn sends the raw audio
+        // here), and "EverVault" is the word recognition mangles most — see brandName.ts.
+        BRAND_NAME_HEARING,
         CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
         // Exactly one of these always survives .filter(Boolean): tell the model it can search the web
@@ -1171,6 +1176,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const sys = [
         langDirective,
         styleDir,
+        BRAND_NAME_HEARING, // same reason as the memory-on arm above
         CONFIDENTIALITY,
         CAPABILITY_BOUNDS,
         searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
@@ -1372,10 +1378,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }
 
   // Stream the assistant transcript of a Gemini Live voice reply into its bubble as it arrives.
+  // Every streamed transcript below is passed through fixSpokenBrandName on the ACCUMULATED text,
+  // never on the delta: "EverVault" routinely arrives split across chunks ("ever" then " vault"),
+  // so a per-delta pass would never see the whole word. The pass is idempotent, which is what makes
+  // re-running it on every chunk safe. See brandName.ts.
   function appendVoiceAsstText(delta: string) {
     const id = liveVoiceAsstIdRef.current;
     if (!id) return;
-    applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: m.text + delta } : m)));
+    applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: fixSpokenBrandName(m.text + delta, { streaming: true }) } : m)));
   }
 
   // Stream the user's own transcript (the Live model's input transcription) into the human voice bubble
@@ -1383,7 +1393,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   function appendVoiceUserText(delta: string) {
     const id = liveVoiceUserIdRef.current;
     if (!id) return;
-    applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: m.text + delta } : m)));
+    applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: fixSpokenBrandName(m.text + delta, { streaming: true }) } : m)));
   }
 
   async function startVoice(files?: PreparedFile[]) {
@@ -1846,12 +1856,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   function appendLiveText(role: "user" | "assistant", delta: string) {
     const ref = role === "user" ? liveUserIdRef : liveAsstIdRef;
     const txtRef = role === "user" ? liveUserTextRef : liveAsstTextRef;
-    txtRef.current += delta;
+    // Repaired on the accumulated text in both places, so the bubble and the copy that gets recorded
+    // as the turn's transcript stay identical (see appendVoiceAsstText for why not per-delta).
+    txtRef.current = fixSpokenBrandName(txtRef.current + delta, { streaming: true });
     applyMessages((cur) => {
-      if (ref.current) return cur.map((m) => (m.id === ref.current ? { ...m, text: m.text + delta } : m));
+      if (ref.current) return cur.map((m) => (m.id === ref.current ? { ...m, text: fixSpokenBrandName(m.text + delta, { streaming: true }) } : m));
       const id = uid();
       ref.current = id;
-      const msg: ChatMessage = { id, role, text: delta };
+      const msg: ChatMessage = { id, role, text: fixSpokenBrandName(delta, { streaming: true }) };
       // The Live API can deliver the user's input transcription after the model's reply has
       // already started streaming. Keep chat order = speaking order: this turn's user bubble
       // always sits above the assistant bubble that answers it.
