@@ -15,6 +15,7 @@ import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS, setAudioSessionType } from "./liveAudio";
 import { arrayBufferToBase64, encodeWav, mergeFloat32, voicedSeconds } from "./audio";
 import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
+import { type OutgoingLink } from "./linkTool";
 import type { Content } from "./gemini";
 import type { Lang } from "@/i18n/config";
 
@@ -48,6 +49,10 @@ export type LiveVoiceOpts = {
   /** Fired after the model changes the task list, so the caller can refresh the cache its agenda block
    *  is rendered from — otherwise the NEXT voice message is briefed with tasks this one just removed. */
   onTasksChanged?: () => void;
+  /** Posts a tappable link into the chat when the model calls send_link. Required for the model to be able
+   *  to hand over a URL at all here: a spoken reply's text is its own audio transcription, so without this
+   *  it would have to read the address out loud. */
+  onLink?: (link: OutgoingLink) => void;
   /** The full prior transcript as Gemini Content[] (toContents of everything before this message). */
   history: Content[];
   /** Streams the assistant's transcript as it arrives, for the streaming reply bubble. */
@@ -338,7 +343,8 @@ export class LiveVoiceMessage {
       try {
         // Bounded and error-proof: with no response the model would wait for the tool result forever,
         // the turn would never complete, and the stall watchdog would kill a healthy reply.
-        const dispatched = dispatchLiveToolCalls(calls, this.opts.conversationId, this.opts.onTasksChanged);
+        const dispatched = dispatchLiveToolCalls(
+          calls, this.opts.conversationId, this.opts.onTasksChanged, this.opts.onLink);
         dispatched.catch(() => {}); // a dispatch that loses the race must not become an unhandled rejection
         responses = await Promise.race([
           dispatched,

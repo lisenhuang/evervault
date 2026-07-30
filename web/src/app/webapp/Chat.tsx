@@ -50,6 +50,14 @@ import {
   runUrlFetchTool,
   URL_FETCH_PERSONA,
 } from "./lib/urlFetchTool";
+import {
+  isLinkTool,
+  LINK_PERSONA,
+  linkMarkdown,
+  type OutgoingLink,
+  runSendLinkTool,
+  SEND_LINK_DECLARATION,
+} from "./lib/linkTool";
 import { extractAndSyncProfile, type Fact, getProfile, renderProfileBlock } from "./lib/profile";
 import { catchUpRecurring, getTasks, localDateStr, renderAgendaBlock, type Task } from "./lib/tasks";
 import { store } from "./lib/store";
@@ -958,6 +966,29 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     [applyMessages],
   );
 
+  // The `send_link` tool wants to hand the user a URL. It lands as an ordinary assistant message whose
+  // text is the link — MessageList renders through react-markdown + remark-gfm, so it comes out as a real
+  // tappable anchor with no new message kind or renderer needed.
+  //
+  // This exists because a SPOKEN reply's text is the transcription of its own audio: the model cannot show
+  // an address without also reading it out. Posting a separate message is what lets it say "here's the
+  // link" briefly and still leave something clickable behind.
+  //
+  // Same idempotency guard as offerFile, for the same reason: runWithSuspensionRetry replays a whole turn
+  // after an iOS tab suspension, and only the assistant message's text is reset — so without this the user
+  // returns to the same link posted twice.
+  const postLink = useCallback(
+    (link: OutgoingLink) => {
+      const text = linkMarkdown(link);
+      applyMessages((cur) =>
+        cur.some((m) => m.role === "assistant" && m.text === text)
+          ? cur
+          : [...cur, { id: uid(), role: "assistant", text }],
+      );
+    },
+    [applyMessages],
+  );
+
   // The `forget_memories` tool wants to remove things from memory. Like offerFile this does NOT act:
   // it posts a card listing exactly what would go, and the deletion happens only if the user taps it
   // (see confirmForget). Same idempotency guard, keyed on the set of refs, so an iOS suspension replay
@@ -1081,6 +1112,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
         // Reading a page needs no key, so unlike search this is unconditional.
         URL_FETCH_PERSONA,
+        LINK_PERSONA,
         SAFETY_BOUNDS,
         MEMORY_PERSONA,
         FILES_PERSONA,
@@ -1103,6 +1135,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
             // Always offered: reading a page is keyless, so there is nothing to gate it on.
             FETCH_URL_DECLARATION,
+            SEND_LINK_DECLARATION,
           ],
         },
       ];
@@ -1126,7 +1159,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
                   ? runWebSearchTool(args)
                   : isUrlFetchTool(name)
                     ? runUrlFetchTool(args)
-                    : runRecallTool(args);
+                    : isLinkTool(name)
+                      ? runSendLinkTool(args, (l) => {
+                          if (isCurrent()) postLink(l);
+                        })
+                      : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -1138,6 +1175,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         CAPABILITY_BOUNDS,
         searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
         URL_FETCH_PERSONA,
+        LINK_PERSONA,
         SUGGESTION_PERSONA,
         currentTimeContext(),
       ]
@@ -1149,6 +1187,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             RECORD_SUGGESTION_DECLARATION,
             ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
             FETCH_URL_DECLARATION,
+            SEND_LINK_DECLARATION,
           ],
         },
       ];
@@ -1157,7 +1196,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           ? runWebSearchTool(args)
           : isUrlFetchTool(name)
             ? runUrlFetchTool(args)
-            : runSuggestion(args);
+            : isLinkTool(name)
+              ? runSendLinkTool(args, (l) => {
+                  if (isCurrent()) postLink(l);
+                })
+              : runSuggestion(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
@@ -1392,6 +1435,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // from this cache, so without it the next voice message is told the tasks this one just
         // dismissed are still open — and the assistant keeps "removing" them, reply after reply.
         onTasksChanged: () => void refreshTasks(),
+        onLink: postLink,
         onModelText: appendVoiceAsstText,
         onUserText: appendVoiceUserText,
       });
@@ -1905,6 +1949,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // Keep the task cache current when the model changes the list mid-call — it's what the next
       // call's and next voice message's agenda block is built from (see startVoice).
       onTasksChanged: () => void refreshTasks(),
+      onLink: postLink,
     });
     session.setHeadphones(callHeadphones);
     liveRef.current = session;

@@ -10,6 +10,7 @@ import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
+import { type OutgoingLink } from "./linkTool";
 import { type Lang } from "@/i18n/config";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
@@ -131,6 +132,8 @@ export class LiveSession {
   /** Fired after the model changes the task list mid-call, so the caller can refresh the cache its
    *  agenda block comes from — otherwise the next call/voice message is briefed with stale tasks. */
   private readonly onTasksChanged?: () => void;
+  /** Posts a tappable link into the chat when the model calls send_link (see linkTool). */
+  private readonly onLink?: (link: OutgoingLink) => void;
 
   // Named options rather than a positional list: every memory feature adds another optional context
   // block here, and appending to a nine-argument positional constructor is how two of them silently
@@ -151,6 +154,7 @@ export class LiveSession {
     idleTimeoutSec?: number;
     conversationId?: string;
     onTasksChanged?: () => void;
+    onLink?: (link: OutgoingLink) => void;
   }) {
     this.model = opts.model;
     this.voice = opts.voice;
@@ -167,6 +171,7 @@ export class LiveSession {
     this.idleTimeoutSec = opts.idleTimeoutSec ?? DEFAULT_IDLE_TIMEOUT_SEC;
     this.conversationId = opts.conversationId;
     this.onTasksChanged = opts.onTasksChanged;
+    this.onLink = opts.onLink;
   }
 
   /** The idle window in ms, or 0 when the admin turned the auto-hang-up off. */
@@ -524,6 +529,7 @@ export class LiveSession {
           m.toolCall.functionCalls,
           this.conversationId,
           this.onTasksChanged,
+          this.onLink,
         ),
       });
       return;

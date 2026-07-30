@@ -126,6 +126,7 @@ until the model answers in plain text.
 |---|---|---|
 | `search_web` | Brave → Gemini `google_search` grounding | Fallback reuses the pooled AI keys (no extra subscription); free tier is 500 grounded req/day |
 | `fetch_url` | Server-side fetch → Readability → markdown | No JS rendering; SSRF-guarded (connections pinned to vetted public IPs) |
+| `send_link` | Posts the URL as its own chat message | Needed for **voice**: a spoken reply's text *is* its audio, so the model can't show a URL without reading it aloud |
 
 **Anatomy of a tool** — `web/src/app/webapp/lib/webSearchTool.ts` is the smallest example:
 

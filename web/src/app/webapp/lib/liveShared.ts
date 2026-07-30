@@ -19,6 +19,13 @@ import {
   SEARCH_WEB_DECLARATION,
 } from "./webSearchTool";
 import { FETCH_URL_DECLARATION, isUrlFetchTool, runUrlFetchTool, URL_FETCH_PERSONA } from "./urlFetchTool";
+import {
+  isLinkTool,
+  LINK_PERSONA,
+  type OutgoingLink,
+  runSendLinkTool,
+  SEND_LINK_DECLARATION,
+} from "./linkTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
@@ -75,6 +82,9 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     o.searchAvailable ? SEARCH_PERSONA_AVAILABLE : SEARCH_PERSONA_UNAVAILABLE,
     // Reading a page needs no key, so unlike search this is unconditional.
     URL_FETCH_PERSONA,
+    // Matters most on this surface: a spoken reply's text IS its audio, so without send_link the model
+    // cannot show a URL without reading it aloud.
+    LINK_PERSONA,
     LIVE_VOICE_SYSTEM_INSTRUCTION,
     o.styleInstruction || "",
     CONFIDENTIALITY,
@@ -109,6 +119,7 @@ export function buildLiveToolDeclarations(memoryEnabled: boolean, searchAvailabl
         ...(searchAvailable ? [SEARCH_WEB_DECLARATION] : []),
         // Always offered: reading a page is keyless, so there is nothing to gate it on.
         FETCH_URL_DECLARATION,
+        SEND_LINK_DECLARATION,
       ],
     },
   ];
@@ -129,6 +140,7 @@ export async function dispatchLiveToolCalls(
   calls: FunctionCall[],
   conversationId?: string,
   onTasksChanged?: () => void,
+  onLink?: (link: OutgoingLink) => void,
 ): Promise<Array<{ id?: string; name?: string; response: { output: string } }>> {
   const results = await Promise.all(
     calls.map((c) => {
@@ -146,7 +158,11 @@ export async function dispatchLiveToolCalls(
                 ? runWebSearchTool(args)
                 : isUrlFetchTool(name)
                   ? runUrlFetchTool(args)
-                  : runRecallTool(args);
+                  // Without onLink this reports that it cannot show links, rather than claiming success —
+                  // the whole failure being fixed here was the model asserting a link had appeared.
+                  : isLinkTool(name)
+                    ? runSendLinkTool(args, onLink)
+                    : runRecallTool(args);
     }),
   );
   return calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } }));
