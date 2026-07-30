@@ -25,6 +25,7 @@ import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from 
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA, type TaskChange } from "./lib/taskTools";
 import { buildTaskReceipt } from "./lib/taskReceipt";
+import { asksToTrackSomething, UNTRACKED_REQUEST_NUDGE } from "./lib/taskIntent";
 import {
   applyForget,
   FORGET_PERSONA,
@@ -1064,6 +1065,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // Defaults to the whole transcript; queued turns pass their own history so a LATER queued message's
     // image can't be attached to THIS turn's suggestion.
     scopedHistory: () => ChatMessage[] = () => messagesRef.current,
+    // What the user actually said this turn, read at check time rather than passed by value — the
+    // spoken paths only have their transcript once it lands, which is well before this is needed.
+    // Used solely to decide whether an explicit "put this on my list" went untracked (see below).
+    userText: () => string = () => "",
   ): Promise<string> {
     let acc = "";
     const onDelta = (delta: string) => {
@@ -1086,10 +1091,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // When the admin's primary text model isn't Gemini, run the turn server-side — but only for
     // all-text conversations: inline media (images / PDFs / voice clips, replayed in history) needs
     // Gemini's multimodal input, so those turns stay on the direct proxy path.
-    const stream = (sys: string, tools: Tool[], runTool: ToolExecutor) =>
-      serverChat && contentsAreTextOnly(contents)
-        ? streamServerChatWithTools(toNeutralMessages(contents), sys, tools, runTool)
-        : streamTextWithTools(textModel, contents, sys, tools, runTool);
+    const stream = (sys: string, tools: Tool[], runTool: ToolExecutor, msgs: Content[] = contents) =>
+      serverChat && contentsAreTextOnly(msgs)
+        ? streamServerChatWithTools(toNeutralMessages(msgs), sys, tools, runTool)
+        : streamTextWithTools(textModel, msgs, sys, tools, runTool);
     // Every to-do change this turn actually made, straight from the tool responses. The reply is
     // checked against it once the text has finished (see buildTaskReceipt below) so a change the model
     // forgot to mention still reaches the user — the reported failure was a first message asking for
@@ -1185,6 +1190,32 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
                       : runRecallTool(args);
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
+      }
+      // An explicit "add this to my to-do list" that finished without add_task ever being called is
+      // the failure underneath the one the receipt covers: nothing was saved, so there is nothing to
+      // report. Point the omission out and let the model answer again — ONE round, and the decision
+      // stays its own (the nudge creates no task). See lib/taskIntent.ts for why it's split that way.
+      if (!taskChanges.some((c) => c.kind === "added") && asksToTrackSomething(userText())) {
+        const followUp: Content[] = [
+          ...contents,
+          { role: "model", parts: [{ text: acc || "(no reply)" }] },
+          { role: "user", parts: [{ text: UNTRACKED_REQUEST_NUDGE }] },
+        ];
+        // Buffered rather than streamed into the bubble: the first reply stays on screen behind the
+        // typing dots and is only replaced once the retry has actually produced something, so a retry
+        // that fails or comes back empty can't blank out an answer the user already had.
+        let retry = "";
+        try {
+          for await (const delta of stream(sys, tools, runTool, followUp)) {
+            retry += delta;
+          }
+        } catch {
+          /* the first reply stands — a failed second opinion must never cost the user the first */
+        }
+        if (retry.trim()) {
+          acc = retry;
+          applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
+        }
       }
     } else {
       const sys = [
@@ -1343,7 +1374,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           const contents = preface ? [preface, ...toContents(base)] : toContents(base);
           // Scope suggestion screenshots to this turn's history (through its own user message), not
           // later queued turns that may carry unrelated images.
-          return runAssistant(asstId, contents, false, isCurrent, () => historyBefore(asstId));
+          return runAssistant(asstId, contents, false, isCurrent, () => historyBefore(asstId), () => text);
         });
         if (files?.length) {
           // Record the turn so past attachments can be recalled: each file becomes a memory line that
@@ -1658,8 +1689,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           if (attempt > 0) {
             applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: "", streaming: true } : m)));
           }
-          return runAssistant(asstId, [...toContents(historyBefore(userMsg.id)), lastTurn], true, isCurrent, () =>
-            historyBefore(asstId),
+          return runAssistant(
+            asstId,
+            [...toContents(historyBefore(userMsg.id)), lastTurn],
+            true,
+            isCurrent,
+            () => historyBefore(asstId),
+            // The clip's transcript lands on the user's bubble as soon as it resolves (in parallel
+            // with this turn), so by the time the untracked-request check reads it, it's there.
+            () => messagesRef.current.find((m) => m.id === userMsg.id)?.text ?? "",
           );
         });
         const transcript = await transcriptPromise; // already resolved in practice; never throws
