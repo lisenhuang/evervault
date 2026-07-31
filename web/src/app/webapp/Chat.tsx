@@ -16,7 +16,7 @@ import { embedDocument } from "./lib/embed";
 import { type Content, describeDocument, describeImage, streamTextWithTools, synthesizeSpeech, type Tool, transcribeAudio, type ToolExecutor } from "./lib/gemini";
 import { contentsAreTextOnly, streamServerChatWithTools, toNeutralMessages } from "./lib/serverChat";
 import { fetchVoiceReply, startVoiceReply, type VoiceReplyAudio } from "./lib/voiceReply";
-import type { PreparedFile } from "./lib/files";
+import { MAX_VOICE_INLINE, type PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { LiveVoiceMessage, renderConversation } from "./lib/liveVoiceMessage";
 import { setAudioSessionType } from "./lib/liveAudio";
@@ -1671,16 +1671,29 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           // The clip and the attachments are one message: what's spoken is usually *about* what's
           // attached ("what's wrong with this screenshot?"), so say so explicitly.
           (files?.length ? " The file(s) attached to this message were sent with it — the spoken message refers to them." : "");
+        // Would inlining the clip alongside the attachments overflow what one request may carry? The
+        // composer's budget covers files only and is applied before any recording exists, so this is the
+        // first point at which the real total is known. Rather than send something that will be rejected
+        // mid-upload — which surfaces as an unexplained gateway error and loses the whole turn — fall back
+        // to the transcript for the model input. The audio is still played back, stored and transcribed
+        // exactly as before; only what the model READS changes, from the clip to its text.
+        const inlineChars =
+          base64.length + (files ?? []).reduce((sum, f) => sum + (f.base64?.length ?? f.text?.length ?? 0), 0);
+        const audioTooBig = inlineChars > MAX_VOICE_INLINE;
+
         // A ChatGPT primary can't hear audio, so the server-chat path answers from the transcript: wait
         // for it (transcription stays a Gemini call), then send it as text. An empty transcript degrades
         // to the raw-audio Gemini path so the user still gets an answer. Gemini-primary hears the audio.
-        const serverTranscript = serverChat ? await transcriptPromise : "";
+        const serverTranscript = serverChat || audioTooBig ? await transcriptPromise : "";
         const replyParts = replyRef ? [{ text: replyContext(replyRef) }] : [];
         // Attachments go in as real parts, ahead of the clip — same shape a typed message produces via
         // toContents, so the model sees the picture/document it's being asked about.
         const fileParts = (files ?? []).map(fileToPart);
+        // Transcript instead of the clip when the primary can't hear audio, or when the clip won't fit
+        // beside the attachments. If the transcription failed we still inline the audio: a turn that is
+        // too large is a maybe-failure, whereas a turn with neither audio nor transcript is a certain one.
         const lastTurn: Content =
-          serverChat && serverTranscript
+          (serverChat || audioTooBig) && serverTranscript
             ? { role: "user", parts: [...replyParts, ...fileParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
             : { role: "user", parts: [...replyParts, ...fileParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
         // TTS runs in the background inside runAssistant, so it never holds the queue. Retry across an iOS

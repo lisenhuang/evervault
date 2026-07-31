@@ -31,6 +31,27 @@ export const MAX_FILES = 9;
  */
 export const MAX_TOTAL_INLINE = 15_000_000;
 
+/**
+ * Ceiling for ONE voice turn's inline payload: the attachments PLUS the recorded clip, which
+ * {@link MAX_TOTAL_INLINE} does not account for (that budget is enforced in the composer, over files
+ * only, before any recording exists).
+ *
+ * This gap is what made "PDF + voice" fail where "PDF + text" succeeded: the voice request carries
+ * everything the text one does and adds the WAV, at 16 kHz mono PCM16 — about 42,700 base64 characters
+ * per second of speech, so ~2.5 MB per minute. Past the server's body limit the request is rejected
+ * mid-upload and the connection is reset, which reaches the browser as an opaque gateway error rather
+ * than anything explaining the size.
+ *
+ * Deliberately well under the backend's own limit so the client is always the first to notice, and
+ * degrades on its own terms (see runTtsVoiceTurn: it sends the transcript instead of the audio) rather
+ * than discovering the ceiling as a failed request.
+ */
+export const MAX_VOICE_INLINE = 18_000_000;
+
+/** Base64 characters per second of recorded speech (16 kHz mono PCM16 → 32,000 B/s → 4/3 in base64).
+ *  Exported so the composer can warn about a long recording before it is ever sent. */
+export const VOICE_BASE64_CHARS_PER_SECOND = 42_667;
+
 /** How much of the inline budget one prepared file consumes. */
 export function inlineSize(f: PreparedFile): number {
   return f.base64?.length ?? f.text?.length ?? 0;

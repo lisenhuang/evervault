@@ -61,6 +61,12 @@ public class ChatAiController : ControllerBase
 
     // Only the Gemini methods the webapp client actually calls may be proxied, so this can never be an
     // open relay for arbitrary endpoints. Model listing is intentionally excluded — models come from config.
+    /// <summary>Ceiling on one proxied AI request body. Above Kestrel's 30 MB default because a voice turn
+    /// inlines the recorded clip (16 kHz mono PCM16 — roughly 2.5 MB of base64 per minute) alongside any
+    /// attachments and the replayed history. The browser holds itself below its own, lower budget, so this
+    /// is the backstop that turns an overflow into a clean 413 instead of a dropped connection.</summary>
+    private const long MaxProxyBodyBytes = 48 * 1024 * 1024;
+
     private static readonly Regex AllowedProxyPath = new(
         @"^v1beta/models/[^/:]+:(generateContent|streamGenerateContent|embedContent|batchEmbedContents)$",
         RegexOptions.Compiled);
@@ -369,11 +375,39 @@ public class ChatAiController : ControllerBase
         }
 
         // Buffer the request body so it can be re-sent verbatim to the next key on failover.
+        //
+        // Bounded deliberately (see MaxProxyBodyBytes). Left at Kestrel's default, an over-limit request
+        // is aborted mid-upload and the connection reset, which nginx turns into a bare 502 and the
+        // browser shows as "the server is temporarily unreachable" — no status, no size, nothing to
+        // diagnose from. Catching it here converts that into a real 413 with a reference code.
         byte[]? body = null;
         if (HttpMethods.IsPost(Request.Method))
         {
+            // Raise this endpoint's ceiling above Kestrel's 30 MB default: a voice turn legitimately
+            // carries the recorded clip inline alongside any attachments and the replayed history. The
+            // client keeps itself below MAX_VOICE_INLINE, so reaching this limit means something slipped
+            // past that — which should be a clear 413, never a reset connection.
+            var sizeFeature = HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (sizeFeature is { IsReadOnly: false }) sizeFeature.MaxRequestBodySize = MaxProxyBodyBytes;
+
             using var ms = new MemoryStream();
-            await Request.Body.CopyToAsync(ms, ct);
+            try
+            {
+                await Request.Body.CopyToAsync(ms, ct);
+            }
+            catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
+            {
+                var tooBig = await _errors.CaptureAsync("backend", "webapp-chat", Uid, 413,
+                    "The AI request body exceeded the proxy limit.",
+                    $"Limit {MaxProxyBodyBytes} bytes. {ex.Message}", Request.Headers.UserAgent.ToString());
+                Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+                await Response.WriteAsJsonAsync(new
+                {
+                    error = "That message is too large to send. Try a shorter recording or fewer attachments.",
+                    referenceCode = tooBig,
+                }, ct);
+                return;
+            }
             body = ms.ToArray();
         }
         var contentType = Request.ContentType;
@@ -400,7 +434,15 @@ public class ChatAiController : ControllerBase
 
             Response.StatusCode = (int)upstream.StatusCode;
             Response.ContentType = upstream.Content.Headers.ContentType?.ToString() ?? "application/json";
-            // Stream token-by-token: disable output buffering and flush each chunk so SSE reaches the client live.
+            // Stream token-by-token. BOTH of these are needed, and only one of them was here before:
+            // DisableBuffering stops ASP.NET buffering, but says nothing to nginx, which buffers the
+            // upstream response by default. So the tokens flushed below piled up in nginx and NOTHING
+            // reached the edge until the buffers filled or the whole generation finished — turning a slow
+            // first token into a silent connection, and eventually into a gateway timeout the browser sees
+            // as a bare 502. Worst on the slowest-to-start turns: a voice message with an attachment, where
+            // the model ingests a clip and a document before emitting anything, and each tool round adds
+            // another wait. The server-chat SSE endpoint above has always set this; the proxy never did.
+            Response.Headers["X-Accel-Buffering"] = "no"; // nginx: pass chunks through unbuffered
             HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
 
             // Keep only a bounded tail of the (chat) response so the final usageMetadata can be read back

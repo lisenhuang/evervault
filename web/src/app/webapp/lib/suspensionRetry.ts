@@ -8,7 +8,13 @@
 // server-side and polled — see voiceReply.ts); this covers the reply *generation* itself, which still runs
 // in the page and is what actually gets killed.
 
-import { isNetworkError } from "./aiError";
+import { isNetworkError, isTransientServerError } from "./aiError";
+
+/** Backoff before each retry of a transient gateway failure. Sized to ride out a container restart
+ *  without holding the turn open so long that the user assumes it has hung. */
+const GATEWAY_BACKOFF_MS = [1_000, 3_000, 6_000];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Resolve as soon as the tab is (or becomes) foreground again. Resolves immediately when already visible. */
 function whenForeground(): Promise<void> {
@@ -43,6 +49,7 @@ export async function runWithSuspensionRetry<T>(
   run: (attempt: number) => Promise<T>,
   maxRetries = 4,
 ): Promise<T> {
+  let gatewayRetries = 0;
   for (let attempt = 0; ; attempt++) {
     // Was the tab hidden at any point during this attempt? Start from the current state (a request begun
     // while already backgrounded counts), then latch on any hide event that lands mid-flight.
@@ -54,8 +61,16 @@ export async function runWithSuspensionRetry<T>(
     try {
       return await run(attempt);
     } catch (e) {
-      // Only a suspension-shaped failure is retried: a network kill that coincided with the tab being
-      // hidden, and only up to the cap. Everything else propagates to the caller's error handling.
+      // A brief origin outage — a deploy, a restart, a gateway hiccup. Retried on its own budget and
+      // WITHOUT regard to visibility, because unlike a suspension kill this happens while the user is
+      // sitting there watching. Waiting a moment and trying again is what a person would do, and it
+      // saves a turn (and a voice recording) that is otherwise gone for good.
+      if (isTransientServerError(e) && gatewayRetries < GATEWAY_BACKOFF_MS.length) {
+        await sleep(GATEWAY_BACKOFF_MS[gatewayRetries++]);
+        continue;
+      }
+      // Only a suspension-shaped failure is retried here: a network kill that coincided with the tab
+      // being hidden, and only up to the cap. Everything else propagates to the caller's error handling.
       if (attempt >= maxRetries || !sawHidden || !isNetworkError(e)) throw e;
     } finally {
       if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);

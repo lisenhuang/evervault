@@ -43,6 +43,27 @@ export function isNetworkError(e: unknown): boolean {
 }
 
 /**
+ * True when `e` is a gateway-level failure that is likely to succeed on a retry: the origin was briefly
+ * unable to answer, rather than the request being wrong. Covers 502/503/504 and Cloudflare's 52x family,
+ * plus the tell-tale HTML body those return in place of JSON.
+ *
+ * This is what a deploy looks like from the browser — the app container is replaced as a unit, so for a
+ * few seconds there is no origin at all and every in-flight request gets an error page. Without a retry a
+ * single unlucky second destroys a whole turn, including a voice recording the user cannot get back.
+ */
+export function isTransientServerError(e: unknown): boolean {
+  const raw = e instanceof Error ? e.message : String(e ?? "");
+  const propStatus = (e as { status?: unknown } | null)?.status;
+  const status = typeof propStatus === "number" ? propStatus : parseErrorBody(raw).status;
+  if (status === 502 || status === 503 || status === 504) return true;
+  if (status !== undefined && status >= 520 && status <= 530) return true;
+  // A gateway that answers with an HTML error page and no usable status — the shape of an origin that
+  // isn't there. A 4xx is never treated as transient, so a real client error can't loop.
+  if (status !== undefined && status < 500) return false;
+  return /<!doctype html|<html[\s>]/i.test(raw.slice(0, 500)) && /50\d|bad gateway|unavailable/i.test(raw);
+}
+
+/**
  * Localized message for a microphone-acquisition failure, or null when `e` isn't a MicError (so the
  * caller can fall through to {@link friendlyAiError}). Each reason maps to specific, actionable copy —
  * an in-app browser that can't record gets "open in Safari/Chrome", a persisted block gets "enable it
@@ -145,6 +166,29 @@ export function friendlyAiError(e: unknown, t: Messages): FriendlyAiError {
     code,
     fromBackend,
     status,
-    detail: clip(raw, 6000),
+    detail: looksHtml ? summarizeHtmlError(parsed.message, status) : clip(raw, 6000),
   };
+}
+
+/**
+ * Condense a gateway's HTML error page into the few facts worth keeping. A Cloudflare 502 is ~5 KB of
+ * markup, stylesheets and IE conditional comments, of which exactly three parts matter: the status, the
+ * page title, and the Ray ID that identifies the request in Cloudflare's own logs. Storing the rest just
+ * buries the reports an admin is trying to read.
+ */
+function summarizeHtmlError(html: string, status?: number): string {
+  const title = /<title>([^<]{0,200})<\/title>/i.exec(html)?.[1]?.trim();
+  const ray = /Ray ID:\s*<strong[^>]*>([a-z0-9]+)<\/strong>/i.exec(html)?.[1]
+    ?? /Ray ID:\s*([a-z0-9]{12,})/i.exec(html)?.[1];
+  // The origin-status panel is the useful half of Cloudflare's diagnostic: it says which hop failed.
+  const host = /id="cf-host-status"[\s\S]{0,600}?(Working|Error)/i.exec(html)?.[1];
+  return [
+    "Gateway returned an HTML error page (origin unreachable — not a provider error).",
+    status !== undefined ? `status: ${status}` : null,
+    title ? `title: ${title}` : null,
+    host ? `cloudflare host status: ${host}` : null,
+    ray ? `cloudflare ray id: ${ray}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
