@@ -36,15 +36,14 @@ export const MAX_TOTAL_INLINE = 15_000_000;
  * {@link MAX_TOTAL_INLINE} does not account for (that budget is enforced in the composer, over files
  * only, before any recording exists).
  *
- * This gap is what made "PDF + voice" fail where "PDF + text" succeeded: the voice request carries
- * everything the text one does and adds the WAV, at 16 kHz mono PCM16 — about 42,700 base64 characters
- * per second of speech, so ~2.5 MB per minute. Past the server's body limit the request is rejected
- * mid-upload and the connection is reset, which reaches the browser as an opaque gateway error rather
- * than anything explaining the size.
+ * The clip itself is bounded — Composer's RECORD_LIMIT stops and sends at 99 s, which at 16 kHz mono
+ * PCM16 (~42,700 base64 characters per second) is at most ~4.2 MB. So this is NOT a guard against a long
+ * recording; it exists for the one combination that can still overshoot: attachments at or near the full
+ * 15 MB file budget, plus a clip, plus replayed history. Rather than send something that may be rejected
+ * mid-upload — which reaches the browser as an opaque gateway error saying nothing about size — the turn
+ * degrades on its own terms and sends the transcript instead of the audio (see runTtsVoiceTurn).
  *
- * Deliberately well under the backend's own limit so the client is always the first to notice, and
- * degrades on its own terms (see runTtsVoiceTurn: it sends the transcript instead of the audio) rather
- * than discovering the ceiling as a failed request.
+ * Deliberately well under the backend's own limit so the client is always the first to notice.
  */
 export const MAX_VOICE_INLINE = 18_000_000;
 
