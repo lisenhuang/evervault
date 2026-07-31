@@ -97,6 +97,40 @@ declarations** (name + description + params) alongside the persona and transcrip
 can *ask* to call one instead of writing text. The browser runs it and feeds the result back. Repeat
 until the model answers in plain text.
 
+### 🎭 What a "tool call" actually is
+
+A call is a **request, not an execution**. Here is one real round-trip — `recall_memory` looking up
+something the user mentioned days ago:
+
+```
+ 🖥️ our code         every turn we send two SEPARATE fields, not one prompt
+      │
+      │   tools:  [ recall_memory(query, since, until…), … ]   ← what it CAN do
+      │   system: "…user refers to something earlier? call recall_memory…"  ← WHEN to
+      ▼
+ 🤖 model            ✍️ can only write TEXT — it never runs anything
+      │
+      │   { "name": "recall_memory", "args": { "query": "dog" } }
+      ▼
+ 🖥️ our code         reads that JSON, runs OUR OWN function
+      │
+      │   runTool(name, args) ─▶ runRecallTool({ query: "dog" })
+      │        └─▶ POST /api/chat/memories/search ─▶ 🐘 db
+      ▼
+ 📦 result           { "memories": [ { "when": "Tue", "text": "…Mochi…" } ] }
+      │
+      │   appended to the transcript, exactly like another message
+      ▼
+ 🤖 model            💬 "You mentioned Mochi on Tuesday."
+```
+
+- **Both fields are needed.** The declaration makes a call *possible* and well-formed; the persona line
+  is what makes it *happen* — given the schema alone, the model insists it has no memory and never calls.
+- The model picks a **name**, never code. An unknown or invented name runs nothing — it just gets
+  `Error: unknown tool` back and tries again.
+- Admin **write** tools go further: they *stop* the loop and come back as a signed proposal a human
+  must approve before anything executes.
+
 ```
  each turn:  persona + transcript + tool declarations  ─▶  🤖 model
                                                               │
