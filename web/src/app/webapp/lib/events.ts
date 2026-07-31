@@ -79,6 +79,12 @@ function daysBetween(from: string, to: string): number | null {
   return Math.round((b - a) / DAY_MS);
 }
 
+/** Keep a detail to one useful phrase ("at 4pm at the children's hospital"), not a paragraph — the block
+ *  is injected on every turn and several events could otherwise crowd out the conversation. */
+function clipDetail(s: string): string {
+  return s.length > 120 ? `${s.slice(0, 120)}…` : s;
+}
+
 function whenLabel(days: number): string {
   if (days === 0) return "today";
   if (days === 1) return "tomorrow";
@@ -102,11 +108,17 @@ export function renderEventsBlock(events: LifeEvent[], now = new Date()): string
   for (const e of open) {
     const days = daysBetween(today, e.eventDate!);
     if (days == null) continue;
+    // `details` carries whatever the user actually said — very often the time ("at 4pm"), which
+    // eventDate cannot hold. Dropping it left the model with a bare "today" and no way to tell an
+    // event that has already happened from one still hours away.
+    const detail = (e.details ?? "").replace(/\s+/g, " ").trim();
+    const line = `- ${e.title}${detail ? ` — ${clipDetail(detail)}` : ""}`;
+
     if (days >= 0 && days <= UPCOMING_DAYS) {
-      upcoming.push(`- ${e.title} (${whenLabel(days)})`);
+      upcoming.push(`${line} (${whenLabel(days)})`);
     } else if (days < 0 && days >= -FOLLOW_UP_DAYS && !e.followedUpAt) {
       // Only ever offered once: followedUpAt is set as soon as we ask.
-      justHappened.push(`- ${e.title} (${whenLabel(days)})`);
+      justHappened.push(`${line} (${whenLabel(days)})`);
     }
   }
 
@@ -130,7 +142,18 @@ export function renderEventsBlock(events: LifeEvent[], now = new Date()): string
     parts.push(
       "Coming up for this user. Only bring these up if it fits what they're already talking about, or " +
       "if it's today or tomorrow — and even then only after you've answered them, never as the reply " +
-      "itself. Don't recite the list:\n" + upcoming.slice(0, UPCOMING_CAP).join("\n"),
+      "itself. Don't recite the list.\n" +
+      // The reported failure: an IV drip the user had said was at 4pm was asked about at 3pm as "how did
+      // it go?" — the model read the bare "today" as already past. These entries are dated, not timed,
+      // so "today" genuinely does not say whether it has happened.
+      "NOTHING HERE HAS HAPPENED YET as far as you know — this is the upcoming list, not the past one. " +
+      "An entry marked today may still be hours away: you are given the day, and only sometimes the time. " +
+      "So never ask how one of these went, never use the past tense about it, and never assume it is " +
+      "done — not even late in the day. Speak about it as still ahead: \"good luck this afternoon\", " +
+      "\"are you still heading in at four?\". If a line shows a time, respect it against the current time " +
+      "you were given, and if that time has passed, still ASK whether it happened rather than assuming " +
+      "it did — plans slip. Only once the user tells you it happened may you talk about it in the past:\n" +
+      upcoming.slice(0, UPCOMING_CAP).join("\n"),
     );
   }
   return parts.join("\n\n");
