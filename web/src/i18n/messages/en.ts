@@ -131,6 +131,9 @@ const en = {
       completed: (items: string) => `Marked as done: ${items}.`,
       dismissed: (items: string) => `Taken off your to-do list: ${items}.`,
       updated: (items: string) => `Updated on your to-do list: ${items}.`,
+      // Said outright when they asked for something to go on the list and nothing did — the reply
+      // itself may claim otherwise, which is exactly why this one isn't gated on what the reply says.
+      notAdded: "Nothing has been added to your to-do list.",
       itemWhen: (title: string, when: string) => `${title} (${when})`,
       separator: "; ",
     },

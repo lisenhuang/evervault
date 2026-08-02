@@ -75,7 +75,7 @@ function whenLabel(task: ChangedTask, lang: Lang): string {
 /**
  * One entry per task, newest snapshot wins. A task added and then edited in the same turn stays
  * "added" — that it is now on the list at all is the news, and the merged entry still carries the
- * final date.
+ * final date. Added and then DISMISSED is the exception: it drops out entirely.
  */
 function mergeChanges(changes: TaskChange[]): { kind: TaskChangeKind; task: ChangedTask }[] {
   const byId = new Map<number, { kind: TaskChangeKind; task: ChangedTask }>();
@@ -83,6 +83,15 @@ function mergeChanges(changes: TaskChange[]): { kind: TaskChangeKind; task: Chan
     for (const task of change.tasks) {
       if (!Number.isFinite(task.id)) continue;
       const prev = byId.get(task.id);
+      // Put on the list and taken straight back off within the same turn: the list ends exactly where
+      // it started, so there is nothing to tell the user. This is what the stray-task recheck does when
+      // it finds a task that came from recalled notes rather than from the request (see taskIntent.ts) —
+      // reporting either half of that would be announcing the mistake, or the repair of one the user
+      // never saw. Reported neither as an add nor as a removal.
+      if (prev?.kind === "added" && change.kind === "dismissed") {
+        byId.delete(task.id);
+        continue;
+      }
       byId.set(task.id, { kind: prev?.kind === "added" ? "added" : change.kind, task });
     }
   }
@@ -97,6 +106,15 @@ const KIND_ORDER: TaskChangeKind[] = ["added", "completed", "dismissed", "update
  * The line(s) to append to a finished reply, or null when there's nothing to add — either because the
  * turn changed no tasks, or because the reply already named every task it changed.
  *
+ * `askedToAdd` closes the mirror-image hole. Everything above reports what DID happen, so a reply that
+ * changed nothing was free to claim anything: an opening "remind me to register mophiqo.video, add this
+ * to todo list" came back as "Done — texting the locksmith to repair your door lock is on your list for
+ * August 13" — a task from an earlier conversation, nothing saved, and no way for the user to know. So
+ * when their message plainly asked for something to go on the list (see taskIntent.ts) and the turn ends
+ * with nothing added, the reply says so outright. Unconditional — NOT gated on replyMentionsTask like
+ * the lines above — because the claim being contradicted is exactly the thing that can't be trusted
+ * here. The cost when the model behaved correctly and said so itself is one redundant, true sentence.
+ *
  * `reply` is the model's finished text. Kept pure (no React, no network) so it can be reasoned about
  * and reused by any surface.
  */
@@ -105,20 +123,28 @@ export function buildTaskReceipt(
   reply: string,
   t: Messages,
   lang: Lang,
+  askedToAdd = false,
 ): string | null {
-  if (changes.length === 0) return null;
+  const merged = mergeChanges(changes);
+  // Judged on the MERGED view, so "added" means still on the list when the turn ended — a task added
+  // and dismissed again within the turn leaves them with nothing, and this line says exactly that.
+  const nothingAdded = askedToAdd && !merged.some((m) => m.kind === "added");
 
   const groups = new Map<TaskChangeKind, string[]>();
-  for (const { kind, task } of mergeChanges(changes)) {
+  for (const { kind, task } of merged) {
     if (!task.title?.trim()) continue;
     if (replyMentionsTask(reply, task.title)) continue;
     const when = whenLabel(task, lang);
     const item = when ? t.chat.taskReceipt.itemWhen(task.title, when) : task.title;
     groups.set(kind, [...(groups.get(kind) ?? []), item]);
   }
-  if (groups.size === 0) return null;
 
-  return KIND_ORDER.filter((k) => groups.has(k))
-    .map((k) => t.chat.taskReceipt[k](groups.get(k)!.join(t.chat.taskReceipt.separator)))
-    .join("\n");
+  // "nothing was added" leads: it corrects the reply, whereas the lines below merely complete it.
+  const lines = [
+    ...(nothingAdded ? [t.chat.taskReceipt.notAdded] : []),
+    ...KIND_ORDER.filter((k) => groups.has(k)).map((k) =>
+      t.chat.taskReceipt[k](groups.get(k)!.join(t.chat.taskReceipt.separator)),
+    ),
+  ];
+  return lines.length > 0 ? lines.join("\n") : null;
 }

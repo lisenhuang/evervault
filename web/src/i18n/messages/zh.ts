@@ -129,6 +129,7 @@ const zh: Messages = {
       completed: (items: string) => `已标记为完成：${items}。`,
       dismissed: (items: string) => `已从你的待办清单中移除：${items}。`,
       updated: (items: string) => `已更新你的待办清单：${items}。`,
+      notAdded: "没有任何内容被加入你的待办清单。",
       itemWhen: (title: string, when: string) => `${title}（${when}）`,
       separator: "；",
     },

@@ -25,7 +25,7 @@ import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from 
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA, type TaskChange } from "./lib/taskTools";
 import { buildTaskReceipt } from "./lib/taskReceipt";
-import { asksToTrackSomething, UNTRACKED_REQUEST_NUDGE } from "./lib/taskIntent";
+import { asksToTrackSomething, buildRecheckNudge } from "./lib/taskIntent";
 import {
   applyForget,
   FORGET_PERSONA,
@@ -1069,6 +1069,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // spoken paths only have their transcript once it lands, which is well before this is needed.
     // Used solely to decide whether an explicit "put this on my list" went untracked (see below).
     userText: () => string = () => "",
+    // Relevant notes recalled from earlier conversations (RAG), or null. Goes into the SYSTEM
+    // instruction beside the other grounding blocks — never into `contents`. As a user turn sitting
+    // right before the real message it was indistinguishable from one, and an old "add this to my
+    // to-do list" quoted inside it got answered in place of what the user had just asked for.
+    // See lib/recall.ts.
+    recalledNotes: string | null = null,
   ): Promise<string> {
     let acc = "";
     const onDelta = (delta: string) => {
@@ -1100,6 +1106,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // forgot to mention still reaches the user — the reported failure was a first message asking for
     // something to go on the list and getting back a greeting, with no way to tell whether it had.
     const taskChanges: TaskChange[] = [];
+    // Did they plainly ask for something to go on the list this turn? Decided once, read again after
+    // the recheck round below, so the receipt can state outright that nothing did. Only meaningful on
+    // the memory-on path — that's the only one with task tools at all.
+    let askedToAdd = false;
     if (memoryOn) {
       // A tab open since yesterday still holds yesterday's agenda; roll repeating tasks onto today
       // before the block below is rendered, or the model is told a chore is overdue when it is due now.
@@ -1111,6 +1121,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         renderStateBlock(statesRef.current),
         renderEventsBlock(eventsRef.current),
         renderAgendaBlock(tasksRef.current),
+        // Recalled past conversations go here, AFTER the authoritative task list and clearly labelled
+        // as background — not into the conversation, where an instruction quoted in a note reads as a
+        // live one (see lib/recall.ts for the failure this ordering exists to prevent).
+        recalledNotes,
         // Directly after the blocks that invite the assistant to raise something itself: whatever they
         // suggest, the user's message is what the reply is for. Without this the model would answer a
         // plain question with a check-in about their week and never get to the question at all.
@@ -1191,15 +1205,28 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       for await (const delta of stream(sys, tools, runTool)) {
         onDelta(delta);
       }
-      // An explicit "add this to my to-do list" that finished without add_task ever being called is
-      // the failure underneath the one the receipt covers: nothing was saved, so there is nothing to
-      // report. Point the omission out and let the model answer again — ONE round, and the decision
-      // stays its own (the nudge creates no task). See lib/taskIntent.ts for why it's split that way.
-      if (!taskChanges.some((c) => c.kind === "added") && asksToTrackSomething(userText())) {
+      // Two ways this turn can have mishandled the list, both worth ONE more round: an explicit "add
+      // this to my to-do list" that finished without add_task ever being called (nothing saved, so the
+      // receipt has nothing to report), or a task that was saved but matches nothing in the
+      // conversation — the shape of the mophiqo/locksmith report, where a request recalled from an
+      // earlier session was acted on instead of the live one. Code decides WHEN; the nudge only states
+      // the fact and hands the judgement back. See lib/taskIntent.ts.
+      askedToAdd = asksToTrackSomething(userText());
+      const nudge = buildRecheckNudge({
+        userText: userText(),
+        addedTitles: taskChanges.filter((c) => c.kind === "added").flatMap((c) => c.tasks.map((x) => x.title)),
+        // Everything said this conversation THROUGH the user's latest message — deliberately not the
+        // reply being composed, whose whole problem is that it names the stray task.
+        conversation: scopedHistory()
+          .map((m) => m.text)
+          .join("\n"),
+        notes: recalledNotes,
+      });
+      if (nudge) {
         const followUp: Content[] = [
           ...contents,
           { role: "model", parts: [{ text: acc || "(no reply)" }] },
-          { role: "user", parts: [{ text: UNTRACKED_REQUEST_NUDGE }] },
+          { role: "user", parts: [{ text: nudge }] },
         ];
         // Buffered rather than streamed into the bubble: the first reply stays on screen behind the
         // typing dots and is only replaced once the retry has actually produced something, so a retry
@@ -1259,7 +1286,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // Close the loop on anything the reply changed but never said. Appended BEFORE the voice branch on
     // purpose: `acc` is what gets synthesised, so a spoken reply says it out loud too rather than
     // showing text its own audio doesn't contain. Silent when the model did confirm the change itself.
-    const receipt = buildTaskReceipt(taskChanges, acc, t, lang);
+    const receipt = buildTaskReceipt(taskChanges, acc, t, lang, askedToAdd);
     if (receipt) {
       acc = acc ? `${acc}\n\n${receipt}` : receipt;
       applyMessages((cur) => cur.map((m) => (m.id === asstId ? { ...m, text: acc } : m)));
@@ -1315,10 +1342,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (convId === conversationIdRef.current) scheduleExtraction();
   }
 
-  /** Relevant past context (episodic summaries + turns, re-ranked) as a preface for the next reply.
+  /** Relevant past context (episodic summaries + turns, re-ranked) as a grounding block for the next
+   *  reply's system instruction — NOT a conversation turn; see lib/recall.ts.
    *  `history` is this turn's slice of the transcript (everything before it), so a queued turn re-ranks
    *  against what actually precedes it rather than whatever else is in flight behind it. */
-  async function ragPreface(query: string, history: ChatMessage[]): Promise<Content | null> {
+  async function ragNotes(query: string, history: ChatMessage[]): Promise<string | null> {
     if (!memoryOn) return null;
     const recent = history.filter((m) => m.text && !m.error).map((m) => ({ role: m.role, text: m.text }));
     return retrieveContext({
@@ -1370,11 +1398,18 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           // RAG re-ranks against the conversation SO FAR, so it must exclude this very message —
           // `currentText` already carries it. Passing `base` (which ends with this user message) would
           // duplicate it and shove an older turn out of the recent window.
-          const preface = await ragPreface(text, historyBefore(userMsg.id));
-          const contents = preface ? [preface, ...toContents(base)] : toContents(base);
+          const notes = await ragNotes(text, historyBefore(userMsg.id));
           // Scope suggestion screenshots to this turn's history (through its own user message), not
           // later queued turns that may carry unrelated images.
-          return runAssistant(asstId, contents, false, isCurrent, () => historyBefore(asstId), () => text);
+          return runAssistant(
+            asstId,
+            toContents(base),
+            false,
+            isCurrent,
+            () => historyBefore(asstId),
+            () => text,
+            notes,
+          );
         });
         if (files?.length) {
           // Record the turn so past attachments can be recalled: each file becomes a memory line that
