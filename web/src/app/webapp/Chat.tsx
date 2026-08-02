@@ -75,7 +75,7 @@ import { api, type Me } from "./authApi";
 import { friendlyAiError, micErrorMessage } from "./lib/aiError";
 import { reportAiError } from "./lib/errorReport";
 import { runWithSuspensionRetry } from "./lib/suspensionRetry";
-import type { ChatMessage, ReplyRef } from "./types";
+import { messageBodyText, type ChatMessage, type ReplyRef } from "./types";
 import { useLang } from "@/i18n/LanguageProvider";
 import { aiReplyDirective } from "@/i18n/config";
 
@@ -190,7 +190,7 @@ function toContents(msgs: ChatMessage[]): Content[] {
       // it handed back after the user tapped Send, and those parts are deliberately NOT replayed
       // below — so a file-only assistant message would otherwise survive this filter and then produce
       // an empty `parts` array, which the API rejects.
-      return m.role === "user" ? !!(m.text || m.files?.length) : !!m.text;
+      return m.role === "user" ? !!(m.text || m.caption || m.files?.length) : !!m.text;
     })
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
@@ -203,6 +203,10 @@ function toContents(msgs: ChatMessage[]): Content[] {
         // the model already described in words, and it would silently flip an otherwise all-text
         // conversation off the neutral server-chat path (see contentsAreTextOnly in serverChat.ts).
         ...(m.role === "user" ? (m.files ?? []).map(fileToPart) : []),
+        // Typed before spoken, the order they were composed in and the order the bubble shows them.
+        // Two parts rather than one joined string, so a later turn re-reads the message the same shape
+        // the model was originally handed it (see runTtsVoiceTurn).
+        ...(m.caption ? [{ text: m.caption }] : []),
         ...(m.text ? [{ text: m.text }] : []),
       ],
     }));
@@ -525,10 +529,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const once = async (min: number, cap?: number) => {
       // Trim-aware, matching how extractAndSyncProfile filters: a whitespace-only bubble (a live
       // transcript can emit one) would otherwise be counted here but dropped there, drifting the
-      // cursor away from the window it indexes into.
+      // cursor away from the window it indexes into. Filter and map read through the same
+      // messageBodyText for that reason — and so the typed half of a voice message gets distilled too.
       const transcript = messagesRef.current
-        .filter((m) => m.text.trim() && !m.error && !m.streaming)
-        .map((m) => ({ role: m.role, text: m.text }));
+        .filter((m) => messageBodyText(m).trim() && !m.error && !m.streaming)
+        .map((m) => ({ role: m.role, text: messageBodyText(m) }));
       if (transcript.length - extractCursorRef.current < min) return;
       const sinceIndex = extractCursorRef.current;
       extractCursorRef.current = transcript.length;
@@ -1217,9 +1222,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         addedTitles: taskChanges.filter((c) => c.kind === "added").flatMap((c) => c.tasks.map((x) => x.title)),
         // Everything said this conversation THROUGH the user's latest message — deliberately not the
         // reply being composed, whose whole problem is that it names the stray task.
-        conversation: scopedHistory()
-          .map((m) => m.text)
-          .join("\n"),
+        conversation: scopedHistory().map(messageBodyText).join("\n"),
         notes: recalledNotes,
       });
       if (nudge) {
@@ -1348,7 +1351,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
    *  against what actually precedes it rather than whatever else is in flight behind it. */
   async function ragNotes(query: string, history: ChatMessage[]): Promise<string | null> {
     if (!memoryOn) return null;
-    const recent = history.filter((m) => m.text && !m.error).map((m) => ({ role: m.role, text: m.text }));
+    const recent = history
+      .filter((m) => !m.error && messageBodyText(m))
+      .map((m) => ({ role: m.role, text: messageBodyText(m) }));
     return retrieveContext({
       recent,
       currentText: query,
@@ -1362,7 +1367,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // Snapshot the quoted message (bounded — the quote renders two lines and the model sees a
     // capped snippet) and clear the composer's reply bar right away.
     const replyRef: ReplyRef | null = replyTo
-      ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
+      ? { id: replyTo.id, role: replyTo.role, text: messageBodyText(replyTo).slice(0, 500) }
       : null;
     setReplyTo(null);
     const userMsg: ChatMessage = {
@@ -1484,7 +1489,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     applyMessages((cur) => cur.map((m) => (m.id === id ? { ...m, text: fixSpokenBrandName(m.text + delta, { streaming: true }) } : m)));
   }
 
-  async function startVoice(files?: PreparedFile[]) {
+  async function startVoice(files?: PreparedFile[], caption?: string) {
     // Guard against a second mic tap during the getUserMedia acquisition window: voiceState is still
     // "idle" (it flips to "recording" only after acquisition resolves), so the button stays enabled —
     // a double-tap would otherwise spawn a second recorder/Live driver and orphan the first.
@@ -1515,7 +1520,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // nowhere to put an image or a document — the model would answer a clip about a picture it never
     // saw. The classic path sends the files as real inline parts alongside the clip, so it's used
     // whenever anything is attached. The reply is still spoken either way.
-    if (voiceMode === "live" && !files?.length) {
+    //
+    // A typed caption is skipped for the same reason and decided at the same moment: the clip and the
+    // text are one message, and the only place a Live session would take the text is a mid-session
+    // sendClientContent, which is exactly the channel that breaks a per-message session's history. The
+    // classic path already carries arbitrary parts, so text+audio simply rides along there.
+    if (voiceMode === "live" && !files?.length && !caption?.trim()) {
       const driver = new LiveVoiceMessage({
         model: voiceLiveModel,
         voice,
@@ -1564,15 +1574,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }
 
-  /** Ends the recording and sends it (with `files`, if any, as attachments on the same message).
+  /** Ends the recording and sends it as ONE message with whatever else was staged: `files` as
+   *  attachments, and `caption` — text already typed in the composer when the mic was tapped — as the
+   *  written half of the same message.
    *  Resolves true if the clip was actually sent — false if it was dropped or failed, so the composer
-   *  can keep the attachments staged instead of losing them along with the discarded recording. */
-  async function stopVoice(files?: PreparedFile[]): Promise<boolean> {
+   *  can keep the text and attachments staged instead of losing them with the discarded recording. */
+  async function stopVoice(files?: PreparedFile[], caption?: string): Promise<boolean> {
     // A Gemini Live voice message is in flight — end the turn on that session.
     const driver = liveVoiceRef.current;
     if (driver) {
       liveVoiceRef.current = null;
-      return await stopVoiceLive(driver, files);
+      return await stopVoiceLive(driver, files, caption);
     }
     const rec = recorderRef.current;
     if (!rec) return false;
@@ -1581,7 +1593,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // message quotes it exactly as a typed reply does. The bar is cleared only once the clip clears the
     // too-short / no-speech gates and is actually sent — a dropped recording keeps the reply bar.
     const replyRef: ReplyRef | null = replyTo
-      ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
+      ? { id: replyTo.id, role: replyTo.role, text: messageBodyText(replyTo).slice(0, 500) }
       : null;
     // A stray clip (e.g. a slow previous reply that landed mid-recording) must not keep talking over
     // the send. This also frees the reply element, and the stop tap is a gesture — re-prime playback
@@ -1627,10 +1639,13 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const userMsg: ChatMessage = {
         id: uid(),
         role: "user",
+        // `text` is the SPOKEN half and stays empty until the transcript lands (see runTtsVoiceTurn);
+        // anything typed goes to `caption`, so the transcript arriving can't overwrite it.
         text: "",
-        // Stays "voice" even with attachments — the bubble renders the files above the voice line, and
-        // toContents replays both parts for later turns.
+        // Stays "voice" even with attachments or typed text — the bubble renders the files, then the
+        // typed line, then the spoken one, and toContents replays every part for later turns.
         kind: "voice",
+        ...(caption?.trim() ? { caption: caption.trim() } : {}),
         ...(files?.length ? { files } : {}),
         ...(replyRef ? { replyTo: replyRef } : {}),
       };
@@ -1647,7 +1662,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         userMsg,
         { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true },
       ]);
-      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, files, turnConvId, isCurrent });
+      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
       return true;
     } catch (e) {
       // rec.stop() itself failed (rare) — surface it before anything was queued.
@@ -1678,8 +1693,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     files?: PreparedFile[];
     turnConvId: string;
     isCurrent: () => boolean;
+    /** Text typed in the composer and sent with the clip as one message (see stopVoice). */
+    caption?: string;
   }) {
-    const { userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent } = p;
+    const { userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption } = p;
     const { base64, mimeType } = wav;
     const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
     // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready (see
@@ -1700,6 +1717,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     enqueueTurn(async () => {
       try {
         const voiceInstruction =
+          // A caption means they typed part of this message and spoke the rest — usually because the
+          // typed half has to be exact (a name, a URL, a number) and the spoken half is the ask. Two
+          // halves of one message, so say so: answered separately they read as a message repeated
+          // twice, and answering only the clip silently drops what they bothered to type.
+          (caption
+            ? "This is ONE message from the user, in two parts: the text they typed, immediately above, " +
+              "and the voice clip they recorded to go with it. Read the text and listen to the clip, and " +
+              "answer them together as a single message — neither half is a separate turn, and neither is " +
+              "merely background for the other. Where they overlap, they are the same request said twice, " +
+              "not two requests. "
+            : "") +
           "Respond conversationally to this spoken message. Act on what they say the same as if " +
           "they had typed it — including using your tools when appropriate (e.g. if they agree to " +
           "share feedback with the team, call record_suggestion)." +
@@ -1724,13 +1752,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // Attachments go in as real parts, ahead of the clip — same shape a typed message produces via
         // toContents, so the model sees the picture/document it's being asked about.
         const fileParts = (files ?? []).map(fileToPart);
+        // The typed half, immediately before the clip (or before the transcript, on the text-only leg) —
+        // the position voiceInstruction points at, and the same order toContents replays it in later.
+        const captionParts = caption ? [{ text: caption }] : [];
         // Transcript instead of the clip when the primary can't hear audio, or when the clip won't fit
         // beside the attachments. If the transcription failed we still inline the audio: a turn that is
         // too large is a maybe-failure, whereas a turn with neither audio nor transcript is a certain one.
         const lastTurn: Content =
           (serverChat || audioTooBig) && serverTranscript
-            ? { role: "user", parts: [...replyParts, ...fileParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
-            : { role: "user", parts: [...replyParts, ...fileParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
+            ? { role: "user", parts: [...replyParts, ...fileParts, ...captionParts, { text: `[Voice message — transcript] ${serverTranscript}` }, { text: voiceInstruction }] }
+            : { role: "user", parts: [...replyParts, ...fileParts, ...captionParts, { inlineData: { mimeType, data: base64 } }, { text: voiceInstruction }] };
         // TTS runs in the background inside runAssistant, so it never holds the queue. Retry across an iOS
         // tab suspension (which kills the in-flight request) by rebuilding `contents` fresh each attempt.
         const reply = await runWithSuspensionRetry((attempt) => {
@@ -1744,12 +1775,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             isCurrent,
             () => historyBefore(asstId),
             // The clip's transcript lands on the user's bubble as soon as it resolves (in parallel
-            // with this turn), so by the time the untracked-request check reads it, it's there.
-            () => messagesRef.current.find((m) => m.id === userMsg.id)?.text ?? "",
+            // with this turn), so by the time the untracked-request check reads it, it's there. Read
+            // via messageBodyText: "add this to my list" may well be the half they TYPED.
+            () => {
+              const m = messagesRef.current.find((x) => x.id === userMsg.id);
+              return m ? messageBodyText(m) : "";
+            },
           );
         });
         const transcript = await transcriptPromise; // already resolved in practice; never throws
-        const userText = transcript || "(voice message)";
+        // What this message said, for the memory record: the typed half and the spoken half, in the
+        // order they were composed. Recalled later it reads as the one message it was.
+        const spoken = transcript || "(voice message)";
+        const userText = caption ? `${caption}\n${spoken}` : spoken;
         if (files?.length) {
           // Same treatment a typed message's attachments get (see sendText): each file becomes a memory
           // line (type + name + extracted content) appended to the spoken transcript, and each is stored
@@ -1825,9 +1863,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // End a Gemini Live voice message: stop the mic, gate the clip, then stream the reply (audio + both
   // transcripts) from the same session. Falls back to the classic TTS pipeline (with the recorded clip)
   // if Live never came up or fails mid-reply, so the user always gets an answer.
-  async function stopVoiceLive(driver: LiveVoiceMessage, files?: PreparedFile[]): Promise<boolean> {
+  // `caption` is normally absent here — startVoice routes a typed-plus-spoken message away from Live
+  // before a session is ever opened. It's still carried through, because the two fallbacks below hand
+  // the turn to runTtsVoiceTurn, and that path can send the typed half properly.
+  async function stopVoiceLive(driver: LiveVoiceMessage, files?: PreparedFile[], caption?: string): Promise<boolean> {
     const replyRef: ReplyRef | null = replyTo
-      ? { id: replyTo.id, role: replyTo.role, text: replyTo.text.slice(0, 500) }
+      ? { id: replyTo.id, role: replyTo.role, text: messageBodyText(replyTo).slice(0, 500) }
       : null;
     stopReplyAudio();
     unlockAudioPlayback();
@@ -1855,6 +1896,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // in via onUserText (appendVoiceUserText) as it arrives.
         text: driver.currentUserText,
         kind: "voice",
+        ...(caption?.trim() ? { caption: caption.trim() } : {}),
         ...(files?.length ? { files } : {}),
         ...(replyRef ? { replyTo: replyRef } : {}),
       };
@@ -1878,7 +1920,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         void driver.abandon();
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
-        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent });
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
         return true;
       }
       try {
@@ -1897,7 +1939,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           ),
         );
         registerLivePlayback(driver, asstId);
-        const userText = reply.userText || "(voice message)";
+        const spokenText = reply.userText || "(voice message)";
+        const userText = caption?.trim() ? `${caption.trim()}\n${spokenText}` : spokenText;
         void recordTextTurns(
           [
             { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
@@ -1913,7 +1956,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
         driver.stopPlayback();
-        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent });
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
       }
       return true; // the message is in the transcript either way (Live reply or TTS fallback)
     } catch (e) {

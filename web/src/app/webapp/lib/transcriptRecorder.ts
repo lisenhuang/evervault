@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { flushTranscript, recordTranscript, type TranscriptItem } from "../transcriptApi";
-import type { ChatMessage } from "../types";
+import { messageBodyText, type ChatMessage } from "../types";
 
 /** Quiet period before a settled message is recorded. Reset by every change to the list, so a streaming
  *  reply or a live call being spoken into records once it pauses rather than on every delta. */
@@ -95,7 +95,9 @@ export function useTranscriptRecorder(
       if (existing) {
         seen.current.set(m.id, {
           ...existing,
-          text: m.text,
+          // messageBodyText, not m.text: a voice message sent with typed text keeps the typed half in
+          // `caption`, and the stored transcript has to carry the whole message.
+          text: messageBodyText(m),
           streaming: !!m.streaming,
           // A voice reply's kind can land after the bubble does; keep the latest classification.
           modality: existing.modality === "live" ? "live" : modalityOf(m.kind, false),
@@ -105,7 +107,9 @@ export function useTranscriptRecorder(
           conversationId: convIdRef.current(),
           role: m.role,
           modality: modalityOf(m.kind, inCallRef.current()),
-          text: m.text,
+          // messageBodyText, not m.text: a voice message sent with typed text keeps the typed half in
+          // `caption`, and the stored transcript has to carry the whole message.
+          text: messageBodyText(m),
           streaming: !!m.streaming,
           at: new Date().toISOString(),
           recorded: null,

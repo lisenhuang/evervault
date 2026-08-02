@@ -26,6 +26,13 @@ export type ChatMessage = {
    *   the model can never remove anything on its own.
    */
   kind?: "text" | "voice" | "image" | "call" | "fileOffer" | "forgetOffer";
+  /**
+   * For kind "voice": text the user TYPED and sent together with the clip, when they recorded on top of
+   * something already in the composer. `text` on a voice message is what was SPOKEN (the transcript,
+   * which lands a moment later), so the two are kept apart rather than concatenated — the bubble shows
+   * the typed line above the spoken one, and the model is handed both as one message.
+   */
+  caption?: string | null;
   /** For kind "call": seconds the user spent on the just-ended realtime call. */
   durationSec?: number;
   /** For kind "fileOffer": the stored file this offer card is for. */
@@ -49,3 +56,14 @@ export type ChatMessage = {
   streaming?: boolean;
   error?: boolean;
 };
+
+/**
+ * Everything a message actually said, as one string. Normally just its text — but a voice message
+ * recorded on top of something already typed carries BOTH halves: `caption` is what was typed, `text`
+ * what was spoken. Anywhere a message is treated as "what was said" — recall queries, the to-do intent
+ * checks, a quoted reply, the durable transcript, Copy — has to read the whole thing, not whichever
+ * half happens to live in `text`.
+ */
+export function messageBodyText(m: Pick<ChatMessage, "text" | "caption">): string {
+  return [m.caption, m.text].filter(Boolean).join("\n");
+}

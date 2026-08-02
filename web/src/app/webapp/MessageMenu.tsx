@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, Copy, Reply, Trash2 } from "lucide-react";
-import type { ChatMessage } from "./types";
+import { messageBodyText, type ChatMessage } from "./types";
 import { useT } from "@/i18n/LanguageProvider";
 
 const COPIED_CLOSE_MS = 600;
@@ -53,14 +53,18 @@ export default function MessageMenu({
     return () => window.removeEventListener("scroll", onClose, true);
   }, [sheet, onClose]);
 
+  // The whole message, not just `text`: a voice message sent with typed text keeps the two apart, and
+  // copying half of what the user wrote would be worse than not offering Copy at all.
+  const body = messageBodyText(message);
+
   function copyText() {
-    void navigator.clipboard?.writeText(message.text).catch(() => {});
+    void navigator.clipboard?.writeText(body).catch(() => {});
     setCopied(true);
     setTimeout(onClose, COPIED_CLOSE_MS);
   }
 
   const senderName = message.role === "user" ? t.message.you : t.message.assistantName;
-  const preview = message.text || t.message.voiceMessage;
+  const preview = body || t.message.voiceMessage;
 
   const items = (
     <>
@@ -70,7 +74,7 @@ export default function MessageMenu({
         sheet={sheet}
         onClick={onReply}
       />
-      {!!message.text && (
+      {!!body && (
         <MenuItem
           icon={
             copied ? (

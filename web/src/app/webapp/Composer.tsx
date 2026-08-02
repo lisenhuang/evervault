@@ -24,11 +24,13 @@ export default function Composer({
 }: {
   onSendText: (text: string, files?: PreparedFile[]) => void;
   /** Staged attachments ride along with the voice message, so a clip can be sent WITH files. They're
-   *  handed over at record time too, because the send path is chosen up front (see Chat.startVoice). */
-  onStartVoice: (files?: PreparedFile[]) => void;
+   *  handed over at record time too, because the send path is chosen up front (see Chat.startVoice) —
+   *  and so is `caption`, the text already typed when the mic was tapped, for the same reason. */
+  onStartVoice: (files?: PreparedFile[], caption?: string) => void;
   /** Resolves true if the clip was actually sent — false if it was dropped (too short / no speech), in
-   *  which case the composer keeps the attachments staged rather than losing them with the recording. */
-  onStopVoice: (files?: PreparedFile[]) => Promise<boolean>;
+   *  which case the composer keeps the attachments AND the typed text staged rather than losing them
+   *  along with the recording. */
+  onStopVoice: (files?: PreparedFile[], caption?: string) => Promise<boolean>;
   onStartCall: () => void;
   voiceState: VoiceState;
   /** A realtime voice call is active. The call owns the mic, so recording a voice message and
@@ -242,20 +244,28 @@ export default function Composer({
     if (picked.length) void attachFiles(picked);
   }
 
-  // Stop-and-send, carrying whatever is staged so the clip and its attachments arrive as one message.
-  // The staged files are only cleared once the turn is actually sent.
+  // Stop-and-send, carrying everything staged so the clip, the typed text and any attachments arrive as
+  // ONE message. Staged content is only cleared once the turn is actually sent — a clip dropped for
+  // being too short or silent must not take a half-written message down with it.
   async function stopAndSend() {
     const staged = filesRef.current;
-    const sent = await onStopVoice(staged.length ? staged : undefined);
-    if (sent) setFilesSync([]);
+    const sent = await onStopVoice(staged.length ? staged : undefined, text.trim() || undefined);
+    if (sent) {
+      setFilesSync([]);
+      setText("");
+      requestAnimationFrame(grow);
+    }
   }
+  // No dep array: re-bound every render so the countdown's auto-send always closes over the CURRENT
+  // text and attachments rather than whatever was staged when recording began.
   useEffect(() => {
     stopAndSendRef.current = () => void stopAndSend();
   });
 
   function micClick() {
     if (voiceState === "recording") stopAndSendRef.current();
-    else if (voiceState === "idle") onStartVoice(filesRef.current.length ? filesRef.current : undefined);
+    else if (voiceState === "idle")
+      onStartVoice(filesRef.current.length ? filesRef.current : undefined, text.trim() || undefined);
   }
 
   function callClick() {
@@ -296,12 +306,6 @@ export default function Composer({
     );
   }
 
-  // The composing box keeps the mic as long as a voice message is still what you'd send — i.e. nothing
-  // typed. That covers the two cases where the box opens without any text of its own: replying to a
-  // message (picking "Reply" expands it with an empty field) and staging attachments. So a quote can be
-  // answered by voice, and a clip can be sent WITH files. Once you actually start typing, the mic steps
-  // aside as before — that turn is a text turn, and the send button owns it.
-  const canRecordExpanded = recording || processing || !text.trim();
   // Two-state layout. Idle (collapsed) keeps today's single row — call · voice · field (with the
   // paperclip inside) · send. Once you're actually composing we switch to the stacked box — the
   // textarea on top with just "+" (add file) bottom-left and send bottom-right — and the call/voice
@@ -467,9 +471,12 @@ export default function Composer({
                 }
               }}
               // Idle row indents past the inline paperclip; the composing box has no inline icon.
-              className={`max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none md:text-sm disabled:opacity-50 ${
-                expanded ? "" : "[text-indent:2rem]"
-              }`}
+              // The dimming that marks the field as locked during a recording is dropped once there's
+              // text in it: that text is half the message about to be sent, and greying it out reads
+              // as though it were being discarded.
+              className={`max-h-40 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none md:text-sm ${
+                text ? "" : "disabled:opacity-50"
+              } ${expanded ? "" : "[text-indent:2rem]"}`}
             />
           </div>
 
@@ -488,7 +495,14 @@ export default function Composer({
               >
                 <Paperclip size={18} />
               </button>
-              {expanded && canRecordExpanded && micButton(true)}
+              {/* The mic stays here the whole time now, typed text or not. It used to step aside the
+                  moment you typed anything, on the assumption that a turn is either spoken or written —
+                  but the two go together often enough to be the point: type the part that has to be
+                  exact (a name, a URL, a number) and say the rest, or add a spoken aside to something
+                  already half-written. Tapping it records ON TOP of what's in the field, and stopping
+                  sends both as one message (see stopAndSend). The button still disables itself where
+                  there's nothing to record with — mid-call, or while an attachment is preparing. */}
+              {expanded && micButton(true)}
             </div>
             <button
               onClick={send}

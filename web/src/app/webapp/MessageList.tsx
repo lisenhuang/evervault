@@ -257,22 +257,28 @@ export default function MessageList({
                 <Attachments
                   files={m.files}
                   tone="user"
-                  className={m.text ? "mb-2" : ""}
+                  className={m.text || m.caption ? "mb-2" : ""}
                   onOpenImage={openLightbox}
                   onOpenFile={openFile}
                 />
               )}
               {m.kind === "voice" ? (
-                m.text ? (
-                  <span className="flex items-start gap-1.5">
-                    <Mic size={14} className="chat-icon mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
-                    <span className="whitespace-pre-wrap">{m.text}</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 italic opacity-90">
-                    <Mic size={14} className="chat-icon" aria-hidden="true" /> {t.message.voiceMessage}
-                  </span>
-                )
+                <>
+                  {/* Typed and spoken in one bubble, in the order they were composed. The typed half
+                      reads as ordinary message text; the mic icon below marks where the clip starts,
+                      so it stays obvious which words were said rather than written. */}
+                  {m.caption && <span className="mb-1.5 block whitespace-pre-wrap">{m.caption}</span>}
+                  {m.text ? (
+                    <span className="flex items-start gap-1.5">
+                      <Mic size={14} className="chat-icon mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
+                      <span className="whitespace-pre-wrap">{m.text}</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 italic opacity-90">
+                      <Mic size={14} className="chat-icon" aria-hidden="true" /> {t.message.voiceMessage}
+                    </span>
+                  )}
+                </>
               ) : (
                 <span className="whitespace-pre-wrap">{m.text}</span>
               )}
