@@ -29,8 +29,12 @@ export default function Composer({
   onStartVoice: (files?: PreparedFile[], caption?: string) => void;
   /** Resolves true if the clip was actually sent — false if it was dropped (too short / no speech), in
    *  which case the composer keeps the attachments AND the typed text staged rather than losing them
-   *  along with the recording. */
-  onStopVoice: (files?: PreparedFile[], caption?: string) => Promise<boolean>;
+   *  along with the recording.
+   *  `onAccepted` fires the moment the message is committed to the transcript, which on the Gemini Live
+   *  path is much EARLIER than this promise resolves — there it stays pending for the whole streaming
+   *  reply. Clearing on it is what stops the typed text and attachments from sitting in the composer,
+   *  already sent, until the assistant has finished answering. */
+  onStopVoice: (files?: PreparedFile[], caption?: string, onAccepted?: () => void) => Promise<boolean>;
   onStartCall: () => void;
   voiceState: VoiceState;
   /** A realtime voice call is active. The call owns the mic, so recording a voice message and
@@ -245,16 +249,27 @@ export default function Composer({
   }
 
   // Stop-and-send, carrying everything staged so the clip, the typed text and any attachments arrive as
-  // ONE message. Staged content is only cleared once the turn is actually sent — a clip dropped for
-  // being too short or silent must not take a half-written message down with it.
+  // ONE message. Staged content is cleared the moment the turn is ACCEPTED — i.e. the clip cleared the
+  // gates and the message is in the transcript — rather than when the send promise resolves. On the
+  // Gemini Live path that promise stays pending until the whole reply has streamed back, so waiting for
+  // it left the text and files sitting in the composer, already sent, for as long as the answer took —
+  // and re-sendable from there. A dropped clip (too short / silent) is never accepted, so it still can't
+  // take a half-written message down with it: nothing is cleared and everything stays staged.
   async function stopAndSend() {
     const staged = filesRef.current;
-    const sent = await onStopVoice(staged.length ? staged : undefined, text.trim() || undefined);
-    if (sent) {
+    let cleared = false;
+    const clearStaged = () => {
+      if (cleared) return;
+      cleared = true;
       setFilesSync([]);
       setText("");
       requestAnimationFrame(grow);
-    }
+    };
+    // The boolean is still honoured as a backstop, so a send path that never signals acceptance clears
+    // exactly as it did before. The guard makes the second call a no-op — it must not wipe a fresh
+    // message typed while the previous one was still being answered.
+    const sent = await onStopVoice(staged.length ? staged : undefined, text.trim() || undefined, clearStaged);
+    if (sent) clearStaged();
   }
   // No dep array: re-bound every render so the countdown's auto-send always closes over the CURRENT
   // text and attachments rather than whatever was staged when recording began.
