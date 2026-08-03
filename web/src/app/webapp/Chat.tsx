@@ -19,6 +19,7 @@ import { fetchVoiceReply, startVoiceReply, type VoiceReplyAudio } from "./lib/vo
 import { MAX_VOICE_INLINE, type PreparedFile } from "./lib/files";
 import { LiveSession, type LiveState } from "./lib/liveSession";
 import { LiveVoiceMessage, renderConversation } from "./lib/liveVoiceMessage";
+import { toLiveAttachments } from "./lib/liveAttachments";
 import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
@@ -1515,17 +1516,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // conversation. The driver opens the mic now and connects in the background; on ANY Live failure the
     // recorded clip is still captured locally and stopVoice falls back to the classic TTS pipeline.
     //
-    // Skipped when the message carries attachments: a per-message Live session only receives prior
-    // context as a TEXT transcript in its system instruction (see renderConversation), so there is
-    // nowhere to put an image or a document — the model would answer a clip about a picture it never
-    // saw. The classic path sends the files as real inline parts alongside the clip, so it's used
-    // whenever anything is attached. The reply is still spoken either way.
+    // What else is riding on this message decides the path, and toLiveAttachments answers it: Live gets
+    // the turn when everything attached fits down a channel it actually has — documents as text in the
+    // system instruction, images as frames — and null sends the whole turn to the classic pipeline,
+    // which can send any kind as a real inline part. Typed text never blocks Live: text is what the
+    // system instruction carries best, being already how this session receives the prior conversation.
     //
-    // A typed caption is skipped for the same reason and decided at the same moment: the clip and the
-    // text are one message, and the only place a Live session would take the text is a mid-session
-    // sendClientContent, which is exactly the channel that breaks a per-message session's history. The
-    // classic path already carries arbitrary parts, so text+audio simply rides along there.
-    if (voiceMode === "live" && !files?.length && !caption?.trim()) {
+    // Worth taking whenever it's available: Live answers in ONE streaming call, where the classic path
+    // runs transcribe → reply → synthesize → poll back to back. That serial chain is what makes a
+    // voice message with something attached to it feel slow. The reply is spoken either way.
+    const liveAttachments = voiceMode === "live" ? toLiveAttachments(files) : null;
+    if (voiceMode === "live" && liveAttachments) {
       const driver = new LiveVoiceMessage({
         model: voiceLiveModel,
         voice,
@@ -1539,6 +1540,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         styleInstruction: styleDirective(voiceStyle),
         conversationId: conversationIdRef.current,
         history: toContents(messagesRef.current),
+        caption,
+        attachments: liveAttachments,
         // Same refresh the typed path does after a task tool call: the agenda block above is rendered
         // from this cache, so without it the next voice message is told the tasks this one just
         // dismissed are still open — and the assistant keeps "removing" them, reply after reply.
@@ -1679,6 +1682,66 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }
 
+  /**
+   * File a finished voice turn into memory: the exchange itself, and — when it carried attachments — a
+   * memory line per file plus the file stored durably, so find_files/send_file can hand it back later.
+   *
+   * Shared by BOTH voice paths deliberately. It used to live only in the classic pipeline, because a
+   * clip with attachments could only ever be answered there; now that a Live session can take documents
+   * and images too (see toLiveAttachments), leaving it there would mean the files a Live-answered
+   * message carried were never stored — the attachment would work once and then be gone from recall,
+   * with nothing to show it had happened. Which path answered a message must not change what is
+   * remembered about it.
+   *
+   * Best-effort and detached: it never blocks the chat, and a failure here costs recall, not the reply.
+   */
+  function recordVoiceTurn(p: {
+    files?: PreparedFile[];
+    replyRef: ReplyRef | null;
+    /** What the user's message said — the typed half and the spoken half (see messageBodyText). */
+    userText: string;
+    reply: string;
+    audioBase64: string;
+    turnConvId: string;
+  }) {
+    const { files, replyRef, userText, reply, audioBase64, turnConvId } = p;
+    const quote = replyRef ? replyContext(replyRef) : "";
+    if (!files?.length) {
+      void recordTextTurns(
+        [
+          { role: "user", text: quote ? `${quote}\n${userText}` : userText, modality: "voice" },
+          { role: "assistant", text: reply, modality: "voice" },
+        ],
+        { audioBase64 },
+        turnConvId,
+      );
+      return;
+    }
+    // Same treatment a typed message's attachments get (see sendText): each file becomes a memory line
+    // (type + name + extracted content) appended to what was said, and each is stored durably.
+    const images = files.filter((f) => f.kind === "image" && f.base64);
+    void (async () => {
+      const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
+      void recordTextTurns(
+        [
+          { role: "user", text: [quote, userText, ...lines].filter(Boolean).join("\n"), modality: "voice" },
+          { role: "assistant", text: reply, modality: "voice" },
+        ],
+        // The clip *and* the first image, so the stored turn carries both halves of the message.
+        { audioBase64, ...(images[0] ? { imageBase64: images[0].base64!, imageMime: images[0].mimeType } : {}) },
+        turnConvId,
+      );
+      if (memoryOn) {
+        await Promise.all(
+          files.map(async (f, i) => {
+            const embedding = (await embedDocument(lines[i])) ?? undefined;
+            await uploadChatFile(turnConvId, f, lines[i], embedding);
+          }),
+        );
+      }
+    })();
+  }
+
   // The classic voice reply (transcribe → reply → synthesize), used both when the admin picks the "tts"
   // mode and as the automatic fallback when a Gemini Live voice message can't be used. The user +
   // assistant bubbles already exist (asstId is the streaming placeholder). Transcribes the clip off the
@@ -1698,7 +1761,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   }) {
     const { userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption } = p;
     const { base64, mimeType } = wav;
-    const images = files?.filter((f) => f.kind === "image" && f.base64) ?? [];
     // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready (see
     // runAssistant), so the text doesn't appear ahead of the slower voice. (Also resets a Live bubble
     // that had already started streaming text, when this is the fallback path.)
@@ -1788,42 +1850,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // order they were composed. Recalled later it reads as the one message it was.
         const spoken = transcript || "(voice message)";
         const userText = caption ? `${caption}\n${spoken}` : spoken;
-        if (files?.length) {
-          // Same treatment a typed message's attachments get (see sendText): each file becomes a memory
-          // line (type + name + extracted content) appended to the spoken transcript, and each is stored
-          // durably so find_files/send_file can hand it back later. Best-effort — never blocks the chat.
-          void (async () => {
-            const lines = await Promise.all(files.map((f) => fileMemoryLine(textModel, f)));
-            const userContent = [replyRef ? replyContext(replyRef) : "", userText, ...lines].filter(Boolean).join("\n");
-            void recordTextTurns(
-              [
-                { role: "user", text: userContent, modality: "voice" },
-                { role: "assistant", text: reply, modality: "voice" },
-              ],
-              // The clip *and* the first image, so the stored turn carries both halves of the message.
-              { audioBase64: base64, ...(images[0] ? { imageBase64: images[0].base64, imageMime: images[0].mimeType } : {}) },
-              turnConvId,
-            );
-            if (memoryOn) {
-              await Promise.all(
-                files.map(async (f, i) => {
-                  const desc = lines[i];
-                  const embedding = (await embedDocument(desc)) ?? undefined;
-                  await uploadChatFile(turnConvId, f, desc, embedding);
-                }),
-              );
-            }
-          })();
-        } else {
-          void recordTextTurns(
-            [
-              { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
-              { role: "assistant", text: reply, modality: "voice" },
-            ],
-            { audioBase64: base64 },
-            turnConvId,
-          );
-        }
+        recordVoiceTurn({ files, replyRef, userText, reply, audioBase64: base64, turnConvId });
       } catch (e) {
         const fe = friendlyAiError(e, t);
         reportAiError(fe, "chat.voice");
@@ -1863,9 +1890,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // End a Gemini Live voice message: stop the mic, gate the clip, then stream the reply (audio + both
   // transcripts) from the same session. Falls back to the classic TTS pipeline (with the recorded clip)
   // if Live never came up or fails mid-reply, so the user always gets an answer.
-  // `caption` is normally absent here — startVoice routes a typed-plus-spoken message away from Live
-  // before a session is ever opened. It's still carried through, because the two fallbacks below hand
-  // the turn to runTtsVoiceTurn, and that path can send the typed half properly.
+  // `caption` was already handed to the session at connect time (startVoice → renderTypedMessage), so
+  // the model has it. It's threaded through again here for the two things that happen at SEND time: it
+  // goes on the user's bubble and into the memory record, and the fallbacks below pass it to
+  // runTtsVoiceTurn, which sends it as a real text part when Live can't answer after all.
   async function stopVoiceLive(driver: LiveVoiceMessage, files?: PreparedFile[], caption?: string): Promise<boolean> {
     const replyRef: ReplyRef | null = replyTo
       ? { id: replyTo.id, role: replyTo.role, text: messageBodyText(replyTo).slice(0, 500) }
@@ -1914,9 +1942,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       liveVoiceAsstIdRef.current = asstId;
 
       // Live never came up (token mint / connect failed while recording) — fall back to TTS. Same for a
-      // clip that carries attachments: a Live session has no way to receive them (startVoice normally
-      // routes those away from Live to begin with; this is the backstop).
-      if (!connected || files?.length) {
+      // clip carrying something this session couldn't have received: startVoice makes that call before
+      // opening the session, and this re-asks the same question as the backstop. It is deliberately not
+      // "any attachment at all" any more — documents and images DO reach a Live session (see
+      // toLiveAttachments), and treating them as disqualifying here would quietly undo that routing.
+      if (!connected || toLiveAttachments(files) === null) {
         void driver.abandon();
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
@@ -1941,14 +1971,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         registerLivePlayback(driver, asstId);
         const spokenText = reply.userText || "(voice message)";
         const userText = caption?.trim() ? `${caption.trim()}\n${spokenText}` : spokenText;
-        void recordTextTurns(
-          [
-            { role: "user", text: replyRef ? `${replyContext(replyRef)}\n${userText}` : userText, modality: "voice" },
-            { role: "assistant", text: reply.modelText, modality: "voice" },
-          ],
-          { audioBase64: wav.base64 },
-          turnConvId,
-        );
+        // Same recording the classic path does, attachments included — a Live session can carry
+        // documents and images now, and they have to reach storage whichever path answered.
+        recordVoiceTurn({ files, replyRef, userText, reply: reply.modelText, audioBase64: wav.base64, turnConvId });
       } catch {
         // Live failed mid-reply (socket error / timeout) — reuse the same bubbles and answer via TTS.
         // Clearing the refs first stops any late Live delta from appending; runTtsVoiceTurn's

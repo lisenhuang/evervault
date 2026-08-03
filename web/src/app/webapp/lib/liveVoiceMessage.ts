@@ -16,6 +16,7 @@ import { AudioPlayer, MicStreamer, isIOS, setAudioSessionType } from "./liveAudi
 import { arrayBufferToBase64, encodeWav, mergeFloat32, voicedSeconds } from "./audio";
 import { fixSpokenBrandName } from "./brandName";
 import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
+import { renderAttachments, renderTypedMessage, type LiveAttachment } from "./liveAttachments";
 import { type OutgoingLink } from "./linkTool";
 import type { Content } from "./gemini";
 import type { Lang } from "@/i18n/config";
@@ -56,6 +57,13 @@ export type LiveVoiceOpts = {
   onLink?: (link: OutgoingLink) => void;
   /** The full prior transcript as Gemini Content[] (toContents of everything before this message). */
   history: Content[];
+  /** Text the user typed and is sending WITH this clip, if any. Read at connect time, which is when
+   *  the mic is tapped — the composer locks the field for the duration of the recording, so what was
+   *  typed then is exactly what gets sent. See renderTypedMessage. */
+  caption?: string;
+  /** Attachments this session can actually take (see LiveAttachment). Documents arrive as text in the
+   *  system instruction; images as realtime frames once the turn opens. */
+  attachments?: LiveAttachment[];
   /** Streams the assistant's transcript as it arrives, for the streaming reply bubble. */
   onModelText: (delta: string) => void;
   /** Streams the user's own transcript (the Live model's input transcription) as it arrives, for the
@@ -193,6 +201,11 @@ export class LiveVoiceMessage {
             // (not via sendClientContent — that's only supported for this Live model with a history-config
             // flag the SDK doesn't expose, and using it broke every message after the first).
             conversationBlock: renderConversation(this.opts.history),
+            // The typed half of THIS message, delivered the same proven way — see renderTypedMessage
+            // for why it can't go through sendClientContent either.
+            typedMessageBlock: renderTypedMessage(this.opts.caption),
+            // Attached documents as text; attached images are named here and shown as frames below.
+            attachmentsBlock: renderAttachments(this.opts.attachments),
             styleInstruction: this.opts.styleInstruction,
             language: this.opts.language,
           }),
@@ -218,6 +231,17 @@ export class LiveVoiceMessage {
       // Open the user's turn (the prior conversation is already in the system instruction as a
       // transcript — see conversationBlock), then flush any audio captured while connecting.
       this.session.sendRealtimeInput({ activityStart: {} });
+      // Images go in FIRST, as realtime frames — the channel Live takes screen-sharing video on. Ahead
+      // of the speech on purpose: the model should already have been shown the picture by the time the
+      // question about it arrives, exactly as it would in a call where the user shares a screen and
+      // then talks. Frames are `video` rather than `sendClientContent` parts for two reasons: that call
+      // is the one that breaks a per-message session (see below), and the SDK notes it is also the slow
+      // path for images — which would give back the latency Live is being used for.
+      for (const a of this.opts.attachments ?? []) {
+        if (a.kind === "image") {
+          this.session.sendRealtimeInput({ video: { data: a.base64, mimeType: a.mimeType } });
+        }
+      }
       for (const b64 of this.pending) {
         this.session.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
       }

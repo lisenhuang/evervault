@@ -48,6 +48,12 @@ export type LiveContextOpts = {
    *  message) still "sees" the mixed text+voice history. The realtime call omits this — it keeps one
    *  live session whose history the server already retains. */
   conversationBlock?: string;
+  /** Text the user typed and sent WITH this voice message (see renderTypedMessage). Voice-message
+   *  sessions only — a realtime call has no composer. */
+  typedMessageBlock?: string;
+  /** Documents attached to this voice message, as text, plus the names of the images being shown as
+   *  frames (see renderAttachments). Voice-message sessions only, same reason. */
+  attachmentsBlock?: string;
   /** The user's chosen response-style directive ("" on default) — layered after the base voice persona. */
   styleInstruction?: string;
   language?: Lang;
@@ -74,6 +80,10 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     mem ? ANSWER_FIRST : "",
     mem && o.recentContext ? o.recentContext : "",
     o.conversationBlock || "",
+    // Last of the context blocks and directly before the personas: everything above is what was said
+    // BEFORE, these two are the rest of the message about to arrive.
+    o.typedMessageBlock || "",
+    o.attachmentsBlock || "",
     mem ? MEMORY_PERSONA : "",
     mem ? FILES_PERSONA : "",
     mem ? TASKS_PERSONA : "",
