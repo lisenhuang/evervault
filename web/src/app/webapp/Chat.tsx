@@ -1580,14 +1580,20 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   /** Ends the recording and sends it as ONE message with whatever else was staged: `files` as
    *  attachments, and `caption` — text already typed in the composer when the mic was tapped — as the
    *  written half of the same message.
+   *  `onAccepted` fires as soon as the clip has cleared the too-short / no-speech gates and its bubbles
+   *  are in the transcript: the moment the composer may let go of what it staged. It is deliberately NOT
+   *  the resolution of this promise — on the Live path that only comes once the entire reply has
+   *  streamed back, and the typed text and attachments would linger in the composer, long sent, for the
+   *  whole answer. The reply bar is already retired at this same moment (setReplyTo(null) below), so
+   *  everything the message took with it now clears together.
    *  Resolves true if the clip was actually sent — false if it was dropped or failed, so the composer
    *  can keep the text and attachments staged instead of losing them with the discarded recording. */
-  async function stopVoice(files?: PreparedFile[], caption?: string): Promise<boolean> {
+  async function stopVoice(files?: PreparedFile[], caption?: string, onAccepted?: () => void): Promise<boolean> {
     // A Gemini Live voice message is in flight — end the turn on that session.
     const driver = liveVoiceRef.current;
     if (driver) {
       liveVoiceRef.current = null;
-      return await stopVoiceLive(driver, files, caption);
+      return await stopVoiceLive(driver, files, caption, onAccepted);
     }
     const rec = recorderRef.current;
     if (!rec) return false;
@@ -1665,6 +1671,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         userMsg,
         { id: asstId, role: "assistant", text: "", streaming: true, kind: "voice", pendingAudio: true },
       ]);
+      // The message is in the transcript — the composer can drop the text and files it staged for it.
+      onAccepted?.();
       runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
       return true;
     } catch (e) {
@@ -1894,7 +1902,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // the model has it. It's threaded through again here for the two things that happen at SEND time: it
   // goes on the user's bubble and into the memory record, and the fallbacks below pass it to
   // runTtsVoiceTurn, which sends it as a real text part when Live can't answer after all.
-  async function stopVoiceLive(driver: LiveVoiceMessage, files?: PreparedFile[], caption?: string): Promise<boolean> {
+  async function stopVoiceLive(driver: LiveVoiceMessage, files?: PreparedFile[], caption?: string, onAccepted?: () => void): Promise<boolean> {
     const replyRef: ReplyRef | null = replyTo
       ? { id: replyTo.id, role: replyTo.role, text: messageBodyText(replyTo).slice(0, 500) }
       : null;
@@ -1940,6 +1948,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       ]);
       liveVoiceUserIdRef.current = userMsg.id;
       liveVoiceAsstIdRef.current = asstId;
+      // The message is in the transcript — the composer can drop the text and files it staged for it.
+      // This is the whole reason acceptance is signalled here rather than by resolving: everything below
+      // waits out the streaming reply, which is exactly how long the composer used to hold on to a
+      // message that had already been sent.
+      onAccepted?.();
 
       // Live never came up (token mint / connect failed while recording) — fall back to TTS. Same for a
       // clip carrying something this session couldn't have received: startVoice makes that call before
