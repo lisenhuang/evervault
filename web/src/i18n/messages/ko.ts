@@ -182,8 +182,6 @@ const ko: Messages = {
     stopReply: "답변 중지",
     gatedHint: "그냥 말하세요 — 소리 내어 답할게요.",
     gatedSpeakingHint: "답하는 중 — 파형을 누르면 멈춥니다.",
-    headphonesOnTitle: "이어폰 모드: 말해서 끼어들 수 있어요. 스피커를 쓰신다면 눌러 주세요.",
-    headphonesOffTitle: "스피커 사용 중에는 파형을 눌러 끼어드세요. 이어폰을 쓰시나요? 여기를 누르면 음성으로 끼어들 수 있어요.",
   },
   message: {
     callEnded: "통화 종료",

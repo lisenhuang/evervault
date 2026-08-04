@@ -361,14 +361,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // The idle-timeout modal is open: the call auto-ended on a long silence, so we surface an
   // explanatory dialog with a one-tap Reconnect instead of just letting the bar vanish.
   const [idleEndedOpen, setIdleEndedOpen] = useState(false);
-  // Echo-prone output path (iOS speaker, or the loopback failed): the session runs half duplex —
-  // the mic is gated while the model speaks, so interrupting is by tap instead of by voice. The
-  // headphones toggle (persisted) lifts the gate, since headphones produce no acoustic echo.
-  const [callEchoProne, setCallEchoProne] = useState(false);
+  // Echo-prone output path (iOS speaker, or the loopback failed): the session starts half duplex —
+  // the mic is gated while the model speaks, so interrupting is by tap instead of by voice. It lifts
+  // itself once the mic has shown that nothing is actually echoing back (headphones, or a canceller
+  // that works after all), which is re-read on every state change below. See lib/echoDetector.ts.
   const [callHalfDuplex, setCallHalfDuplex] = useState(false);
-  const [callHeadphones, setCallHeadphones] = useState(
-    () => typeof window !== "undefined" && localStorage.getItem("voice:headphones") === "1",
-  );
   // ms timestamp of when the current call connected (null until connected / when no call is active).
   // Drives the live mm:ss timer in the CallBar; the ref mirror lets the end/close handlers read it
   // without a stale closure when they log the call duration into chat history.
@@ -2111,7 +2108,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     setCallIdleClosed(false);
     setIdleEndedOpen(false); // a new/reconnected call supersedes any lingering idle-timeout modal
     setCallMuted(false);
-    setCallEchoProne(false);
     setCallHalfDuplex(false);
     setCallStartedAt(null);
     liveUserIdRef.current = null;
@@ -2152,7 +2148,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       onTasksChanged: () => void refreshTasks(),
       onLink: postLink,
     });
-    session.setHeadphones(callHeadphones);
     liveRef.current = session;
     // Mirror the ref synchronously (the sync effect runs a commit later): the call is taking over the
     // audio path now, so any voice reply that resolves during connect must not auto-play over it.
@@ -2162,6 +2157,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       await session.start({
         onState: (s) => {
           setCallState(s);
+          // The mic gate can lift itself part-way through a call — the detector reaches its verdict
+          // after a couple of the model's turns — so this is read here rather than once at start.
+          // Every turn boundary passes through onState, which is exactly when the verdict changes.
+          setCallHalfDuplex(liveRef.current?.halfDuplex ?? false);
           // Start the clock the moment audio first flows (first connected state), so the recorded
           // duration is the time actually spent talking — not the connecting handshake.
           if ((s === "listening" || s === "speaking") && callStartedAtRef.current == null) {
@@ -2192,9 +2191,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // by the effect below (logs the duration, then dismisses).
         onIdleTimeout: () => setCallIdleClosed(true),
       });
-      // Which output path the session ended up on is only known once start() resolves; it drives
-      // the CallBar's half-duplex affordances (tap-to-interrupt orb, headphones toggle).
-      setCallEchoProne(session.echoProne);
+      // Which output path the session ended up on is only known once start() resolves, and whether
+      // the gate is still needed can change later in the call — so this is re-read on every state
+      // change (below), not just here. It drives the tap-to-interrupt orb.
       setCallHalfDuplex(session.halfDuplex);
     } catch (e) {
       // A mic-acquisition failure (denied / unsupported browser / no device) gets its own specific
@@ -2227,21 +2226,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       liveRef.current?.setMuted(next);
       return next;
     });
-  }
-
-  function toggleHeadphones() {
-    const next = !callHeadphones;
-    setCallHeadphones(next);
-    try {
-      localStorage.setItem("voice:headphones", next ? "1" : "0");
-    } catch {
-      /* storage may be unavailable (private mode) — the toggle still works for this call */
-    }
-    const s = liveRef.current;
-    if (s) {
-      s.setHeadphones(next);
-      setCallHalfDuplex(s.halfDuplex);
-    }
   }
 
   function interruptCall() {
@@ -2383,11 +2367,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             error={callError}
             idleClosed={callIdleClosed}
             startedAt={callStartedAt}
-            echoProne={callEchoProne}
             halfDuplex={callHalfDuplex}
-            headphones={callHeadphones}
             onToggleMute={toggleMute}
-            onToggleHeadphones={toggleHeadphones}
             onInterrupt={interruptCall}
             onEnd={endCall}
           />

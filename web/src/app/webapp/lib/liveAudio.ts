@@ -100,7 +100,14 @@ export class MicStreamer {
     this.capture = [];
   }
 
-  async start(onChunk: (base64Pcm16: string) => void): Promise<void> {
+  /**
+   * @param onChunk receives each 16 kHz mono chunk as base64 PCM16, plus its RMS level (0–1). The
+   * level is computed here because this is the only place the raw samples exist — recovering it from
+   * the base64 downstream would mean decoding every chunk a second time. Callers that don't care
+   * about level just ignore the argument; the echo detector is the one that needs it, and it needs it
+   * even for chunks the half-duplex gate is about to drop (see echoDetector.ts).
+   */
+  async start(onChunk: (base64Pcm16: string, rms: number) => void): Promise<void> {
     setAudioSessionType("play-and-record");
     // Throws a typed MicError (see mic.ts) so startCall can show an accurate mic message.
     this.stream = await acquireMicStream({
@@ -120,7 +127,7 @@ export class MicStreamer {
       // Retain a copy before encoding when capturing (downsample can return the input buffer unchanged,
       // so copy defensively — the ScriptProcessor reuses its buffer between callbacks).
       if (this.capture) this.capture.push(new Float32Array(down));
-      onChunk(floatToPcm16Base64(down));
+      onChunk(floatToPcm16Base64(down), rms(down));
     };
     this.source.connect(this.processor);
     this.processor.connect(sink);
@@ -259,6 +266,15 @@ function downsample(input: Float32Array, inRate: number, outRate: number): Float
     out[i] = input[i0] * (1 - frac) + input[i1] * frac; // linear interpolation
   }
   return out;
+}
+
+/** Root-mean-square level of a chunk, 0–1. How loud the mic was over those ~64 ms — the measurement
+ *  the echo detector reads model turns with. */
+function rms(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
 }
 
 function floatToPcm16Base64(samples: Float32Array): string {

@@ -182,8 +182,6 @@ const ja: Messages = {
     stopReply: "返答を停止",
     gatedHint: "そのまま話してください — 声でお答えします。",
     gatedSpeakingHint: "返答中 — 波形をタップすると止まります。",
-    headphonesOnTitle: "ヘッドホンモード: 話しかけて割り込めます。スピーカーの場合はタップしてください。",
-    headphonesOffTitle: "スピーカーの場合は波形をタップして割り込み。ヘッドホンをお使いですか？ここをタップすると声で割り込めます。",
   },
   message: {
     callEnded: "通話終了",

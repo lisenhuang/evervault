@@ -9,6 +9,7 @@ import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity, type LiveServe
 import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
+import { EchoDetector } from "./echoDetector";
 import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
 import { type OutgoingLink } from "./linkTool";
 import { type Lang } from "@/i18n/config";
@@ -70,8 +71,14 @@ export class LiveSession {
    * speech" and make the model interrupt itself. Null = echo-cancelled path, full duplex.
    */
   private gateReason: "ios" | "no-loopback" | null = null;
-  /** User declared headphones: no acoustic echo, so the gate lifts and voice barge-in returns. */
-  private headphones = false;
+  /**
+   * Watches whether the speaker's sound is genuinely reaching the mic on this call, so the gate can
+   * lift itself when it isn't — on headphones, or wherever the platform's canceller turns out to
+   * work after all. Replaces the "I'm on headphones" button, which asked the user a question the
+   * microphone can answer. Starts closed, so a call that never gets a clear reading behaves exactly
+   * as it did before. See echoDetector.ts.
+   */
+  private echo = new EchoDetector();
   private gatedSinceMs: number | null = null;
   private streamEndSent = false;
   /** A model turn is streaming audio (set on its first chunk, cleared on turnComplete/interrupted). */
@@ -189,10 +196,15 @@ export class LiveSession {
 
     await this.connectInitial();
 
-    await this.mic.start((b64) => {
+    await this.mic.start((b64, rms) => {
       // A resume is swapping the socket underneath us — the old session is closing and the new one
       // isn't ready. Drop the chunk (the sub-second gap is inaudible) rather than send into the void.
       if (this.reconnecting) return;
+      // Measure BEFORE the gate, and regardless of it: the chunks captured while the model speaks are
+      // exactly the evidence of whether its voice is reaching the mic, and those are the ones the gate
+      // is about to throw away. Only meaningful on an echo-prone path — everywhere else the canceller
+      // has already removed the model's voice, so a quiet mic proves nothing about the room.
+      if (this.echoProne) this.echo.observe(rms, this.player.echoRisk);
       if (this.halfDuplex && this.player.echoRisk) {
         // The speaker is (or was just) sounding the model's voice with no echo cancellation:
         // drop the chunk. The gate closes the moment a turn's first buffer is scheduled —
@@ -574,18 +586,19 @@ export class LiveSession {
     this.mic.setMuted(m);
   }
 
-  /** The model's voice plays on an echo-prone path here, so the headphones escape is relevant. */
+  /** The model's voice plays on a path the platform's echo canceller can't reference. */
   get echoProne(): boolean {
     return this.gateReason !== null;
   }
 
-  /** Mic gating in force: echo-prone and the user hasn't declared headphones. */
+  /**
+   * Mic gating in force: an echo-prone playback path AND the microphone has not yet demonstrated
+   * that nothing is actually coming back through it. Read fresh by the UI on every state change, so
+   * the moment the detector clears the call the tap-to-interrupt affordance gives way to real
+   * barge-in without anyone pressing anything.
+   */
   get halfDuplex(): boolean {
-    return this.echoProne && !this.headphones;
-  }
-
-  setHeadphones(on: boolean) {
-    this.headphones = on;
+    return this.echoProne && !this.echo.open;
   }
 
   /**

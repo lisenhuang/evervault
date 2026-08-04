@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Headphones, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
+import { AlertTriangle, Loader2, Mic, MicOff, PhoneOff, Volume2 } from "lucide-react";
 import type { LiveState } from "./lib/liveSession";
 import { formatDuration } from "./lib/time";
 import { useT } from "@/i18n/LanguageProvider";
@@ -21,11 +21,8 @@ export default function CallBar({
   error,
   idleClosed,
   startedAt,
-  echoProne,
   halfDuplex,
-  headphones,
   onToggleMute,
-  onToggleHeadphones,
   onInterrupt,
   onEnd,
 }: {
@@ -36,13 +33,10 @@ export default function CallBar({
   idleClosed: boolean;
   /** ms timestamp of when the call connected, or null while still connecting. Drives the live timer. */
   startedAt: number | null;
-  /** The model's voice plays without echo cancellation here (iOS speaker / no loopback). */
-  echoProne: boolean;
-  /** Mic is gated while the model speaks — interrupting is by tap, not by voice. */
+  /** Mic is gated while the model speaks — interrupting is by tap, not by voice. Lifts by itself
+   *  mid-call once the mic shows nothing is echoing back (see echoDetector.ts). */
   halfDuplex: boolean;
-  headphones: boolean;
   onToggleMute: () => void;
-  onToggleHeadphones: () => void;
   onInterrupt: () => void;
   onEnd: () => void;
 }) {
@@ -179,25 +173,10 @@ export default function CallBar({
           </p>
         </div>
 
-        {/* Headphones escape hatch — only on echo-prone paths (iOS speaker / no loopback), where
-            the mic is gated while the model speaks. Headphones produce no acoustic echo, so
-            declaring them lifts the gate and brings voice barge-in back. */}
-        {echoProne && (
-          <button
-            onClick={onToggleHeadphones}
-            disabled={connecting || terminal}
-            title={headphones ? t.call.headphonesOnTitle : t.call.headphonesOffTitle}
-            aria-label={headphones ? t.call.headphonesOnTitle : t.call.headphonesOffTitle}
-            aria-pressed={headphones}
-            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full shadow-sm transition disabled:opacity-50 ${
-              headphones
-                ? "bg-neutral-700 text-white hover:bg-neutral-600 dark:bg-white dark:text-black dark:hover:bg-neutral-200"
-                : "bg-black/5 text-black hover:bg-black/10 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
-            }`}
-          >
-            <Headphones size={20} />
-          </button>
-        )}
+        {/* The headphones button used to live here, on echo-prone paths, so the user could declare
+            "no acoustic echo, let me barge in". It asked them a question the microphone can answer
+            for itself — the session now listens across the model's turns and lifts the gate when
+            nothing comes back (see echoDetector.ts), which covers headphones without a button. */}
 
         {/* Mute / unmute mic */}
         <button
