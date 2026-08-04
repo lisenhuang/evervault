@@ -406,7 +406,9 @@ function MessageBubble({ m }: { m: ChatMessage }) {
   if (m.role === "user")
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-blue-600 px-3.5 py-2 text-sm whitespace-pre-wrap text-white">
+        {/* min-w-0 + break-words so a pasted URL or other unbroken run wraps inside the bubble
+            instead of painting past its padding. */}
+        <div className="max-w-[80%] min-w-0 rounded-2xl rounded-br-sm bg-blue-600 px-3.5 py-2 text-sm break-words whitespace-pre-wrap text-white">
           {m.content}
         </div>
       </div>
@@ -434,7 +436,7 @@ function MessageBubble({ m }: { m: ChatMessage }) {
       );
     return (
       <div className="flex justify-start">
-        <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-black/5 px-3.5 py-2 text-sm whitespace-pre-wrap dark:bg-white/10">
+        <div className="max-w-[80%] min-w-0 rounded-2xl rounded-bl-sm bg-black/5 px-3.5 py-2 text-sm break-words whitespace-pre-wrap dark:bg-white/10">
           {m.content}
         </div>
       </div>
