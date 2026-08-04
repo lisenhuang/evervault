@@ -38,6 +38,15 @@ const md: Components = {
   pre: (props) => (
     <pre className="mb-2 overflow-x-auto rounded-lg bg-black/80 p-3 chat-text-sm text-white dark:bg-black/60" {...props} />
   ),
+  // A GFM table is sized by its own columns and can't shrink to the bubble, so it gets its own
+  // horizontal scroller — the same escape hatch a code block has — instead of spilling out the side.
+  table: (props) => (
+    <div className="mb-2 max-w-full overflow-x-auto">
+      <table className="w-max border-collapse" {...props} />
+    </div>
+  ),
+  th: (props) => <th className="border border-black/15 px-2 py-1 text-left dark:border-white/20" {...props} />,
+  td: (props) => <td className="border border-black/15 px-2 py-1 dark:border-white/20" {...props} />,
   code: ({ className, children, ...props }) => {
     const isBlock = /language-/.test(className ?? "");
     return isBlock ? (
@@ -250,7 +259,7 @@ export default function MessageList({
             <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />
             <Pressable
               onOpen={(x, y) => openMenu(m, x, y)}
-              className="max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none"
+              className={`${BUBBLE_WRAP_CLS} max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none`}
             >
               {m.replyTo && <QuotedReply r={m.replyTo} onJump={jumpTo} />}
               {m.files && m.files.length > 0 && (
@@ -899,5 +908,13 @@ function AiAvatar() {
   );
 }
 
+// Keeps a bubble's content inside the bubble. A pasted URL, a long file name or any other
+// unbroken run of characters is a single "word" the browser will happily paint past the padding
+// (and, on the user side, past the avatar and off the screen) — `break-words` lets it wrap
+// mid-word when it has no other way to fit. `min-w-0` is the flex half of the same fix: without
+// it a row flex item refuses to shrink below its content's minimum width, so max-w-[80%] alone
+// would not hold. Applies to every bubble, since both sides can carry pasted text.
+const BUBBLE_WRAP_CLS = "min-w-0 break-words";
+
 const BUBBLE_CLS =
-  "max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 shadow-sm dark:border-white/10 dark:bg-neutral-900";
+  `${BUBBLE_WRAP_CLS} max-w-[80%] rounded-2xl rounded-tl-sm border border-black/10 bg-white px-4 py-2.5 shadow-sm dark:border-white/10 dark:bg-neutral-900`;
