@@ -186,7 +186,7 @@ const en = {
     liveHint: "Just talk — I'll answer out loud. Speak any time to interrupt.",
     stopReply: "Stop the reply",
     gatedHint: "Just talk — I'll answer out loud.",
-    gatedSpeakingHint: "Answering — tap the wave to stop me.",
+    gatedSpeakingHint: "Answering — speak up, or tap the wave, to stop me.",
   },
   message: {
     callEnded: "Call ended",

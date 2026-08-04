@@ -10,6 +10,7 @@ import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { EchoDetector } from "./echoDetector";
+import { BargeInDetector } from "./bargeIn";
 import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
 import { type OutgoingLink } from "./linkTool";
 import { type Lang } from "@/i18n/config";
@@ -54,6 +55,14 @@ const DEFAULT_IDLE_TIMEOUT_SEC = 60;
 // timer cheap and the close fires within a second of the threshold.
 const IDLE_CHECK_MS = 1_000;
 
+// Mic chunks the gate drops are kept this many deep so a confirmed barge-in can send the run-up as
+// well as what follows. Detecting an interruption necessarily takes a moment (two chunks to trigger,
+// a quarter second to prove it), and without the run-up the model would hear the user's sentence
+// with its first word missing. ~85 ms a chunk, so this is roughly half a second — a little more than
+// the detection costs, and the excess is silence or the tail of the model's own voice, which Gemini
+// is no more troubled by than it is on any full-duplex platform.
+const PREROLL_CHUNKS = 6;
+
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export class LiveSession {
@@ -79,6 +88,18 @@ export class LiveSession {
    * as it did before. See echoDetector.ts.
    */
   private echo = new EchoDetector();
+  /**
+   * Restores barge-in on the gated path. The gate exists so the model can't hear itself, but it
+   * throws away the evidence that the user has started talking — so interrupting by voice dies with
+   * it, leaving only the tap. This watches the dropped chunks and, when one looks louder than our own
+   * output could account for, briefly ducks the speaker to check: echo falls away with the volume, a
+   * voice doesn't. See bargeIn.ts.
+   */
+  private barge = new BargeInDetector();
+  /** The user is currently talking over the model: the gate is held open until the model speaks again. */
+  private bargedIn = false;
+  /** The most recent chunks the gate dropped, sent ahead of the barge-in so no opening word is lost. */
+  private preroll: string[] = [];
   private gatedSinceMs: number | null = null;
   private streamEndSent = false;
   /** A model turn is streaming audio (set on its first chunk, cleared on turnComplete/interrupted). */
@@ -200,15 +221,30 @@ export class LiveSession {
       // A resume is swapping the socket underneath us — the old session is closing and the new one
       // isn't ready. Drop the chunk (the sub-second gap is inaudible) rather than send into the void.
       if (this.reconnecting) return;
+      const sounding = this.player.echoRisk;
       // Measure BEFORE the gate, and regardless of it: the chunks captured while the model speaks are
       // exactly the evidence of whether its voice is reaching the mic, and those are the ones the gate
       // is about to throw away. Only meaningful on an echo-prone path — everywhere else the canceller
       // has already removed the model's voice, so a quiet mic proves nothing about the room.
-      if (this.echoProne) this.echo.observe(rms, this.player.echoRisk);
-      if (this.halfDuplex && this.player.echoRisk) {
+      if (this.echoProne) {
+        // …but not while a barge-in probe has the output ducked: those chunks are quiet BY DESIGN,
+        // and the echo detector would read them as "the speaker isn't reaching the mic" and lift the
+        // gate for the rest of the call — on the strength of audio we deliberately turned down.
+        if (!this.barge.inProbe) this.echo.observe(rms, sounding);
+        // Nothing to detect once they're already through — the mic is open and Gemini is hearing it.
+        if (this.halfDuplex && !this.bargedIn) this.detectBargeIn(rms, sounding);
+        // The gate lifted (or a barge-in landed) while a probe was in flight: end it here, or the
+        // reply would finish playing at probe volume with nothing left to turn it back up.
+        else if (this.barge.inProbe) this.endProbe();
+      }
+      if (this.halfDuplex && sounding && !this.bargedIn) {
         // The speaker is (or was just) sounding the model's voice with no echo cancellation:
         // drop the chunk. The gate closes the moment a turn's first buffer is scheduled —
         // before any sound leaves the hardware — so no echo-bearing chunk slips through.
+        // Keep it, though: if the next chunks turn out to be the user interrupting, this one is
+        // the start of what they said (see PREROLL_CHUNKS).
+        this.preroll.push(b64);
+        if (this.preroll.length > PREROLL_CHUNKS) this.preroll.shift();
         if (this.gatedSinceMs == null) {
           this.gatedSinceMs = Date.now();
         } else if (!this.streamEndSent && Date.now() - this.gatedSinceMs > 1000) {
@@ -221,7 +257,8 @@ export class LiveSession {
       }
       this.gatedSinceMs = null;
       this.streamEndSent = false;
-      this.session?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
+      this.preroll.length = 0;
+      this.sendAudio(b64);
     });
 
     // Play the model's voice. On desktop/Android, route it through the echo-cancelling loopback
@@ -476,6 +513,9 @@ export class LiveSession {
     this.discardTurnAudio = false;
     this.streamEndSent = false;
     this.gatedSinceMs = null;
+    this.bargedIn = false;
+    this.preroll.length = 0;
+    this.barge.reset();
     try {
       await this.connect();
       if (this.stopped) {
@@ -560,6 +600,9 @@ export class LiveSession {
       // cancel message in the Live API) — swallow it so nothing plays or re-enters "speaking".
       if (data && !this.discardTurnAudio) {
         this.player.enqueue(data);
+        // The model is speaking again, so the gate re-engages: whatever the user barged in with has
+        // been answered, and from here the mic can hear the speaker once more.
+        this.bargedIn = false;
         this.modelTurnActive = true;
         this.markVoiceActivity(); // the model is speaking — not the user's silent turn
         this.cb.onState("speaking");
@@ -584,6 +627,64 @@ export class LiveSession {
 
   setMuted(m: boolean) {
     this.mic.setMuted(m);
+    // Muting stops mic chunks dead, and a probe waits on the next one to conclude — so a mute
+    // pressed mid-probe would leave the rest of the reply playing at probe volume.
+    if (m) this.endProbe();
+  }
+
+  private sendAudio(b64: string) {
+    this.session?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
+  }
+
+  /**
+   * Ask the barge-in detector what this chunk means and carry out its verdict. Runs on every chunk
+   * while the gate is in force — including the ones being dropped, which are the informative ones.
+   *
+   * The only side effect worth flagging is the duck: a probe turns the model's voice down for about
+   * a quarter of a second. That's audible as a dip, and it's the price of asking the microphone a
+   * question it can actually answer while the speaker is playing.
+   */
+  private detectBargeIn(rms: number, sounding: boolean) {
+    const action = this.barge.observe({ rms, ref: this.player.outputLevel, sounding, nowMs: Date.now() });
+    if (action === "duck") return this.player.duck();
+    if (action === "resume") return this.player.unduck();
+    if (action === "commit") {
+      this.player.unduck();
+      this.commitBargeIn();
+    }
+  }
+
+  /** Abandon a probe in flight and put the volume back — a probe is only ever concluded by the NEXT
+   *  mic chunk, so anything that stops chunks arriving has to come through here. */
+  private endProbe() {
+    this.barge.reset();
+    this.player.unduck();
+  }
+
+  /**
+   * The user is talking over the model, proven rather than guessed. Stop playback locally and open
+   * the gate so their speech reaches Gemini, which then registers the interruption itself (its VAD
+   * sees the audio) and stops generating — the same barge-in every full-duplex platform gets, just
+   * arrived at the hard way.
+   *
+   * The rest of the in-flight turn is swallowed exactly as a tap-to-interrupt swallows it: the server
+   * keeps streaming for a moment before its own VAD catches up, and none of that should be heard or
+   * written into the transcript once the user has cut in.
+   */
+  private commitBargeIn() {
+    this.bargedIn = true;
+    // The mic was loud through this turn because the USER was talking — proven, not assumed. Don't
+    // let the echo detector read that as the speaker leaking in and lock the gate shut for the call.
+    this.echo.ignoreTurn();
+    this.discardTurnAudio = this.modelTurnActive;
+    this.player.clear();
+    this.gatedSinceMs = null;
+    this.streamEndSent = false;
+    // Send what was dropped while we worked out that this was a person — their first word is in here.
+    for (const chunk of this.preroll) this.sendAudio(chunk);
+    this.preroll.length = 0;
+    this.markVoiceActivity();
+    this.cb.onState("listening");
   }
 
   /** The model's voice plays on a path the platform's echo canceller can't reference. */
@@ -613,6 +714,9 @@ export class LiveSession {
     // entire NEXT reply, since only interrupted/turnComplete clear it.
     this.discardTurnAudio = this.modelTurnActive;
     this.player.clear();
+    // A tap can land mid-probe; drop that probe so its verdict can't arrive after the turn it was
+    // asking about is already gone (player.clear having restored the volume).
+    this.barge.reset();
     this.cb.onState("listening");
   }
 

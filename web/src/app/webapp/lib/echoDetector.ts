@@ -70,6 +70,8 @@ export class EchoDetector {
   /** Echo was proven at some point: the gate stays shut for the rest of the call, no second chances. */
   private proven = false;
   private opened = false;
+  /** The turn under way has been disqualified as evidence — see {@link ignoreTurn}. */
+  private ignoring = false;
 
   /** True once the model has spoken through enough quiet turns that the mic can safely stay open. */
   get open(): boolean {
@@ -108,12 +110,31 @@ export class EchoDetector {
     }
   }
 
+  /**
+   * Throw away the turn in progress: something else has established that the mic was picking up the
+   * USER during it, not the speaker (see bargeIn.ts, which proves exactly that by ducking the output
+   * and finding the voice still there).
+   *
+   * Without this, interrupting the model would read as "the mic hears the speaker" and shut the gate
+   * for the rest of the call — so barging in once on headphones would cost the very full duplex the
+   * detector exists to grant. A disqualified turn counts neither way; the next one decides.
+   */
+  ignoreTurn(): void {
+    this.turnPeak = 0;
+    this.turnChunks = 0;
+    this.ignoring = true;
+  }
+
   /** A model turn just finished — judge it. */
   private endTurn(): void {
     const peak = this.turnPeak;
     const chunks = this.turnChunks;
     this.turnPeak = 0;
     this.turnChunks = 0;
+    if (this.ignoring) {
+      this.ignoring = false;
+      return;
+    }
 
     // Too short to mean anything, or we don't yet know what this room sounds like. Neither counts
     // for nor against — the gate simply stays where it is.

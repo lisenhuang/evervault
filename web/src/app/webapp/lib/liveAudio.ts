@@ -84,6 +84,20 @@ const ECHO_TAIL_S = 0.3;
 // can reopen sooner and catch the start of what the user says next.
 const CLEAR_TAIL_S = 0.2;
 
+// How far the output is attenuated during a listening probe (see bargeIn.ts). -26 dB: enough that
+// any echo drops under the room's own noise floor, so whatever the mic still hears is the user —
+// and shallow enough to be heard as a dip in the model's voice rather than a dropout.
+const DUCK_GAIN = 0.05;
+// Ramp for that attenuation. Short enough that the probe is measuring ducked audio almost at once,
+// long enough not to click.
+const DUCK_RAMP_S = 0.02;
+// What the speaker may be emitting "now", as a span around the current time: back far enough to
+// cover output latency and the room's decay, forward a little for what is about to leave the
+// buffer. Read as a peak over the span, so the estimate errs toward MORE expected echo — which
+// makes the barge-in trigger harder to fire, never easier.
+const REF_BACK_S = 0.3;
+const REF_AHEAD_S = 0.05;
+
 export class MicStreamer {
   private ctx?: AudioContext;
   private stream?: MediaStream;
@@ -156,10 +170,14 @@ export class MicStreamer {
 export class AudioPlayer {
   private ctx: AudioContext;
   private dest: MediaStreamAudioDestinationNode;
-  private out: AudioNode;
+  /** Master volume every buffer passes through, so a probe can duck the whole output at once. */
+  private gain: GainNode;
   private nextTime = 0;
   private lastStopAt = 0;
   private sources = new Set<AudioBufferSourceNode>();
+  /** Level of each scheduled buffer against the clock it plays on — the far-end reference the
+   *  barge-in trigger measures the mic against. Pruned as it plays out. */
+  private levels: { start: number; end: number; rms: number }[] = [];
   /** Fires when all scheduled output has finished playing (the model stopped speaking). */
   onIdle?: () => void;
 
@@ -169,7 +187,8 @@ export class AudioPlayer {
     // WebRTC loopback — that puts the model's voice on the path the browser's echo canceller
     // references, so it gets removed from the mic. See echoLoopback.ts.
     this.dest = this.ctx.createMediaStreamDestination();
-    this.out = this.dest;
+    this.gain = this.ctx.createGain();
+    this.gain.connect(this.dest);
   }
 
   /** The model's output audio as a MediaStream, fed to the echo-cancelling loopback for playback. */
@@ -183,7 +202,51 @@ export class AudioPlayer {
    * silence is worse. Call before any audio is enqueued.
    */
   useDirectOutput() {
-    this.out = this.ctx.destination;
+    this.gain.disconnect();
+    this.gain.connect(this.ctx.destination);
+  }
+
+  /**
+   * Level of the audio the speaker may be emitting right now, 0–1 — the model's own voice as WE
+   * know it, before it becomes whatever the microphone hears. Multiplying it by a coupling factor
+   * is how the barge-in detector predicts the echo it should ignore (see bargeIn.ts).
+   *
+   * This is the scheduled program level and deliberately ignores {@link duck}: during a probe the
+   * detector isn't comparing against it anyway, and quietly reporting near-zero mid-probe would
+   * read as "the model went silent" to anything else looking.
+   */
+  get outputLevel(): number {
+    const now = this.ctx.currentTime;
+    const from = now - REF_BACK_S;
+    const to = now + REF_AHEAD_S;
+    let peak = 0;
+    for (const s of this.levels) {
+      if (s.end > from && s.start < to && s.rms > peak) peak = s.rms;
+    }
+    return peak;
+  }
+
+  /** Attenuate output for a listening probe — briefly, so the mic can be read without our own sound in it. */
+  duck() {
+    this.rampGain(DUCK_GAIN);
+  }
+
+  /** Restore full volume after a probe. Safe to call when not ducked. */
+  unduck() {
+    this.rampGain(1);
+  }
+
+  private rampGain(to: number) {
+    if (this.ctx.state === "closed") return; // clear() runs on the way out; nothing left to ramp
+    const g = this.gain.gain;
+    const t = this.ctx.currentTime;
+    try {
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(to, t + DUCK_RAMP_S);
+    } catch {
+      g.value = to; // no automation available — jump, a click beats a stuck duck
+    }
   }
 
   async resume() {
@@ -200,10 +263,14 @@ export class AudioPlayer {
     if (!buffer) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(this.out);
+    src.connect(this.gain);
     const start = Math.max(this.ctx.currentTime, this.nextTime);
     src.start(start);
     this.nextTime = start + buffer.duration;
+    // Remember how loud this buffer is and when it plays, for outputLevel. Drop anything that
+    // finished sounding a second ago — well past the window outputLevel looks at.
+    while (this.levels.length > 0 && this.levels[0].end < this.ctx.currentTime - 1) this.levels.shift();
+    this.levels.push({ start, end: this.nextTime, rms: rms(buffer.getChannelData(0)) });
     this.sources.add(src);
     src.onended = () => {
       this.sources.delete(src);
@@ -239,7 +306,11 @@ export class AudioPlayer {
       }
     }
     this.sources.clear();
+    this.levels.length = 0;
     this.nextTime = 0;
+    // A stop can land mid-probe (that's what a confirmed barge-in is), so the duck has to come off
+    // here too — otherwise the next reply would start at 5% volume.
+    this.unduck();
     if (hadAudio) this.lastStopAt = this.ctx.currentTime;
   }
 

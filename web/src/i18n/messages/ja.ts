@@ -181,7 +181,7 @@ const ja: Messages = {
     liveHint: "そのまま話してください — 声でお答えします。いつでも話しかけて割り込めます。",
     stopReply: "返答を停止",
     gatedHint: "そのまま話してください — 声でお答えします。",
-    gatedSpeakingHint: "返答中 — 波形をタップすると止まります。",
+    gatedSpeakingHint: "返答中 — 話しかけるか、波形をタップすると止まります。",
   },
   message: {
     callEnded: "通話終了",

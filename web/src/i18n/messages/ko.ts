@@ -181,7 +181,7 @@ const ko: Messages = {
     liveHint: "그냥 말하세요 — 소리 내어 답할게요. 언제든 말해서 끼어들 수 있어요.",
     stopReply: "답변 중지",
     gatedHint: "그냥 말하세요 — 소리 내어 답할게요.",
-    gatedSpeakingHint: "답하는 중 — 파형을 누르면 멈춥니다.",
+    gatedSpeakingHint: "답하는 중 — 말을 걸거나 파형을 누르면 멈춥니다.",
   },
   message: {
     callEnded: "통화 종료",

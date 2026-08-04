@@ -33,8 +33,9 @@ export default function CallBar({
   idleClosed: boolean;
   /** ms timestamp of when the call connected, or null while still connecting. Drives the live timer. */
   startedAt: number | null;
-  /** Mic is gated while the model speaks — interrupting is by tap, not by voice. Lifts by itself
-   *  mid-call once the mic shows nothing is echoing back (see echoDetector.ts). */
+  /** Mic is gated while the model speaks, so the wave doubles as a tap-to-interrupt. Speaking
+   *  interrupts too (see lib/bargeIn.ts) — the tap is the certain way, not the only one. The gate
+   *  lifts by itself mid-call once the mic shows nothing is echoing back (see lib/echoDetector.ts). */
   halfDuplex: boolean;
   onToggleMute: () => void;
   onInterrupt: () => void;

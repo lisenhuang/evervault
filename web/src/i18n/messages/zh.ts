@@ -182,7 +182,7 @@ const zh: Messages = {
     liveHint: "尽管开口——我会出声回答。随时说话都可以打断我。",
     stopReply: "停止回答",
     gatedHint: "尽管开口——我会出声回答。",
-    gatedSpeakingHint: "正在回答——点击声波即可打断。",
+    gatedSpeakingHint: "正在回答——直接说话或点击声波即可打断。",
   },
   message: {
     callEnded: "通话已结束",

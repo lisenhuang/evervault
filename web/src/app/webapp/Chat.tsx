@@ -362,9 +362,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // explanatory dialog with a one-tap Reconnect instead of just letting the bar vanish.
   const [idleEndedOpen, setIdleEndedOpen] = useState(false);
   // Echo-prone output path (iOS speaker, or the loopback failed): the session starts half duplex —
-  // the mic is gated while the model speaks, so interrupting is by tap instead of by voice. It lifts
-  // itself once the mic has shown that nothing is actually echoing back (headphones, or a canceller
-  // that works after all), which is re-read on every state change below. See lib/echoDetector.ts.
+  // the mic is gated while the model speaks, so the wave doubles as a tap-to-interrupt. Speaking
+  // still interrupts (the session ducks itself for a moment to check whether it's hearing the user
+  // or its own speaker — see lib/bargeIn.ts); the tap is the certain way, not the only one. The gate
+  // lifts itself once the mic has shown that nothing is actually echoing back (headphones, or a
+  // canceller that works after all), which is re-read on every state change below. See
+  // lib/echoDetector.ts.
   const [callHalfDuplex, setCallHalfDuplex] = useState(false);
   // ms timestamp of when the current call connected (null until connected / when no call is active).
   // Drives the live mm:ss timer in the CallBar; the ref mirror lets the end/close handlers read it
