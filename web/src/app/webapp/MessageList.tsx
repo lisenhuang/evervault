@@ -27,14 +27,20 @@ import { formatDuration, formatMemoryDate } from "./lib/time";
 import { formatSize, openFileInNewTab, type PreparedFile } from "./lib/files";
 import { isIOS } from "./lib/liveAudio";
 import type { StoredFileMeta } from "./lib/filesApi";
+import { linkify } from "./lib/linkify";
 import { useT } from "@/i18n/LanguageProvider";
+
+// How a link looks in a bubble, on either side: the color is inherited (white on the user's blue
+// bubble, body text on the assistant's), so one class covers both the markdown `a` renderer below
+// and the links `linkify` finds in the user's own plain text.
+const LINK_CLS = "underline underline-offset-2";
 
 const md: Components = {
   p: (props) => <p className="mb-2 last:mb-0" {...props} />,
   ul: (props) => <ul className="mb-2 list-disc pl-5" {...props} />,
   ol: (props) => <ol className="mb-2 list-decimal pl-5" {...props} />,
   li: (props) => <li className="mb-0.5" {...props} />,
-  a: (props) => <a className="underline underline-offset-2" target="_blank" rel="noreferrer" {...props} />,
+  a: (props) => <a className={LINK_CLS} target="_blank" rel="noreferrer" {...props} />,
   pre: (props) => (
     <pre className="mb-2 overflow-x-auto rounded-lg bg-black/80 p-3 chat-text-sm text-white dark:bg-black/60" {...props} />
   ),
@@ -276,11 +282,13 @@ export default function MessageList({
                   {/* Typed and spoken in one bubble, in the order they were composed. The typed half
                       reads as ordinary message text; the mic icon below marks where the clip starts,
                       so it stays obvious which words were said rather than written. */}
-                  {m.caption && <span className="mb-1.5 block whitespace-pre-wrap">{m.caption}</span>}
+                  {m.caption && (
+                    <span className="mb-1.5 block whitespace-pre-wrap">{linkify(m.caption, LINK_CLS)}</span>
+                  )}
                   {m.text ? (
                     <span className="flex items-start gap-1.5">
                       <Mic size={14} className="chat-icon mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
-                      <span className="whitespace-pre-wrap">{m.text}</span>
+                      <span className="min-w-0 whitespace-pre-wrap">{linkify(m.text, LINK_CLS)}</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 italic opacity-90">
@@ -289,7 +297,7 @@ export default function MessageList({
                   )}
                 </>
               ) : (
-                <span className="whitespace-pre-wrap">{m.text}</span>
+                <span className="whitespace-pre-wrap">{linkify(m.text, LINK_CLS)}</span>
               )}
             </Pressable>
             <Avatar name={userName} picture={userPicture} />
@@ -569,6 +577,10 @@ function Pressable({
 }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = useRef({ x: 0, y: 0 });
+  // Set when a long press opened the menu, so the click some browsers still fire on release doesn't
+  // also follow a link the finger happened to be resting on. Cleared by the next touch, so a plain
+  // tap right after is never swallowed.
+  const openedByPress = useRef(false);
   const clear = useCallback(() => {
     if (timer.current) {
       clearTimeout(timer.current);
@@ -580,6 +592,12 @@ function Pressable({
   return (
     <div
       className={className}
+      onClickCapture={(e) => {
+        if (!openedByPress.current) return;
+        openedByPress.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onContextMenu={(e) => {
         if (disabled) return;
         e.preventDefault();
@@ -592,9 +610,11 @@ function Pressable({
         }
         const touch = e.touches[0];
         start.current = { x: touch.clientX, y: touch.clientY };
+        openedByPress.current = false;
         clear();
         timer.current = setTimeout(() => {
           timer.current = null;
+          openedByPress.current = true;
           navigator.vibrate?.(10);
           onOpen(start.current.x, start.current.y);
         }, LONG_PRESS_MS);
