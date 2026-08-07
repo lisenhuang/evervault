@@ -22,7 +22,7 @@ import { LiveVoiceMessage, renderConversation } from "./lib/liveVoiceMessage";
 import { toLiveAttachments } from "./lib/liveAttachments";
 import { setAudioSessionType } from "./lib/liveAudio";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
-import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./lib/persona";
+import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, NO_REPETITION, SAFETY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA, type TaskChange } from "./lib/taskTools";
 import { buildTaskReceipt } from "./lib/taskReceipt";
@@ -1135,6 +1135,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // suggest, the user's message is what the reply is for. Without this the model would answer a
         // plain question with a check-in about their week and never get to the question at all.
         ANSWER_FIRST,
+        // Immediately after it, against the same blocks: every one of them is re-injected verbatim on
+        // every turn, so without this the reply to "what else?" is the previous reply again.
+        NO_REPETITION,
         langDirective,
         styleDir,
         // Right before the identity block, because it's the same subject: what the assistant is

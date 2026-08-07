@@ -6,7 +6,7 @@
 
 import { type FunctionCall } from "@google/genai";
 import { BRAND_NAME_HEARING } from "./brandName";
-import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, SAFETY_BOUNDS } from "./persona";
+import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, NO_REPETITION, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
 import { isTaskTool, runTaskTool, TASK_TOOL_DECLARATIONS, TASKS_PERSONA } from "./taskTools";
 import { FORGET_PERSONA, FORGET_TOOL_DECLARATIONS, isForgetTool, runForgetTool } from "./forgetTool";
@@ -78,6 +78,10 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     // Right after the blocks that invite the assistant to raise something of its own — spoken turns
     // derail the same way typed ones do, and interrupting someone out loud is worse.
     mem ? ANSWER_FIRST : "",
+    // Alongside ANSWER_FIRST and for the same reason: those blocks are re-injected verbatim every
+    // turn, so without this the reply to "what else?" is whatever they were just told again. Worse
+    // out loud than on screen — a spoken repeat can't be skimmed past.
+    mem ? NO_REPETITION : "",
     mem && o.recentContext ? o.recentContext : "",
     o.conversationBlock || "",
     // Last of the context blocks and directly before the personas: everything above is what was said

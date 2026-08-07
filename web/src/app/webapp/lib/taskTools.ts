@@ -6,7 +6,7 @@
 
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { describeRecurrence, firstOccurrence, isRecurring, nextOccurrence } from "./recurrence";
-import { createTask, getTasks, localDateStr, patchTask, type Task } from "./tasks";
+import { createTask, fetchTasks, getTasks, localDateStr, patchTask, TASK_FETCH_TAKE, type Task } from "./tasks";
 import { formatMemoryDate } from "./time";
 
 // Persona addendum for the task list. Prepend alongside MEMORY_PERSONA on both surfaces.
@@ -68,6 +68,25 @@ export const TASKS_PERSONA =
   "it wasn't there — and, if you were the one who raised it, own that plainly. Never say you removed, " +
   "dismissed or sorted a task that never existed: an invented removal leaves them believing their list " +
   "changed when nothing did.\n\n" +
+  // The reported failure: asked "is there anything I need to do today?", then "is there any other
+  // things?", then "what else?", the assistant answered all three with the SAME two undated tasks
+  // (enrol with a GP, follow up Yi's vaccination) — the second and third replies re-serving them as
+  // padding around whatever else it had found. The task block is re-rendered verbatim on every turn
+  // and reads as authoritative, so it is always the cheapest thing to reach for; nothing told the
+  // model that "what else" means "something you have not said yet", or that it is allowed to run out.
+  "ASKED FOR MORE — NEVER ANSWER WITH WHAT YOU ALREADY SAID. \"What else?\", \"anything else?\", " +
+  "\"any other things?\", \"is that all?\" and the like ask for what you have NOT already told them in " +
+  "this conversation. Before answering one, look back at the tasks you have already named this " +
+  "conversation and treat every one of them as spent: it does not go in the reply again — not as the " +
+  "whole answer, not reworded, and not as filler alongside something new. Look somewhere you haven't " +
+  "looked instead: call list_tasks over ground you haven't covered (a later dueOnOrBefore, or no " +
+  "filter at all for the entire open list), and name only what is genuinely new. When nothing is new, " +
+  "say exactly that in one line — \"that's everything on your list\" — and name NOTHING again. You can " +
+  "say it as fact rather than as a guess: an unfiltered list_tasks tells you outright when what it " +
+  "returned is their complete list, and the task block above is only the part due today, never the " +
+  "whole thing. Recite tasks you've already given only if they actually ask you to (\"run through them " +
+  "again\", \"remind me of the whole list\"). Answering three questions with the same two tasks makes " +
+  "their list look longer than it is and reads as not having listened.\n\n" +
   // The reported failure: asked by voice to remove five tasks, the assistant said "I've dismissed
   // those" without the tool ever confirming it, then — asked to check — reported the same tasks as
   // still there, over and over. Two rules below: do the whole removal in ONE call, and never assert
@@ -379,6 +398,11 @@ const missedNames = (t: Targets) => ({
   ...(t.ambiguous.length ? { ambiguous: t.ambiguous } : {}),
 });
 
+/** How many tasks are handed to the model in one list_tasks response. The count of what was left out
+ *  rides along, so a trimmed answer is never mistaken for a complete one. (How many we FETCH is
+ *  TASK_FETCH_TAKE — the server's own ceiling; see tasks.ts for why that distinction matters.) */
+const LIST_SHOWN = 50;
+
 /** How many open tasks are left (with the first few), read back from the server AFTER a change. The
  *  agenda block in the model's instructions is a snapshot from before the call, so without this the
  *  reply's "that's off your list now" is asserted against stale context — the exact loop where the
@@ -437,11 +461,41 @@ export async function runTaskTool(
     const cutoff = str(args.dueOnOrBefore);
     const query = str(args.query)?.toLowerCase();
     const includeUndated = args.includeUndated !== false;
-    let tasks = await getTasks(["open", "done", "dismissed", "all"].includes(status) ? status : "open");
+    // fetchTasks, not getTasks: a failed read comes back as null rather than as an empty list, so the
+    // completeness note below can never turn a network blip into "your list is empty" — the one answer
+    // that would stop the user checking.
+    const all = await fetchTasks(["open", "done", "dismissed", "all"].includes(status) ? status : "open");
+    if (!all) {
+      return JSON.stringify({
+        error: "couldn't read the task list just now — tell the user you couldn't check, not that it's empty",
+      });
+    }
+    let tasks = all;
     if (cutoff) tasks = tasks.filter((t) => (t.dueDate ? t.dueDate <= cutoff : includeUndated));
     if (query) tasks = tasks.filter((t) => t.title.toLowerCase().includes(query));
-    if (tasks.length === 0) return JSON.stringify({ tasks: [], note: "no matching tasks" });
-    return JSON.stringify({ tasks: tasks.slice(0, 50).map(brief) });
+    const narrowed = Boolean(cutoff || query);
+    const shown = tasks.slice(0, LIST_SHOWN);
+    // Whether what's coming back IS the user's entire list for this status — nothing filtered out,
+    // nothing trimmed off the end, and the server didn't hit its own ceiling. This is the only fact
+    // that lets a reply say "that's everything" instead of padding the answer with tasks the user has
+    // already been told about, which is exactly what three "what else?"s in a row used to produce.
+    const complete = !narrowed && shown.length === all.length && all.length < TASK_FETCH_TAKE;
+    const note = complete
+      ? all.length === 0
+        ? `the user has no ${status} tasks at all — this list is empty`
+        : `this is the user's COMPLETE ${status} list — all ${all.length} of them, there is nothing ` +
+          "else, so you can tell them outright that this is everything"
+      : tasks.length === 0
+        ? "no matching tasks — but this was a FILTERED look, so it does not mean their list is empty"
+        : undefined;
+    return JSON.stringify({
+      tasks: shown.map(brief),
+      // Always present, so "how many are there?" and "is that all of them?" never need a second call.
+      matched: tasks.length,
+      ...(narrowed ? { totalIgnoringFilters: all.length } : {}),
+      ...(tasks.length > shown.length ? { notShown: tasks.length - shown.length } : {}),
+      ...(note ? { note } : {}),
+    });
   }
 
   if (name === "add_task") {

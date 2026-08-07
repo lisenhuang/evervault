@@ -34,14 +34,31 @@ export type TaskDelta = {
 
 // --- API helpers (same-origin; the user's key never leaves the browser) ---
 
-export async function getTasks(status = "open", take = 100): Promise<Task[]> {
+/** How many rows we ever ask the server for. This is the API's own ceiling (it clamps `take` to 200),
+ *  which is the point: a response shorter than this is provably the user's WHOLE list rather than the
+ *  first page of it. That's what lets the agenda block state a total and list_tasks tell the model
+ *  outright that it has seen everything — neither of which is safe to say off a partial read. */
+export const TASK_FETCH_TAKE = 200;
+
+/**
+ * The tasks themselves, or null when the READ FAILED. "No tasks" and "couldn't find out" are not the
+ * same answer, and only this function can tell them apart: everything downstream sees an empty array
+ * for both. That distinction only started mattering once a caller began asserting completeness off an
+ * empty result — "your list is empty" told to a user whose network blipped is a straight falsehood,
+ * and it is the one sentence that stops them checking. Callers that just want the list use getTasks.
+ */
+export async function fetchTasks(status = "open", take = TASK_FETCH_TAKE): Promise<Task[] | null> {
   try {
     const res = await api(`/api/chat/tasks?status=${encodeURIComponent(status)}&take=${take}`);
     if (res.ok) return (await res.json()) as Task[];
   } catch {
     /* ignore */
   }
-  return [];
+  return null;
+}
+
+export async function getTasks(status = "open", take = TASK_FETCH_TAKE): Promise<Task[]> {
+  return (await fetchTasks(status, take)) ?? [];
 }
 
 export async function createTask(
@@ -188,6 +205,11 @@ export function renderAgendaBlock(tasks: Task[], now = new Date()): string | nul
   const undated = open
     .filter((t) => !t.dueDate)
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  // Everything dated after today. Deliberately COUNTED but not listed (that's what list_tasks is for) —
+  // yet counting it is not optional: without this line the four buckets don't add up to the open list,
+  // and a block that looks complete while silently hiding tasks is what made the assistant answer
+  // "nothing today" and then keep dredging up the same undated pair when pushed for more.
+  const later = open.filter((t) => t.dueDate && t.dueDate > today);
 
   const line = (t: Task, suffix = "") => {
     const repeat = t.recurrence ? ` (repeats ${describeRecurrence(t.recurrence)})` : "";
@@ -204,16 +226,31 @@ export function renderAgendaBlock(tasks: Task[], now = new Date()): string | nul
   lines.push(...section("Overdue:", overdue, OVERDUE_CAP, (t) => line(t, ` (was due ${t.dueDate})`)));
   lines.push(...section(`Due today (${today}):`, dueToday, TODAY_CAP, (t) => line(t)));
   lines.push(...section("No due date:", undated, UNDATED_CAP, (t) => line(t)));
+  if (later.length > 0) {
+    lines.push(
+      `Dated later than today: ${later.length} more task(s) — NOT listed here, and none of them due ` +
+        "yet. Call list_tasks to see them (pass a dueOnOrBefore for a range, or no filter at all for " +
+        "the whole open list). Don't raise these unprompted.",
+    );
+  }
+  // Every open task falls into exactly one bucket above, so this can now only be reached with an empty
+  // list — kept as a backstop rather than as a live path.
   if (lines.length === 0) return EMPTY_AGENDA_BLOCK;
 
+  // At the fetch ceiling the count is a floor, not a total — say so rather than assert a number that
+  // may be short. (Not a state any real list reaches; it just must never read as fact if it does.)
+  const total = open.length >= TASK_FETCH_TAKE ? `${TASK_FETCH_TAKE}+` : `${open.length}`;
   return (
-    "The user's task list (structured, authoritative — this is the ground truth for what they need to " +
-    "do; prefer it over conversational memory when they ask what's on their plate, and never invent " +
-    "tasks that aren't listed here or returned by list_tasks). Talk about tasks by title, not by id " +
-    "number — but pass the id to the task tools. This is a SNAPSHOT taken before your reply: once you " +
-    "complete, dismiss or reschedule anything, the tool's response is newer than this list, and " +
-    "list_tasks is what tells you the state now — so never re-read this block to check whether a change " +
-    "of yours went through:\n" +
+    `The user's task list — ${total} open task(s) in total (structured, authoritative — this is ` +
+    "the ground truth for what they need to do; prefer it over conversational memory when they ask " +
+    "what's on their plate, and never invent tasks that aren't listed here or returned by list_tasks). " +
+    "Talk about tasks by title, not by id number — but pass the id to the task tools. This is a " +
+    "SNAPSHOT taken before your reply: once you complete, dismiss or reschedule anything, the tool's " +
+    "response is newer than this list, and list_tasks is what tells you the state now — so never " +
+    "re-read this block to check whether a change of yours went through. It is also only the part of " +
+    "the list that matters TODAY (overdue, due today, undated); anything dated further out is counted " +
+    "at the end but not shown — so this block is NOT the whole list, and \"that's everything\" is " +
+    "never something you can say from it alone. Check list_tasks first:\n" +
     lines.join("\n")
   );
 }
