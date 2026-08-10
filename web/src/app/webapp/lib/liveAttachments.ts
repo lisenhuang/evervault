@@ -81,6 +81,33 @@ export function renderTypedMessage(caption: string | undefined): string {
   );
 }
 
+/** How much of the quoted message to replay. Enough to identify it — the point is which message it
+ *  is, not to read the whole thing back into the prompt (it is already in the conversation block). */
+const QUOTED_REPLY_MAX_CHARS = 500;
+
+/**
+ * The earlier message this voice message is a direct reply to, as a system-instruction block.
+ *
+ * The typed path and the TTS voice path both inject this marker as a real text part (Chat.tsx's
+ * replyContext). A Live session has no such channel, and until now nothing carried it here at all — so
+ * tapping Reply before recording changed what the bubble rendered and told the model nothing. That is
+ * the strongest disambiguating signal a user can give ("no, THIS one"), and it was being dropped on the
+ * one surface where the model most needs it.
+ */
+export function renderQuotedReply(quoted: { role: "user" | "assistant"; text: string } | undefined): string {
+  let text = (quoted?.text ?? "").trim();
+  if (!text) return "";
+  if (text.length > QUOTED_REPLY_MAX_CHARS) text = `${text.slice(0, QUOTED_REPLY_MAX_CHARS)}…`;
+  const who = quoted!.role === "assistant" ? "YOUR OWN earlier message" : "an earlier message of THEIR OWN";
+  return (
+    "THE MESSAGE YOU ARE ABOUT TO HEAR IS A DIRECT REPLY TO ONE PARTICULAR EARLIER MESSAGE. The user " +
+    `singled it out with the Reply button, so they have already told you which one they mean: it is ${who}, ` +
+    `quoted here:\n"${text}"\n` +
+    "Whatever they say in the clip is about THAT message — resolve every \"this\", \"that one\" and " +
+    "\"it\" against it first, and do not ask them which one they mean."
+  );
+}
+
 /** Total budget for attached document text in the instruction. Generous — a spreadsheet or deck is
  *  the whole point of attaching it — but bounded, so one big file can't push the personas out. */
 const ATTACHMENT_TEXT_MAX_CHARS = 24000;

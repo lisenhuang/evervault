@@ -35,6 +35,23 @@ import { aiReplyDirective, type Lang } from "@/i18n/config";
 export const LIVE_VOICE_SYSTEM_INSTRUCTION =
   "You are EverVault, a warm and concise voice assistant. Keep replies short and natural for a spoken conversation.";
 
+/**
+ * The last word before the clock, for a session whose next input continues the conversation block.
+ *
+ * The block itself says all of this at length, but it sits near the top of a ~35k-character
+ * instruction and everything after it is imperative rules — including TASKS_PERSONA, which is the
+ * single largest block here and which explicitly authorises the clarifying question that was the
+ * reported bug. This is the recency anchor: short, last, and about the one thing that went wrong.
+ */
+const CONTINUES_CONVERSATION_REMINDER =
+  "FINALLY, THE THING MOST EASILY LOST IN EVERYTHING ABOVE: you are in the middle of a conversation, " +
+  "and it is written out for you near the top of these instructions. What the user is about to say " +
+  "continues it. So when they refer to something without naming it, the answer is almost always in " +
+  "the last turn or two up there — go and read it before you ask them to tell you again. If you " +
+  "yourself named the thing one turn ago, you already have your answer: use it, act, and say what " +
+  "you acted on. Asking someone to repeat what you just said to them is the one reply this " +
+  "conversation cannot afford.";
+
 /** The memory/context blocks + preferences woven into a Live session's system instruction. Every field
  *  is optional so a memory-off session (or a caller that hasn't loaded a block) simply omits it. */
 export type LiveContextOpts = {
@@ -48,6 +65,13 @@ export type LiveContextOpts = {
    *  message) still "sees" the mixed text+voice history. The realtime call omits this — it keeps one
    *  live session whose history the server already retains. */
   conversationBlock?: string;
+  /** The earlier message this voice message replies to, when the user picked one out with Reply (see
+   *  renderQuotedReply). Voice-message sessions only — a call has no Reply button. */
+  quotedReplyBlock?: string;
+  /** True when the next thing the model receives is the next turn OF conversationBlock — the one-shot
+   *  voice message. Adds the tail reminder below; see CONTINUES_CONVERSATION_REMINDER for why the
+   *  block alone isn't enough. Ignored without a conversationBlock (a first message continues nothing). */
+  nextTurnContinues?: boolean;
   /** Text the user typed and sent WITH this voice message (see renderTypedMessage). Voice-message
    *  sessions only — a realtime call has no composer. */
   typedMessageBlock?: string;
@@ -71,10 +95,15 @@ export type LiveContextOpts = {
 export function buildLiveSystemInstruction(o: LiveContextOpts): string {
   const mem = o.memoryEnabled;
   return [
+    // --- Background: what we know ABOUT this user, none of it said out loud in this conversation.
+    // Kept together, and deliberately ahead of the conversation block below. They used to be split
+    // either side of recentContext, which left the live conversation sitting dead-centre among them
+    // and reading like one more of them — see renderConversation for the prod failure that caused.
     mem && o.profileBlock ? o.profileBlock : "",
     mem && o.stateBlock ? o.stateBlock : "",
     mem && o.eventsBlock ? o.eventsBlock : "",
     mem && o.agendaBlock ? o.agendaBlock : "",
+    mem && o.recentContext ? o.recentContext : "",
     // Right after the blocks that invite the assistant to raise something of its own — spoken turns
     // derail the same way typed ones do, and interrupting someone out loud is worse.
     mem ? ANSWER_FIRST : "",
@@ -82,8 +111,11 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     // turn, so without this the reply to "what else?" is whatever they were just told again. Worse
     // out loud than on screen — a spoken repeat can't be skimmed past.
     mem ? NO_REPETITION : "",
-    mem && o.recentContext ? o.recentContext : "",
+    // --- Foreground: the conversation actually under way, and the message about to arrive in it.
+    // Below the background on purpose, so the two are never read as the same kind of thing, and
+    // immediately above the message it is the context for.
     o.conversationBlock || "",
+    o.quotedReplyBlock || "",
     // Last of the context blocks and directly before the personas: everything above is what was said
     // BEFORE, these two are the rest of the message about to arrive.
     o.typedMessageBlock || "",
@@ -110,6 +142,10 @@ export function buildLiveSystemInstruction(o: LiveContextOpts): string {
     CAPABILITY_BOUNDS,
     SAFETY_BOUNDS,
     aiReplyDirective(o.language ?? "en"),
+    // Deliberately last of the rules: the conversation block is a few hundred characters and roughly
+    // 25k characters of persona follow it, several of which push toward asking a clarifying question.
+    // Restating the one thing that matters here, where nothing buries it, is the cheap half of the fix.
+    o.conversationBlock && o.nextTurnContinues ? CONTINUES_CONVERSATION_REMINDER : "",
     currentTimeContext(),
   ]
     .filter(Boolean)

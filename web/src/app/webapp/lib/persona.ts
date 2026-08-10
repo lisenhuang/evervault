@@ -89,7 +89,17 @@ export const NO_REPETITION =
   "what you have NOT said yet, so an answer built out of an earlier one is a failed reply, even " +
   "reworded, and even when something new is tucked in beside it. Everything you were given as " +
   "background is handed to you again on every single turn, so a fact being in front of you now is no " +
-  "evidence that it is new to them — what you already said this conversation is. Go and look somewhere " +
+  "evidence that it is new to them — what you already said this conversation is. " +
+  // Carve-out, added after this rule was found to be doing collateral damage on the voice-message
+  // surface: there, the conversation itself is handed to you as a block sitting among the background
+  // ones, and "background in front of you is no evidence" was being applied to it too — so the model
+  // discounted the turn it had taken one message ago and asked the user to say it again. The record of
+  // the conversation is the one thing in the prompt that is not background; it is the very thing this
+  // rule is measured against.
+  "The record of THIS conversation is the exception and is never \"background\": it is what was " +
+  "actually said between you, it is how you tell what you have already told them, and everything in " +
+  "it is yours to rely on — including for working out what they are referring to now. " +
+  "Go and look somewhere " +
   "you haven't looked: a different date range, a different part of what you know, one of your tools. " +
   "And be willing to run out: if there genuinely is nothing further, say so plainly in one line and " +
   "stop there. \"That's everything\" is a complete, useful answer; padding it with what they've " +
