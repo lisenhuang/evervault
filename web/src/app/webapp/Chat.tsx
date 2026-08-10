@@ -1544,6 +1544,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         conversationId: conversationIdRef.current,
         history: toContents(messagesRef.current),
         caption,
+        // Read here, with the history and the caption, because the system instruction is assembled
+        // once — at connect, which is now. stopVoiceLive re-reads `replyTo` at SEND time for the
+        // bubble and the memory record; in the rare window where the user changes the reply bar
+        // mid-recording the two can disagree, which is still strictly better than the previous
+        // behaviour of never telling the model about the quote at all.
+        ...(replyTo
+          ? { quotedReply: { role: replyTo.role, text: messageBodyText(replyTo) } }
+          : {}),
         attachments: liveAttachments,
         // Same refresh the typed path does after a task tool call: the agenda block above is rendered
         // from this cache, so without it the next voice message is told the tasks this one just
