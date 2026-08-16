@@ -35,6 +35,19 @@ public class WebappAiConfig
     public string? LiveModel { get; set; }
     public string? DefaultVoice { get; set; }
 
+    /// <summary>Thinking level for the realtime-call Live model: "minimal" | "low" | "medium" | "high".
+    /// Null/unrecognized = send no thinkingConfig, i.e. the model's own default (Gemini Live defaults to
+    /// minimal, for latency). Applied browser-side on the Live socket's <c>thinkingConfig.thinkingLevel</c>.
+    /// Raising it buys deeper tool/multi-step reasoning at the cost of time-to-first-audio, which on a
+    /// hands-free call is silence — so the default deliberately stays unset.</summary>
+    public string? LiveReasoning { get; set; }
+
+    /// <summary>Thinking level for the voice-message Live model, same value set as <see cref="LiveReasoning"/>.
+    /// Independent of it (not inherited like <see cref="VoiceLiveModel"/> is) so the admin can afford a
+    /// slower, deeper answer on a voice message — where the user is already waiting — while keeping the
+    /// realtime call snappy. Null = the model's default.</summary>
+    public string? VoiceLiveReasoning { get; set; }
+
     /// <summary>How long a live voice call may sit in user silence before it auto-hangs-up, in seconds.
     /// A Live socket bills for the whole time it's open, so this caps an abandoned call. 0 = never hang up
     /// (the call runs until the user ends it). Null (legacy rows) = <see cref="WebappAiDefaults.LiveIdleSeconds"/>.</summary>
@@ -78,6 +91,11 @@ public static class WebappAiDefaults
     /// <summary>Lower bound (30s). Anything shorter would cut off a user mid-thought.</summary>
     public const int MinLiveIdleSeconds = 30;
 
+    /// <summary>The thinking levels a Gemini 3.x Live model accepts, shallowest first. The client maps these
+    /// onto the Live socket's <c>thinkingConfig.thinkingLevel</c> (MINIMAL/LOW/MEDIUM/HIGH). "auto" is not a
+    /// member: it's expressed as null, meaning "send no thinkingConfig at all".</summary>
+    public static readonly string[] LiveReasoningLevels = ["minimal", "low", "medium", "high"];
+
     public static string Text(WebappAiConfig? c) => Or(c?.TextModel, TextModel);
     public static string Audio(WebappAiConfig? c) => Or(c?.AudioModel, AudioModel);
     public static string Live(WebappAiConfig? c) => Or(c?.LiveModel, LiveModel);
@@ -90,6 +108,22 @@ public static class WebappAiDefaults
     /// <summary>The voice-message answer mode, normalized to "live" | "tts". Legacy/unset rows default to
     /// "live" (the client still auto-falls-back to TTS if a Live session fails).</summary>
     public static string VoiceModeOf(WebappAiConfig? c) => Norm(c?.VoiceMode) == "tts" ? "tts" : VoiceMode;
+
+    /// <summary>The realtime call's thinking level, or null for the model's default.</summary>
+    public static string? LiveReasoningOf(WebappAiConfig? c) => NormalizeLiveReasoning(c?.LiveReasoning);
+
+    /// <summary>The voice-message Live thinking level, or null for the model's default.</summary>
+    public static string? VoiceLiveReasoningOf(WebappAiConfig? c) => NormalizeLiveReasoning(c?.VoiceLiveReasoning);
+
+    /// <summary>Coerce a thinking level to one of <see cref="LiveReasoningLevels"/>, else null. Anything
+    /// unknown — "auto", "", a typo, a level a future model drops — becomes null rather than being kept:
+    /// a bad value on a Live socket is rejected at setup, which fails the whole call rather than just the
+    /// setting, so an unrecognized level must degrade to "send nothing".</summary>
+    public static string? NormalizeLiveReasoning(string? value)
+    {
+        var v = Norm(value);
+        return v is not null && LiveReasoningLevels.Contains(v) ? v : null;
+    }
 
     /// <summary>The idle auto-hang-up window in seconds, clamped to the allowed range. 0 means never.</summary>
     public static int LiveIdle(WebappAiConfig? c)

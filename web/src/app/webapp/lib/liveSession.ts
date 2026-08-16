@@ -11,7 +11,13 @@ import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { EchoDetector } from "./echoDetector";
 import { BargeInDetector } from "./bargeIn";
-import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
+import {
+  buildLiveSystemInstruction,
+  buildLiveToolDeclarations,
+  dispatchLiveToolCalls,
+  type LiveReasoning,
+  liveThinkingConfig,
+} from "./liveShared";
 import { type OutgoingLink } from "./linkTool";
 import { type Lang } from "@/i18n/config";
 
@@ -155,6 +161,8 @@ export class LiveSession {
   private readonly styleInstruction?: string;
   /** Admin-configured idle auto-hang-up window, in seconds. 0 = never hang up on silence. */
   private readonly idleTimeoutSec: number;
+  /** Admin-configured thinking level for this call. "" = send no thinkingConfig (the model's default). */
+  private readonly reasoning: LiveReasoning;
   /** The conversation this call belongs to, so a task the model adds mid-call is attributed to it. */
   private readonly conversationId?: string;
   /** Fired after the model changes the task list mid-call, so the caller can refresh the cache its
@@ -180,6 +188,7 @@ export class LiveSession {
     agendaBlock?: string;
     styleInstruction?: string;
     idleTimeoutSec?: number;
+    reasoning?: LiveReasoning;
     conversationId?: string;
     onTasksChanged?: () => void;
     onLink?: (link: OutgoingLink) => void;
@@ -197,6 +206,7 @@ export class LiveSession {
     this.agendaBlock = opts.agendaBlock;
     this.styleInstruction = opts.styleInstruction;
     this.idleTimeoutSec = opts.idleTimeoutSec ?? DEFAULT_IDLE_TIMEOUT_SEC;
+    this.reasoning = opts.reasoning ?? "";
     this.conversationId = opts.conversationId;
     this.onTasksChanged = opts.onTasksChanged;
     this.onLink = opts.onLink;
@@ -344,6 +354,7 @@ export class LiveSession {
     // to Google with it. tokenAttempt selects which key to mint from, so a resume after a bad key rotates.
     const token = await this.fetchLiveToken(this.tokenAttempt);
     const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
+    const thinking = liveThinkingConfig(this.reasoning);
     this.session = await ai.live.connect({
       model: this.model,
       config: {
@@ -356,6 +367,10 @@ export class LiveSession {
         // so an hours-long call never terminates from hitting the model's context ceiling.
         sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
         contextWindowCompression: { slidingWindow: {} },
+        // Admin-chosen thinking level. Spread rather than set, so "auto" leaves the key absent from the
+        // setup message entirely — the shape this has always sent — instead of an explicit undefined.
+        // Re-applied on every resume, so a mid-call reconnect keeps the same depth.
+        ...(thinking ? { thinkingConfig: thinking } : {}),
         // Same tools + persona/context assembly a voice message uses (see liveShared.ts): record_suggestion
         // always, plus recall/tasks/files/forget when memory is on. Time + agenda are captured at connect;
         // a multi-hour call won't refresh them (the list_tasks tool gives freshness mid-call).

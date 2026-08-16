@@ -15,7 +15,13 @@ import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS, setAudioSessionType } from "./liveAudio";
 import { arrayBufferToBase64, encodeWav, mergeFloat32, voicedSeconds } from "./audio";
 import { fixSpokenBrandName } from "./brandName";
-import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls } from "./liveShared";
+import {
+  buildLiveSystemInstruction,
+  buildLiveToolDeclarations,
+  dispatchLiveToolCalls,
+  type LiveReasoning,
+  liveThinkingConfig,
+} from "./liveShared";
 import { renderAttachments, renderQuotedReply, renderTypedMessage, type LiveAttachment } from "./liveAttachments";
 import { type OutgoingLink } from "./linkTool";
 import type { Content } from "./gemini";
@@ -36,6 +42,9 @@ export type LiveVoiceReply = {
 export type LiveVoiceOpts = {
   model: string;
   voice: string;
+  /** Admin-configured thinking level for the voice-message Live leg. "" / absent = the model's default.
+   *  Set independently of the call's, since a voice message can absorb the extra latency more easily. */
+  reasoning?: LiveReasoning;
   memoryEnabled: boolean;
   /** Whether the assistant may search the live web (admin web-search key configured). Defaults off. */
   searchAvailable?: boolean;
@@ -187,6 +196,7 @@ export class LiveVoiceMessage {
       const token = await this.fetchLiveToken(this.tokenAttempt);
       if (this.stopped) return;
       const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
+      const thinking = liveThinkingConfig(this.opts.reasoning);
       this.session = await ai.live.connect({
         model: this.opts.model,
         config: {
@@ -194,6 +204,10 @@ export class LiveVoiceMessage {
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.opts.voice } } },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
+          // Admin-chosen thinking level; spread so "auto" sends no thinkingConfig key at all. A deeper
+          // level costs time before the reply starts, which here delays the spoken answer rather than
+          // leaving dead air mid-call — and the TTS fallback still covers a session that fails outright.
+          ...(thinking ? { thinkingConfig: thinking } : {}),
           tools: buildLiveToolDeclarations(this.opts.memoryEnabled, this.opts.searchAvailable),
           systemInstruction: buildLiveSystemInstruction({
             memoryEnabled: this.opts.memoryEnabled,

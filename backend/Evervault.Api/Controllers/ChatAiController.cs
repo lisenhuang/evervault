@@ -73,7 +73,8 @@ public class ChatAiController : ControllerBase
 
     public record WebappConfigDto(
         string TextModel, string AudioModel, string LiveModel, string DefaultVoice, bool ServerChat,
-        int LiveIdleTimeoutSeconds, string VoiceLiveModel, string VoiceMode, bool WebSearch);
+        int LiveIdleTimeoutSeconds, string VoiceLiveModel, string VoiceMode, bool WebSearch,
+        string? LiveReasoning, string? VoiceLiveReasoning);
     public record LiveTokenDto(string Token, string? ExpiresAt);
 
     /// <summary>The models + default voice the admin chose for the webapp (with safe fallbacks).
@@ -84,6 +85,9 @@ public class ChatAiController : ControllerBase
     /// credentials and runs primary→fallback. The model id itself is deliberately not exposed.
     /// <c>LiveIdleTimeoutSeconds</c> is the admin's auto-hang-up window for an idle live call (0 = never);
     /// it's additive, so an older client that ignores it just keeps its built-in 60s default.
+    /// <c>LiveReasoning</c> / <c>VoiceLiveReasoning</c> are the admin's thinking level for each Live leg
+    /// ("minimal" | "low" | "medium" | "high"; null = the model's default). Additive: an older client that
+    /// ignores them keeps sending no thinkingConfig, which is exactly what null means.
     /// <c>VoiceLiveModel</c> + <c>VoiceMode</c> ("live" | "tts") drive the voice-message path: when "live", the
     /// client answers voice messages with one Gemini Live session (audio + text in one call), falling back to
     /// TTS on failure; "tts" keeps the legacy synthesis pipeline. Both are additive — an older client ignores
@@ -99,7 +103,8 @@ public class ChatAiController : ControllerBase
         return Ok(new WebappConfigDto(
             WebappAiDefaults.BrowserText(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
             WebappAiDefaults.TextProviderOf(c) != WebappAiDefaults.GeminiProvider,
-            WebappAiDefaults.LiveIdle(c), WebappAiDefaults.VoiceLive(c), WebappAiDefaults.VoiceModeOf(c), webSearch));
+            WebappAiDefaults.LiveIdle(c), WebappAiDefaults.VoiceLive(c), WebappAiDefaults.VoiceModeOf(c), webSearch,
+            WebappAiDefaults.LiveReasoningOf(c), WebappAiDefaults.VoiceLiveReasoningOf(c)));
     }
 
     // --- Server-side voice-message reply audio ---

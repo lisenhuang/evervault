@@ -29,16 +29,20 @@ public class AiChatController : ControllerBase
     public record ChatConfigInput(string? SelectedProvider, string? GeminiModel, string? OpenRouterModel, string? OpenAiModel, string? ReasoningEffort, string? OpenAiReasoning);
     public record EmbeddingConfigDto(string Provider, string? Model, int Dimensions, bool Locked, DateTimeOffset? LockedAt);
     public record EmbeddingConfigInput(string? Model, int Dimensions);
+    // LiveReasoning/VoiceLiveReasoning are appended last so an older admin page (which sends neither)
+    // still binds — a missing field arrives as null, which the merge reads as "leave it alone".
     public record WebappAiConfigDto(
         string TextModel, string AudioModel, string LiveModel, string DefaultVoice,
         string TextProvider, string? TextReasoning,
         string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning,
-        int LiveIdleTimeoutSeconds, string VoiceLiveModel, string VoiceMode);
+        int LiveIdleTimeoutSeconds, string VoiceLiveModel, string VoiceMode,
+        string? LiveReasoning, string? VoiceLiveReasoning);
     public record WebappAiConfigInput(
         string? TextModel, string? AudioModel, string? LiveModel, string? DefaultVoice,
         string? TextProvider, string? TextReasoning,
         string? TextFallbackProvider, string? TextFallbackModel, string? TextFallbackReasoning,
-        int? LiveIdleTimeoutSeconds, string? VoiceLiveModel, string? VoiceMode);
+        int? LiveIdleTimeoutSeconds, string? VoiceLiveModel, string? VoiceMode,
+        string? LiveReasoning, string? VoiceLiveReasoning);
 
     /// <summary>Live model list for a provider (free/paid + pricing where exposed). Goes through failover.
     /// <paramref name="kind"/> = "chat" (default) or "embedding".</summary>
@@ -197,6 +201,10 @@ public class AiChatController : ControllerBase
             var mode = input.VoiceMode.Trim().ToLowerInvariant();
             c.VoiceMode = mode is "live" or "tts" ? mode : c.VoiceMode;
         }
+        // Live thinking levels, one per Live leg. Null keeps the stored value (older admin page);
+        // "auto"/""/anything unrecognized clears it back to the model's default.
+        c.LiveReasoning = MergeLiveReasoning(input.LiveReasoning, c.LiveReasoning);
+        c.VoiceLiveReasoning = MergeLiveReasoning(input.VoiceLiveReasoning, c.VoiceLiveReasoning);
         c.UpdatedAt = DateTimeOffset.UtcNow;
         if (!existing) _db.WebappAiConfigs.Add(c);
         await _db.SaveChangesAsync();
@@ -207,11 +215,19 @@ public class AiChatController : ControllerBase
         WebappAiDefaults.Text(c), WebappAiDefaults.Audio(c), WebappAiDefaults.Live(c), WebappAiDefaults.VoiceOf(c),
         WebappAiDefaults.TextProviderOf(c), c?.TextReasoning,
         c?.TextFallbackProvider, c?.TextFallbackModel, c?.TextFallbackReasoning,
-        WebappAiDefaults.LiveIdle(c), WebappAiDefaults.VoiceLive(c), WebappAiDefaults.VoiceModeOf(c));
+        WebappAiDefaults.LiveIdle(c), WebappAiDefaults.VoiceLive(c), WebappAiDefaults.VoiceModeOf(c),
+        WebappAiDefaults.LiveReasoningOf(c), WebappAiDefaults.VoiceLiveReasoningOf(c));
 
     // null → keep existing (older clients omit the field); ""/whitespace → clear to null; else trimmed value.
     private static string? MergeText(string? incoming, string? current) =>
         incoming is null ? current : string.IsNullOrWhiteSpace(incoming) ? null : incoming.Trim();
+
+    // Same null-keeps-existing rule, but only a real Live thinking level is storable: an unrecognized value
+    // (incl. "auto") clears to null instead of being persisted. A bogus level is rejected by the Live API at
+    // setup, which kills the whole call — so it must never survive a save. Validated here rather than
+    // rejected with a 400 so an older/odd client can't wedge the save on a field it didn't mean to set.
+    private static string? MergeLiveReasoning(string? incoming, string? current) =>
+        incoming is null ? current : WebappAiDefaults.NormalizeLiveReasoning(incoming);
 
     // Same merge rule, plus "auto" collapses to null since that already means "the model's default".
     private static string? MergeReasoning(string? incoming, string? current)

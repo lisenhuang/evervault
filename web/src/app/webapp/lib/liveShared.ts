@@ -4,7 +4,7 @@
 // with the exact same persona, memory blocks, and tools as a call — the only difference between the two
 // surfaces is how audio flows (continuous duplex vs. a single push-to-talk turn).
 
-import { type FunctionCall } from "@google/genai";
+import { type FunctionCall, type ThinkingConfig, ThinkingLevel } from "@google/genai";
 import { BRAND_NAME_HEARING } from "./brandName";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, NO_REPETITION, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
@@ -29,6 +29,35 @@ import {
 } from "./linkTool";
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
+
+/**
+ * How hard the Live model may think before it answers, as the admin set it (see the AI page). "" / an
+ * unknown value means "auto": send no thinkingConfig at all and let the model use its own default —
+ * which for Gemini 3.x Live is MINIMAL, chosen for latency.
+ *
+ * This is a real latency dial, not a quality freebie: on a hands-free call, thinking time is silence
+ * before the assistant speaks. It's exposed per Live leg so the call can stay at auto while a voice
+ * message — where the user has already sent the clip and is waiting — can afford to go deeper.
+ */
+export type LiveReasoning = "" | "minimal" | "low" | "medium" | "high";
+
+const THINKING_LEVELS: Record<Exclude<LiveReasoning, "">, ThinkingLevel> = {
+  minimal: ThinkingLevel.MINIMAL,
+  low: ThinkingLevel.LOW,
+  medium: ThinkingLevel.MEDIUM,
+  high: ThinkingLevel.HIGH,
+};
+
+/**
+ * The `thinkingConfig` for a Live socket, or undefined to send none. Undefined (not an "auto" level) is
+ * what preserves today's behavior exactly — the field is simply absent from the setup message, as it has
+ * always been. An unrecognized value degrades to undefined rather than being passed through: the Live API
+ * rejects a bad level at setup, and that fails the entire call rather than just this setting.
+ */
+export function liveThinkingConfig(reasoning: LiveReasoning | undefined): ThinkingConfig | undefined {
+  const level = reasoning ? THINKING_LEVELS[reasoning] : undefined;
+  return level ? { thinkingLevel: level } : undefined;
+}
 
 /** Base persona for a spoken reply — short and natural, since it's read aloud. Shared by call + voice
  *  message so the two sound like the same assistant. */

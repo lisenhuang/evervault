@@ -4,6 +4,8 @@
 // last-known values (and safe defaults) so the UI has something before that fetch resolves.
 
 import { normalizeStyle, type ResponseStyle, type StyleSurface } from "./responseStyle";
+// Type-only: erased at compile time, so the store keeps no runtime dependency on the Live stack.
+import type { LiveReasoning } from "./liveShared";
 
 const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
@@ -16,6 +18,10 @@ const LIVE_IDLE_SEC = "ev:liveIdleSec";
 // voice message of a session uses the admin's policy rather than the built-in default.
 const VOICE_MODE = "ev:voiceMode";
 const VOICE_LIVE_MODEL = "ev:voiceLiveModel";
+// Admin-set thinking level for each Gemini Live leg ("" = the model's own default). Cached like the
+// models above so a call started before the config fetch resolves still uses the admin's depth.
+const LIVE_REASONING = "ev:liveReasoning";
+const VOICE_LIVE_REASONING = "ev:voiceLiveReasoning";
 const VOICE = "ev:voice";
 const MEMORY_ON = "ev:memoryOn";
 const NOTICE_SEEN = "ev:memoryNoticeSeen";
@@ -63,6 +69,10 @@ export const DEFAULT_VOICE_MODE: VoiceMode = "live";
 /** Default Live model for voice messages before config arrives (same list as the call). */
 export const DEFAULT_VOICE_LIVE_MODEL = DEFAULT_LIVE_MODEL;
 
+/** The Live thinking levels the admin can pick, plus "" for auto (send no thinkingConfig). Re-exported
+ *  from liveShared so the store and the Live sockets can never drift on what a valid level is. */
+export type { LiveReasoning };
+
 /** The chat text-size ladder, smallest first. 10% steps: fine enough that no tap overshoots. */
 export const CHAT_SCALE_STEPS = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5] as const;
 export const DEFAULT_CHAT_SCALE = 1;
@@ -75,6 +85,12 @@ function set(key: string, value: string) {
   if (typeof localStorage === "undefined") return;
   if (value) localStorage.setItem(key, value);
   else localStorage.removeItem(key);
+}
+
+// Anything that isn't one of the four Live thinking levels collapses to "" (auto). Kept as a local
+// literal rather than imported from liveShared so the store keeps no runtime edge into the Live stack.
+function normalizeReasoning(v: string): LiveReasoning {
+  return v === "minimal" || v === "low" || v === "medium" || v === "high" ? v : "";
 }
 
 export const store = {
@@ -98,6 +114,13 @@ export const store = {
   setVoiceMode: (v: VoiceMode) => set(VOICE_MODE, v === "tts" ? "tts" : ""),
   getVoiceLiveModel: () => get(VOICE_LIVE_MODEL) || DEFAULT_VOICE_LIVE_MODEL,
   setVoiceLiveModel: (v: string) => set(VOICE_LIVE_MODEL, v),
+  // Live thinking levels. Normalized on read as well as write, so a stale key left by an older release
+  // (or a hand-edited value) can't reach the Live socket — a level the API rejects fails the whole
+  // session at setup, whereas "" just means "send nothing", which is the pre-existing behavior.
+  getLiveReasoning: () => normalizeReasoning(get(LIVE_REASONING)),
+  setLiveReasoning: (v: string) => set(LIVE_REASONING, normalizeReasoning(v)),
+  getVoiceLiveReasoning: () => normalizeReasoning(get(VOICE_LIVE_REASONING)),
+  setVoiceLiveReasoning: (v: string) => set(VOICE_LIVE_REASONING, normalizeReasoning(v)),
   // Chat text size. Snapped to a known step rather than merely parsed, so a corrupt or
   // out-of-range value (hand-edited storage, or a ladder that changes in a later release) can
   // never render the transcript at some unusable size — it just falls back to 100%.

@@ -42,6 +42,17 @@ const VOICE_MODE_OPTIONS: { value: string; label: string }[] = [
   { value: "tts", label: "Classic — transcribe, reply, then speak" },
 ];
 
+// How long a Gemini 3.x Live model may think before it answers. "auto" sends no thinkingConfig at all,
+// leaving the model's own default (minimal for Live). Every step up buys deeper multi-step and tool
+// reasoning and costs time before the first word — which on a call is silence, so the labels say so.
+const LIVE_REASONING_OPTIONS: { value: string; label: string }[] = [
+  { value: "auto", label: "Auto — the model's default (fastest)" },
+  { value: "minimal", label: "Minimal — pinned to the fastest level" },
+  { value: "low", label: "Low — a little thinking" },
+  { value: "medium", label: "Medium — noticeably slower to start" },
+  { value: "high", label: "High — deepest, slowest to start" },
+];
+
 export default function AiKeysForm() {
   const [data, setData] = useState<AiKeysDto>({ gemini: [], openRouter: [] });
 
@@ -245,6 +256,9 @@ function WebappModelsCard() {
   // Voice-message replies: the Live model for the "live" path + the mode ("live" | "tts").
   const [voiceLiveModel, setVoiceLiveModel] = useState("");
   const [voiceMode, setVoiceMode] = useState("live");
+  // Thinking level per Live leg. "auto" (the UI value for "no thinkingConfig") is stored as null.
+  const [liveReasoning, setLiveReasoning] = useState("auto");
+  const [voiceLiveReasoning, setVoiceLiveReasoning] = useState("auto");
   const [voice, setVoice] = useState("");
   // Idle auto-hang-up window for live calls, in seconds ("0" = never). Held as a string for <Select>.
   const [liveIdle, setLiveIdle] = useState(String(DEFAULT_LIVE_IDLE_SEC));
@@ -294,6 +308,8 @@ function WebappModelsCard() {
         setLiveModel(d.liveModel);
         setVoiceLiveModel(d.voiceLiveModel);
         setVoiceMode(d.voiceMode === "tts" ? "tts" : "live");
+        setLiveReasoning(d.liveReasoning || "auto");
+        setVoiceLiveReasoning(d.voiceLiveReasoning || "auto");
         setVoice(d.defaultVoice);
         setLiveIdle(String(d.liveIdleTimeoutSeconds ?? DEFAULT_LIVE_IDLE_SEC));
       }
@@ -322,6 +338,9 @@ function WebappModelsCard() {
         liveModel,
         voiceLiveModel,
         voiceMode,
+        // "auto" is normalized to null server-side, i.e. send no thinkingConfig.
+        liveReasoning,
+        voiceLiveReasoning,
         defaultVoice: voice,
         liveIdleTimeoutSeconds: Number(liveIdle),
       }),
@@ -381,6 +400,8 @@ function WebappModelsCard() {
       liveModel !== cfg.liveModel ||
       voiceLiveModel !== cfg.voiceLiveModel ||
       voiceMode !== (cfg.voiceMode === "tts" ? "tts" : "live") ||
+      normReason(liveReasoning) !== normReason(cfg.liveReasoning) ||
+      normReason(voiceLiveReasoning) !== normReason(cfg.voiceLiveReasoning) ||
       voice !== cfg.defaultVoice ||
       Number(liveIdle) !== cfg.liveIdleTimeoutSeconds);
 
@@ -449,20 +470,39 @@ function WebappModelsCard() {
           </span>
         </label>
 
-        <label className="block">
-          <span className="text-sm font-medium">Live voice-call model</span>
-          <div className="mt-1">
-            <Select value={liveModel} onChange={setLiveModel} disabled={busy || loadingModels}>
-              {loadingModels && liveOptions.length === 0 && <option value="">Loading…</option>}
-              {liveOptions.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </Select>
-          </div>
-          <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
-            Real-time hands-free calls (the call button). Needs a Live-API model.
-          </span>
-        </label>
+        <div className="space-y-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
+          <label className="block">
+            <span className="text-sm font-medium">Live voice-call model</span>
+            <div className="mt-1">
+              <Select value={liveModel} onChange={setLiveModel} disabled={busy || loadingModels}>
+                {loadingModels && liveOptions.length === 0 && <option value="">Loading…</option>}
+                {liveOptions.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </Select>
+            </div>
+            <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+              Real-time hands-free calls (the call button). Needs a Live-API model.
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">Call thinking level</span>
+            <div className="mt-1">
+              <Select value={liveReasoning} onChange={setLiveReasoning} disabled={busy}>
+                {LIVE_REASONING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </Select>
+            </div>
+            <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+              How long the model may think before it starts speaking. On a live call that thinking time is{" "}
+              <strong>silence</strong> — the caller hears nothing until it begins. Higher levels can help
+              with multi-step requests and tool use (tasks, memory, search), so raise it only if calls are
+              getting those wrong, and expect a slower reply in exchange. Only Gemini 3.x Live models
+              support this; on others the setting is ignored.
+            </span>
+          </label>
+        </div>
 
         <div className="space-y-3 rounded-lg border border-black/10 p-3 dark:border-white/10">
           <label className="block">
@@ -498,6 +538,25 @@ function WebappModelsCard() {
             <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
               The Gemini Live model that answers voice messages when the mode above is Gemini Live. Needs a
               Live-API model (same list as the call).
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">Voice message thinking level</span>
+            <div className="mt-1">
+              <Select
+                value={voiceLiveReasoning}
+                onChange={setVoiceLiveReasoning}
+                disabled={busy || voiceMode !== "live"}
+              >
+                {LIVE_REASONING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </Select>
+            </div>
+            <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
+              Set separately from the call, because the trade-off is different: the user has already sent
+              the clip and is waiting for one reply, so extra thinking reads as a slower answer rather than
+              dead air in a conversation. This is the safer place to try a higher level first.
             </span>
           </label>
         </div>

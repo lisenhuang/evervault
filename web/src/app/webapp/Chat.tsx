@@ -253,6 +253,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // message of a session already follows the admin's policy before the config fetch resolves.
   const [voiceMode, setVoiceMode] = useState(store.getVoiceMode());
   const [voiceLiveModel, setVoiceLiveModel] = useState(store.getVoiceLiveModel());
+  // Admin-set thinking level for each Live leg ("" = the model's own default). Seeded from the local
+  // cache for the same reason the models above are: the first call/voice message of a session should
+  // already run at the admin's chosen depth rather than reverting to the default for one turn.
+  const [liveReasoning, setLiveReasoning] = useState(store.getLiveReasoning());
+  const [voiceLiveReasoning, setVoiceLiveReasoning] = useState(store.getVoiceLiveReasoning());
   // The admin's primary text model isn't Gemini (e.g. ChatGPT): text turns go through the backend's
   // /api/chat/ai/text instead of the direct Gemini proxy. Session-only (re-read on every mount) and
   // defaults to false, so an old backend or a failed config fetch keeps the plain Gemini path.
@@ -593,6 +598,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const cfg = (await res.json()) as {
         textModel: string; audioModel: string; liveModel: string; defaultVoice: string; serverChat?: boolean;
         liveIdleTimeoutSeconds?: number; voiceLiveModel?: string; voiceMode?: string; webSearch?: boolean;
+        liveReasoning?: string | null; voiceLiveReasoning?: string | null;
       };
       if (cfg.textModel) { store.setTextModel(cfg.textModel); setTextModel(cfg.textModel); }
       if (cfg.audioModel) { store.setAudioModel(cfg.audioModel); setAudioModel(cfg.audioModel); }
@@ -610,6 +616,17 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         setVoiceMode(cfg.voiceMode);
       }
       if (cfg.voiceLiveModel) { store.setVoiceLiveModel(cfg.voiceLiveModel); setVoiceLiveModel(cfg.voiceLiveModel); }
+      // Live thinking levels. null is a real value here ("auto" — the admin cleared it), so these are
+      // applied whenever the key is PRESENT rather than truthy, letting a clear propagate. An older
+      // backend omits the keys entirely (undefined), which leaves the cached value alone.
+      if (cfg.liveReasoning !== undefined) {
+        store.setLiveReasoning(cfg.liveReasoning ?? "");
+        setLiveReasoning(store.getLiveReasoning());
+      }
+      if (cfg.voiceLiveReasoning !== undefined) {
+        store.setVoiceLiveReasoning(cfg.voiceLiveReasoning ?? "");
+        setVoiceLiveReasoning(store.getVoiceLiveReasoning());
+      }
       setServerChat(!!cfg.serverChat);
       setSearchAvailable(!!cfg.webSearch);
     } catch {
@@ -1532,6 +1549,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     if (voiceMode === "live" && liveAttachments) {
       const driver = new LiveVoiceMessage({
         model: voiceLiveModel,
+        reasoning: voiceLiveReasoning,
         voice,
         memoryEnabled: memoryOn,
         searchAvailable,
@@ -2144,6 +2162,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const conversationBlock = renderConversation(toContents(messagesRef.current)) || undefined;
     const session = new LiveSession({
       model: liveModel,
+      reasoning: liveReasoning,
       voice,
       memoryEnabled: memoryOn,
       searchAvailable,

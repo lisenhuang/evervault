@@ -54,7 +54,16 @@ export type WebappAiConfigDto = {
   // Gemini Live session with automatic TTS fallback; "tts" = the legacy synthesis pipeline).
   voiceLiveModel: string;
   voiceMode: string; // "live" | "tts"
+  // Thinking level for each Gemini Live leg: "minimal" | "low" | "medium" | "high", or null for the
+  // model's default (Live defaults to minimal, for latency). Sent to the browser, which applies it to
+  // the Live socket's thinkingConfig. The two are independent — a call can stay fast while a voice
+  // message thinks harder.
+  liveReasoning: string | null;
+  voiceLiveReasoning: string | null;
 };
+
+// The Live thinking levels the admin can choose, shallowest first. "" is the auto/default option.
+export const LIVE_REASONING_LEVELS = ["minimal", "low", "medium", "high"] as const;
 
 // One rolling quota window (e.g. ChatGPT's 5-hour and weekly limits). resetUnixMs is epoch ms.
 export type AiRateWindow = { label: string; usedPercent: number; resetUnixMs: number | null };
