@@ -15,13 +15,8 @@ import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS, setAudioSessionType } from "./liveAudio";
 import { arrayBufferToBase64, encodeWav, mergeFloat32, voicedSeconds } from "./audio";
 import { fixSpokenBrandName } from "./brandName";
-import {
-  buildLiveSystemInstruction,
-  buildLiveToolDeclarations,
-  dispatchLiveToolCalls,
-  type LiveReasoning,
-  liveThinkingConfig,
-} from "./liveShared";
+import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls, liveThinkingConfig } from "./liveShared";
+import { type LiveReasoning } from "./liveThinking";
 import { renderAttachments, renderQuotedReply, renderTypedMessage, type LiveAttachment } from "./liveAttachments";
 import { type OutgoingLink } from "./linkTool";
 import type { Content } from "./gemini";
@@ -196,7 +191,7 @@ export class LiveVoiceMessage {
       const token = await this.fetchLiveToken(this.tokenAttempt);
       if (this.stopped) return;
       const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
-      const thinking = liveThinkingConfig(this.opts.reasoning);
+      const thinking = liveThinkingConfig(this.opts.reasoning, this.opts.model);
       this.session = await ai.live.connect({
         model: this.opts.model,
         config: {

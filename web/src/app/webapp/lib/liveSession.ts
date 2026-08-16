@@ -11,13 +11,8 @@ import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { EchoDetector } from "./echoDetector";
 import { BargeInDetector } from "./bargeIn";
-import {
-  buildLiveSystemInstruction,
-  buildLiveToolDeclarations,
-  dispatchLiveToolCalls,
-  type LiveReasoning,
-  liveThinkingConfig,
-} from "./liveShared";
+import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls, liveThinkingConfig } from "./liveShared";
+import { type LiveReasoning } from "./liveThinking";
 import { type OutgoingLink } from "./linkTool";
 import { type Lang } from "@/i18n/config";
 
@@ -354,7 +349,7 @@ export class LiveSession {
     // to Google with it. tokenAttempt selects which key to mint from, so a resume after a bad key rotates.
     const token = await this.fetchLiveToken(this.tokenAttempt);
     const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
-    const thinking = liveThinkingConfig(this.reasoning);
+    const thinking = liveThinkingConfig(this.reasoning, this.model);
     this.session = await ai.live.connect({
       model: this.model,
       config: {

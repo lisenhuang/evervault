@@ -5,6 +5,7 @@
 // surfaces is how audio flows (continuous duplex vs. a single push-to-talk turn).
 
 import { type FunctionCall, type ThinkingConfig, ThinkingLevel } from "@google/genai";
+import { type LiveReasoning, liveSupportsThinking } from "./liveThinking";
 import { BRAND_NAME_HEARING } from "./brandName";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, NO_REPETITION, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
@@ -30,17 +31,6 @@ import {
 import { currentTimeContext } from "./time";
 import { aiReplyDirective, type Lang } from "@/i18n/config";
 
-/**
- * How hard the Live model may think before it answers, as the admin set it (see the AI page). "" / an
- * unknown value means "auto": send no thinkingConfig at all and let the model use its own default —
- * which for Gemini 3.x Live is MINIMAL, chosen for latency.
- *
- * This is a real latency dial, not a quality freebie: on a hands-free call, thinking time is silence
- * before the assistant speaks. It's exposed per Live leg so the call can stay at auto while a voice
- * message — where the user has already sent the clip and is waiting — can afford to go deeper.
- */
-export type LiveReasoning = "" | "minimal" | "low" | "medium" | "high";
-
 const THINKING_LEVELS: Record<Exclude<LiveReasoning, "">, ThinkingLevel> = {
   minimal: ThinkingLevel.MINIMAL,
   low: ThinkingLevel.LOW,
@@ -49,13 +39,21 @@ const THINKING_LEVELS: Record<Exclude<LiveReasoning, "">, ThinkingLevel> = {
 };
 
 /**
- * The `thinkingConfig` for a Live socket, or undefined to send none. Undefined (not an "auto" level) is
- * what preserves today's behavior exactly — the field is simply absent from the setup message, as it has
- * always been. An unrecognized value degrades to undefined rather than being passed through: the Live API
- * rejects a bad level at setup, and that fails the entire call rather than just this setting.
+ * The `thinkingConfig` for a Live socket, or undefined to send none.
+ *
+ * Undefined (rather than an explicit "auto" level) is what preserves today's behavior exactly — the
+ * field is simply absent from the setup message, as it has always been. It's returned in three cases,
+ * all of which must stay silent rather than throw: no level set, an unrecognized level, or a model
+ * that can't take one. That last case is the important one — the admin's level is stored per Live leg
+ * but the model can be changed independently, so a level left over from a 3.x model must not follow
+ * the admin onto a 2.5/2.0 Live model, where it would be rejected at setup and fail the whole call.
  */
-export function liveThinkingConfig(reasoning: LiveReasoning | undefined): ThinkingConfig | undefined {
-  const level = reasoning ? THINKING_LEVELS[reasoning] : undefined;
+export function liveThinkingConfig(
+  reasoning: LiveReasoning | undefined,
+  model: string,
+): ThinkingConfig | undefined {
+  if (!reasoning || !liveSupportsThinking(model)) return undefined;
+  const level = THINKING_LEVELS[reasoning];
   return level ? { thinkingLevel: level } : undefined;
 }
 

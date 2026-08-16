@@ -62,9 +62,6 @@ export type WebappAiConfigDto = {
   voiceLiveReasoning: string | null;
 };
 
-// The Live thinking levels the admin can choose, shallowest first. "" is the auto/default option.
-export const LIVE_REASONING_LEVELS = ["minimal", "low", "medium", "high"] as const;
-
 // One rolling quota window (e.g. ChatGPT's 5-hour and weekly limits). resetUnixMs is epoch ms.
 export type AiRateWindow = { label: string; usedPercent: number; resetUnixMs: number | null };
 

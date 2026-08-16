@@ -4,8 +4,8 @@
 // last-known values (and safe defaults) so the UI has something before that fetch resolves.
 
 import { normalizeStyle, type ResponseStyle, type StyleSurface } from "./responseStyle";
-// Type-only: erased at compile time, so the store keeps no runtime dependency on the Live stack.
-import type { LiveReasoning } from "./liveShared";
+// liveThinking is a leaf module (no SDK import), so this costs the store nothing at runtime.
+import { type LiveReasoning, normalizeLiveReasoning } from "./liveThinking";
 
 const TEXT_MODEL = "ev:textModel";
 const AUDIO_MODEL = "ev:audioModel";
@@ -87,12 +87,6 @@ function set(key: string, value: string) {
   else localStorage.removeItem(key);
 }
 
-// Anything that isn't one of the four Live thinking levels collapses to "" (auto). Kept as a local
-// literal rather than imported from liveShared so the store keeps no runtime edge into the Live stack.
-function normalizeReasoning(v: string): LiveReasoning {
-  return v === "minimal" || v === "low" || v === "medium" || v === "high" ? v : "";
-}
-
 export const store = {
   getTextModel: () => get(TEXT_MODEL) || DEFAULT_TEXT_MODEL,
   setTextModel: (v: string) => set(TEXT_MODEL, v),
@@ -117,10 +111,10 @@ export const store = {
   // Live thinking levels. Normalized on read as well as write, so a stale key left by an older release
   // (or a hand-edited value) can't reach the Live socket — a level the API rejects fails the whole
   // session at setup, whereas "" just means "send nothing", which is the pre-existing behavior.
-  getLiveReasoning: () => normalizeReasoning(get(LIVE_REASONING)),
-  setLiveReasoning: (v: string) => set(LIVE_REASONING, normalizeReasoning(v)),
-  getVoiceLiveReasoning: () => normalizeReasoning(get(VOICE_LIVE_REASONING)),
-  setVoiceLiveReasoning: (v: string) => set(VOICE_LIVE_REASONING, normalizeReasoning(v)),
+  getLiveReasoning: () => normalizeLiveReasoning(get(LIVE_REASONING)),
+  setLiveReasoning: (v: string) => set(LIVE_REASONING, normalizeLiveReasoning(v)),
+  getVoiceLiveReasoning: () => normalizeLiveReasoning(get(VOICE_LIVE_REASONING)),
+  setVoiceLiveReasoning: (v: string) => set(VOICE_LIVE_REASONING, normalizeLiveReasoning(v)),
   // Chat text size. Snapped to a known step rather than merely parsed, so a corrupt or
   // out-of-range value (hand-edited storage, or a ladder that changes in a later release) can
   // never render the transcript at some unusable size — it just falls back to 100%.

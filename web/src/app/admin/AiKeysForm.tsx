@@ -18,6 +18,7 @@ import type {
 import { Badge, Banner, Button, Card, Field, Select, TextArea } from "./ui";
 import { PREBUILT_VOICES } from "../webapp/lib/voices";
 import { DEFAULT_LIVE_IDLE_SEC } from "../webapp/lib/store";
+import { liveSupportsThinking } from "../webapp/lib/liveThinking";
 
 // How long a live call may sit in user silence before it hangs itself up. Whole minutes only — the
 // copy shown to the user is phrased in minutes — plus an explicit "never" (0) for admins who'd rather
@@ -363,6 +364,12 @@ function WebappModelsCard() {
   const liveOptions = withCurrent(liveModels, liveModel);
   // Voice-message Live model reuses the same Live-API model list as the call.
   const voiceLiveOptions = withCurrent(liveModels, voiceLiveModel);
+  // Only some Live models take a thinking level, and the two legs can be on different models — so each
+  // select is gated on its OWN model. Where it isn't supported the client sends no thinkingConfig at
+  // all (sending one would be rejected at setup and fail the session), so the control is disabled
+  // rather than silently ignored. A stored level is kept, not cleared: switching back restores it.
+  const liveThinkingOk = liveSupportsThinking(liveModel);
+  const voiceLiveThinkingOk = liveSupportsThinking(voiceLiveModel);
   // A value set directly through the API needn't be one of our presets; surface it so the select never
   // renders blank and silently rewrites the stored setting on the next save.
   const idleOptions = LIVE_IDLE_OPTIONS.some((o) => String(o.sec) === liveIdle)
@@ -488,18 +495,26 @@ function WebappModelsCard() {
           <label className="block">
             <span className="text-sm font-medium">Call thinking level</span>
             <div className="mt-1">
-              <Select value={liveReasoning} onChange={setLiveReasoning} disabled={busy}>
+              <Select value={liveReasoning} onChange={setLiveReasoning} disabled={busy || !liveThinkingOk}>
                 {LIVE_REASONING_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </Select>
             </div>
             <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
-              How long the model may think before it starts speaking. On a live call that thinking time is{" "}
-              <strong>silence</strong> — the caller hears nothing until it begins. Higher levels can help
-              with multi-step requests and tool use (tasks, memory, search), so raise it only if calls are
-              getting those wrong, and expect a slower reply in exchange. Only Gemini 3.x Live models
-              support this; on others the setting is ignored.
+              {liveThinkingOk ? (
+                <>
+                  How long the model may think before it starts speaking. On a live call that thinking time
+                  is <strong>silence</strong> — the caller hears nothing until it begins. Higher levels can
+                  help with multi-step requests and tool use (tasks, memory, search), so raise it only if
+                  calls are getting those wrong, and expect a slower start in exchange.
+                </>
+              ) : (
+                <>
+                  Not available on this model — only Gemini 3.x Live models accept a thinking level. Any
+                  level saved here stays put and applies again if you switch back to a 3.x model.
+                </>
+              )}
             </span>
           </label>
         </div>
@@ -546,7 +561,7 @@ function WebappModelsCard() {
               <Select
                 value={voiceLiveReasoning}
                 onChange={setVoiceLiveReasoning}
-                disabled={busy || voiceMode !== "live"}
+                disabled={busy || voiceMode !== "live" || !voiceLiveThinkingOk}
               >
                 {LIVE_REASONING_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -554,9 +569,18 @@ function WebappModelsCard() {
               </Select>
             </div>
             <span className="mt-1 block text-xs text-black/55 dark:text-white/55">
-              Set separately from the call, because the trade-off is different: the user has already sent
-              the clip and is waiting for one reply, so extra thinking reads as a slower answer rather than
-              dead air in a conversation. This is the safer place to try a higher level first.
+              {voiceLiveThinkingOk ? (
+                <>
+                  Set separately from the call, because the trade-off is different: the user has already
+                  sent the clip and is waiting for one reply, so extra thinking reads as a slower answer
+                  rather than dead air in a conversation. This is the safer place to try a higher level.
+                </>
+              ) : (
+                <>
+                  Not available on this model — only Gemini 3.x Live models accept a thinking level. Any
+                  level saved here stays put and applies again if you switch back to a 3.x model.
+                </>
+              )}
             </span>
           </label>
         </div>
