@@ -100,6 +100,8 @@ const en = {
     untitled: "New chat",
     pin: "Pin chat",
     unpin: "Unpin chat",
+    rename: "Rename chat",
+    renameSave: "Save name",
   },
 
   chat: {

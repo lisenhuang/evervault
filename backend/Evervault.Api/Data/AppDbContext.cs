@@ -119,6 +119,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
         modelBuilder.Entity<ChatConversation>(e =>
         {
             e.Property(c => c.ConversationId).HasMaxLength(64);
+            e.Property(c => c.Title).HasMaxLength(200);
             // Supersede anchor: one row of preferences per conversation, so setting a pin twice
             // updates it rather than stacking a second opinion.
             e.HasIndex(c => new { c.EndUserId, c.ConversationId }).IsUnique();

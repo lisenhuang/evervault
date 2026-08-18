@@ -32,6 +32,12 @@ public class ChatConversation
     /// <summary>Pinned conversations sort above every unpinned one, whatever their last activity.</summary>
     public bool Pinned { get; set; }
 
+    /// <summary>A name for the conversation: written once from a short summary of the opening message,
+    /// and replaceable by the user. Null means nobody has named it, and the listing falls back to the
+    /// opening words of what was said — which is what every conversation recorded before this column
+    /// existed will keep showing, with no backfill needed.</summary>
+    public string? Title { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

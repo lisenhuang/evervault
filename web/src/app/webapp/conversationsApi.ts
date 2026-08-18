@@ -14,11 +14,14 @@ import { api } from "./authApi";
 
 export type Conversation = {
   conversationId: string;
-  /** Opening words of the first thing the user said, squashed to one line. May be empty. */
+  /** What to show: the stored name, or the opening words of what the user said. May be empty. */
   title: string;
   pinned: boolean;
   lastMessageAt: string;
   messageCount: number;
+  /** Whether `title` is a stored name rather than the fallback — so a conversation is only ever
+   *  summarised once, and a name the user chose is never overwritten. Absent from an older server. */
+  named?: boolean;
 };
 
 /** The conversations to offer, pinned first and then most recent. */
@@ -37,10 +40,22 @@ export async function listConversations(opts?: { skip?: number; take?: number })
 
 /** Pin or unpin one conversation. Returns whether it stuck, so the caller can undo an optimistic flip. */
 export async function setConversationPinned(conversationId: string, pinned: boolean): Promise<boolean> {
+  return patchConversation(conversationId, { pinned });
+}
+
+/** Name a conversation. An empty title forgets the name, putting the row back to its opening words. */
+export async function setConversationTitle(conversationId: string, title: string): Promise<boolean> {
+  return patchConversation(conversationId, { title });
+}
+
+async function patchConversation(
+  conversationId: string,
+  patch: { pinned?: boolean; title?: string },
+): Promise<boolean> {
   try {
     const res = await api(`/api/chat/conversations/${encodeURIComponent(conversationId)}`, {
       method: "PUT",
-      body: JSON.stringify({ pinned }),
+      body: JSON.stringify(patch),
     });
     return res.ok;
   } catch {

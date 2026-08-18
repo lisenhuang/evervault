@@ -22,9 +22,10 @@ namespace Evervault.Api.Controllers;
 /// (today: pinned), LEFT-JOINed on. A conversation with no row there is the normal case, not a gap.
 /// </para>
 /// <para>
-/// Titles are derived too — the opening words of the first thing the user said — rather than generated
-/// or stored. It costs nothing, it is never stale, and it needs no write path on a surface where the
-/// client may be a version behind.
+/// A conversation shows the name it was given — a short summary the browser writes after the opening
+/// exchange, or whatever the user renamed it to — and falls back to the opening words of what was said
+/// when it has neither. That fallback is what every conversation held before any of this existed still
+/// shows, with nothing to backfill.
 /// </para>
 /// Scoped to the signed-in end-user (UserCookie).
 /// </summary>
@@ -44,26 +45,40 @@ public class ChatConversationsController : ControllerBase
     // and the sidebar shows the recent end of that. Pinned conversations older than this cut-off are
     // fetched separately (see List) so a pin can never fall off the list it was meant to hold something on.
     private const int MaxConversations = 400;
-    // How much of the opening message is read for a title. The sidebar shows one truncated line; the
-    // rest would be transferred only to be thrown away, and messages can be a megabyte.
-    private const int MaxTitleChars = 120;
+    // How much of the opening message is read for a derived title, and the ceiling on a stored one.
+    // The sidebar shows one truncated line; the rest would be transferred only to be thrown away, and
+    // messages can be a megabyte. Matches the column's own 200, clipped here so a long name is trimmed
+    // rather than rejected.
+    private const int MaxTitleChars = 200;
 
     /// <param name="ConversationId">The browser's own id for the conversation — what the client passes
     /// back to reopen it.</param>
-    /// <param name="Title">Opening words of the first thing the user said in it, clipped. Empty when the
-    /// conversation opens with something that left no text (a photo with no caption, say); the client
-    /// falls back to its own label rather than showing a blank row.</param>
+    /// <param name="Title">What to show in the list: the stored name if it has one, otherwise the
+    /// opening words of the first thing the user said. Empty when the conversation opens with something
+    /// that left no text (a photo with no caption, say); the client falls back to its own label rather
+    /// than showing a blank row.</param>
     /// <param name="Pinned">Whether the user pinned it. False when there is no preferences row at all.</param>
     /// <param name="LastMessageAt">When the most recent message in it was recorded — what the list sorts by.</param>
     /// <param name="MessageCount">How many messages it holds, for a subtitle.</param>
+    /// <param name="Named">Whether <paramref name="Title"/> is a stored name rather than the fallback.
+    /// It is what stops the browser summarising a title for a conversation that already has one — and
+    /// it is appended last with a default, so a client from before this field existed still
+    /// deserializes the response.</param>
     public record ConversationDto(
-        string ConversationId, string Title, bool Pinned, DateTimeOffset LastMessageAt, int MessageCount);
+        string ConversationId, string Title, bool Pinned, DateTimeOffset LastMessageAt, int MessageCount,
+        bool Named = false);
 
-    /// <summary>What the user decided about a conversation. Every field optional so this can grow
-    /// (archive, a chosen title) without an older client's request meaning something new.</summary>
-    public record ConversationPrefsPatch(bool? Pinned);
+    /// <summary>What the user decided about a conversation. Every field is optional so this can grow
+    /// without an older client's request meaning something new: an absent field is "leave it alone",
+    /// which is exactly what a client that has never heard of it sends.
+    /// <para>
+    /// An explicitly empty Title is the one exception — it means "forget the name", putting the
+    /// conversation back to being labelled by its opening words. There is no other way to say that,
+    /// since null already means "don't touch it".
+    /// </para></summary>
+    public record ConversationPrefsPatch(bool? Pinned, string? Title = null);
 
-    public record ConversationPrefsDto(string ConversationId, bool Pinned);
+    public record ConversationPrefsDto(string ConversationId, bool Pinned, string? Title = null);
 
     /// <summary>The conversation list: pinned first, then most recently spoken in. Derived from the
     /// transcript on every call — there is no list to keep in sync, and nothing to backfill.</summary>
@@ -79,13 +94,13 @@ public class ChatConversationsController : ControllerBase
         // cut-off below.
         var prefs = await _db.ChatConversations.AsNoTracking()
             .Where(c => c.EndUserId == uid)
-            .ToDictionaryAsync(c => c.ConversationId, c => c.Pinned, StringComparer.Ordinal);
+            .ToDictionaryAsync(c => c.ConversationId, c => new { c.Pinned, c.Title }, StringComparer.Ordinal);
 
         var groups = await GroupConversations(uid).OrderByDescending(g => g.LastId).Take(MaxConversations).ToListAsync();
 
         // A conversation pinned long ago can sit outside the most-recent window above, and dropping it
         // would quietly undo the one thing a pin is for. Fetch any such stragglers by id.
-        var pinnedIds = prefs.Where(p => p.Value).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+        var pinnedIds = prefs.Where(p => p.Value.Pinned).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
         pinnedIds.ExceptWith(groups.Select(g => g.ConversationId));
         if (pinnedIds.Count > 0) groups.AddRange(await GroupConversations(uid, pinnedIds.ToList()).ToListAsync());
 
@@ -109,9 +124,14 @@ public class ChatConversationsController : ControllerBase
             .Select(g =>
             {
                 var last = anchors.TryGetValue(g.LastId, out var l) ? l.CreatedAt : DateTimeOffset.MinValue;
-                var title = g.FirstUserId != null && anchors.TryGetValue(g.FirstUserId.Value, out var f) ? f.Head : "";
+                var pref = prefs.GetValueOrDefault(g.ConversationId);
+                var named = !string.IsNullOrWhiteSpace(pref?.Title);
+                // The stored name if it has one; otherwise the opening words of what the user said.
+                var title = named
+                    ? pref!.Title!
+                    : g.FirstUserId != null && anchors.TryGetValue(g.FirstUserId.Value, out var f) ? f.Head : "";
                 return new ConversationDto(
-                    g.ConversationId, TitleLine(title), prefs.GetValueOrDefault(g.ConversationId), last, g.Count);
+                    g.ConversationId, TitleLine(title), pref?.Pinned ?? false, last, g.Count, named);
             })
             .OrderByDescending(c => c.Pinned)
             .ThenByDescending(c => c.LastMessageAt)
@@ -152,10 +172,23 @@ public class ChatConversationsController : ControllerBase
                 row.UpdatedAt = now;
             }
 
+            if (req?.Title is not null)
+            {
+                // Squashed to one line and clipped, for the same reason the derived title is: this is a
+                // sidebar row, and a pasted paragraph would render as a tall blank one.
+                var title = TitleLine(req.Title);
+                var next = title.Length == 0 ? null : Clip(title, MaxTitleChars);
+                if (next != row.Title)
+                {
+                    row.Title = next;
+                    row.UpdatedAt = now;
+                }
+            }
+
             try
             {
                 await _db.SaveChangesAsync();
-                return Ok(new ConversationPrefsDto(convId, row.Pinned));
+                return Ok(new ConversationPrefsDto(convId, row.Pinned, row.Title));
             }
             catch (DbUpdateException) when (attempt == 0)
             {
@@ -190,6 +223,8 @@ public class ChatConversationsController : ControllerBase
     /// <summary>Squash an opening message into one line of title. Newlines become spaces (a pasted block
     /// would otherwise render as a tall blank row) and the result is trimmed; the client decides how much
     /// of it fits.</summary>
+    private static string Clip(string s, int max) => s.Length > max ? s[..max] : s;
+
     private static string TitleLine(string head) =>
         string.Join(' ', head.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
 }

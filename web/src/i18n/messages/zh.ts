@@ -101,6 +101,8 @@ const zh: Messages = {
     untitled: "新对话",
     pin: "置顶对话",
     unpin: "取消置顶",
+    rename: "重命名对话",
+    renameSave: "保存名称",
   },
 
   chat: {

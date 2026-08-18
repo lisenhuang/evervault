@@ -29,6 +29,7 @@ export default function Sidebar({
   onNewChat,
   onOpenConversation,
   onTogglePin,
+  onRename,
   onOpenSettings,
   onSignOut,
   onDeleteAccount,
@@ -42,6 +43,7 @@ export default function Sidebar({
   onNewChat: () => void;
   onOpenConversation: (conversationId: string) => void;
   onTogglePin: (conversationId: string, pinned: boolean) => void;
+  onRename: (conversationId: string, title: string) => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
   onDeleteAccount: () => void;
@@ -109,8 +111,9 @@ export default function Sidebar({
         loading={historyLoading}
         // Opening a chat is navigation, so on mobile the overlay gets out of the way to reveal it.
         onOpen={act(onOpenConversation)}
-        // Pinning is not — it rearranges the list you are looking at, so the overlay stays put.
+        // Pinning and renaming are not — they act on the list you are looking at, so the overlay stays put.
         onTogglePin={onTogglePin}
+        onRename={onRename}
       />
 
       <div className="my-1 border-t border-black/10 dark:border-white/10" />

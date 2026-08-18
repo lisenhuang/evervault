@@ -100,6 +100,8 @@ const ja: Messages = {
     untitled: "新しいチャット",
     pin: "チャットをピン留め",
     unpin: "ピン留めを解除",
+    rename: "チャットの名前を変更",
+    renameSave: "名前を保存",
   },
 
   chat: {

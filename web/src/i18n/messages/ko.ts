@@ -100,6 +100,8 @@ const ko: Messages = {
     untitled: "새 대화",
     pin: "대화 고정",
     unpin: "고정 해제",
+    rename: "대화 이름 변경",
+    renameSave: "이름 저장",
   },
 
   chat: {
