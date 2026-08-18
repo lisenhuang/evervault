@@ -102,6 +102,8 @@ const en = {
     unpin: "Unpin chat",
     rename: "Rename chat",
     renameSave: "Save name",
+    chatActions: "Chat actions",
+    regenerateTitle: "Rename with AI",
   },
 
   chat: {

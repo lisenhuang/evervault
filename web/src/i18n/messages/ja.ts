@@ -102,6 +102,8 @@ const ja: Messages = {
     unpin: "ピン留めを解除",
     rename: "チャットの名前を変更",
     renameSave: "名前を保存",
+    chatActions: "チャットの操作",
+    regenerateTitle: "AI で名前を付け直す",
   },
 
   chat: {

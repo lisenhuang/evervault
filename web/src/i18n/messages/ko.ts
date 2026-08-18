@@ -102,6 +102,8 @@ const ko: Messages = {
     unpin: "고정 해제",
     rename: "대화 이름 변경",
     renameSave: "이름 저장",
+    chatActions: "채팅 작업",
+    regenerateTitle: "AI로 이름 다시 짓기",
   },
 
   chat: {

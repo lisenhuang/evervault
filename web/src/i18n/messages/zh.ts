@@ -103,6 +103,8 @@ const zh: Messages = {
     unpin: "取消置顶",
     rename: "重命名对话",
     renameSave: "保存名称",
+    chatActions: "对话操作",
+    regenerateTitle: "用 AI 重新命名",
   },
 
   chat: {

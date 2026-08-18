@@ -77,7 +77,8 @@ import {
   type Conversation,
 } from "./conversationsApi";
 import { loadConversation } from "./lib/conversationLoad";
-import { summarizeConversationTitle } from "./lib/conversationTitle";
+import { regenerateConversationTitle, summarizeConversationTitle } from "./lib/conversationTitle";
+import type { TitleTurn } from "./lib/conversationTitle";
 import { purgeTranscriptOutbox, onTranscriptRecorded } from "./transcriptApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
@@ -2536,6 +2537,34 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     await refreshConversations();
   }
 
+  /**
+   * Name a conversation from the whole of it, on demand — the re-generate button in the rename box.
+   *
+   * The automatic pass names a chat off its opening exchange, because that is all that exists when it is
+   * first recorded. This one is asked for later, usually *because* that name no longer fits: a chat that
+   * opened "quick question" and spent an hour on a visa application is not about a quick question.
+   *
+   * Reads the conversation on screen from memory and any other from the record, so the button works on
+   * any row in the list rather than only the one you are in. Returns "" on failure — the box keeps what
+   * it had, and nothing is saved until the user accepts it.
+   */
+  async function regenerateTitle(conversationId: string): Promise<string> {
+    let turns: TitleTurn[];
+    if (conversationId === conversationIdRef.current) {
+      turns = messagesRef.current
+        .filter((m) => !m.error && !m.streaming)
+        .map((m) => ({ role: m.role, text: messageBodyText(m) }));
+    } else {
+      const loaded = await loadConversation(conversationId);
+      turns = loaded.messages.map((m) => ({ role: m.role, text: messageBodyText(m) }));
+    }
+    const title = await regenerateConversationTitle(store.getTextModel(), turns);
+    // A name the user asked for is a name they chose, so the automatic summariser must not later
+    // overwrite it — same reasoning as a typed rename.
+    if (title) titledRef.current.add(conversationId);
+    return title;
+  }
+
   /** Pin or unpin from the sidebar. Flipped on screen first — a pin should feel instant — and put back
    *  if the server disagrees, so the list never shows a preference that didn't stick. */
   async function togglePin(conversationId: string, pinned: boolean) {
@@ -2559,6 +2588,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onOpenConversation={(id) => void openConversation(id)}
         onTogglePin={(id, pinned) => void togglePin(id, pinned)}
         onRename={(id, title) => void renameConversation(id, title)}
+        onRegenerateTitle={regenerateTitle}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
         onDeleteAccount={() => {

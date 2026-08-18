@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Eraser,
@@ -19,6 +19,7 @@ import {
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
+import Pressable from "./Pressable";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import FilePreview from "./FilePreview";
 import type { ChatMessage, ReplyRef } from "./types";
@@ -551,90 +552,6 @@ function useWordReveal(text: string, enabled: boolean): string {
   }, [enabled, shown, tokens.length]);
   if (!enabled) return text;
   return tokens.slice(0, Math.min(shown, tokens.length)).join("");
-}
-
-// Long-press timing for the touch path (iOS never fires `contextmenu`; Android does, but the two
-// paths converge on the same open call). Small drags within the tolerance still count as a press.
-const LONG_PRESS_MS = 450;
-const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
-
-/**
- * Makes its children open the message menu: right-click / two-finger-tap via `contextmenu`
- * (default menu suppressed), and long-press via a touch timer for browsers that don't map
- * long-press to `contextmenu` (iOS Safari). Callers should pair this with
- * `[@media(hover:none)]:select-none` so long-press doesn't fight text selection on touch.
- */
-function Pressable({
-  onOpen,
-  disabled,
-  className,
-  children,
-}: {
-  onOpen: (x: number, y: number) => void;
-  disabled?: boolean;
-  className?: string;
-  children: ReactNode;
-}) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const start = useRef({ x: 0, y: 0 });
-  // Set when a long press opened the menu, so the click some browsers still fire on release doesn't
-  // also follow a link the finger happened to be resting on. Cleared by the next touch, so a plain
-  // tap right after is never swallowed.
-  const openedByPress = useRef(false);
-  const clear = useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-  }, []);
-  useEffect(() => clear, [clear]);
-
-  return (
-    <div
-      className={className}
-      onClickCapture={(e) => {
-        if (!openedByPress.current) return;
-        openedByPress.current = false;
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-      onContextMenu={(e) => {
-        if (disabled) return;
-        e.preventDefault();
-        onOpen(e.clientX, e.clientY);
-      }}
-      onTouchStart={(e) => {
-        if (disabled || e.touches.length !== 1) {
-          clear();
-          return;
-        }
-        const touch = e.touches[0];
-        start.current = { x: touch.clientX, y: touch.clientY };
-        openedByPress.current = false;
-        clear();
-        timer.current = setTimeout(() => {
-          timer.current = null;
-          openedByPress.current = true;
-          navigator.vibrate?.(10);
-          onOpen(start.current.x, start.current.y);
-        }, LONG_PRESS_MS);
-      }}
-      onTouchMove={(e) => {
-        const touch = e.touches[0];
-        if (
-          touch &&
-          Math.hypot(touch.clientX - start.current.x, touch.clientY - start.current.y) >
-            LONG_PRESS_MOVE_TOLERANCE_PX
-        ) {
-          clear();
-        }
-      }}
-      onTouchEnd={clear}
-      onTouchCancel={clear}
-    >
-      {children}
-    </div>
-  );
 }
 
 /**

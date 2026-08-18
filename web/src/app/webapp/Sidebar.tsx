@@ -30,6 +30,7 @@ export default function Sidebar({
   onOpenConversation,
   onTogglePin,
   onRename,
+  onRegenerateTitle,
   onOpenSettings,
   onSignOut,
   onDeleteAccount,
@@ -44,6 +45,7 @@ export default function Sidebar({
   onOpenConversation: (conversationId: string) => void;
   onTogglePin: (conversationId: string, pinned: boolean) => void;
   onRename: (conversationId: string, title: string) => void;
+  onRegenerateTitle: (conversationId: string) => Promise<string>;
   onOpenSettings: () => void;
   onSignOut: () => void;
   onDeleteAccount: () => void;
@@ -114,6 +116,7 @@ export default function Sidebar({
         // Pinning and renaming are not — they act on the list you are looking at, so the overlay stays put.
         onTogglePin={onTogglePin}
         onRename={onRename}
+        onRegenerateTitle={onRegenerateTitle}
       />
 
       <div className="my-1 border-t border-black/10 dark:border-white/10" />
