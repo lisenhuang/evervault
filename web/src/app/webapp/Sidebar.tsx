@@ -1,24 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronUp, Languages, LogOut, MessageCircle, Settings2, SquarePen, SunMoon, Trash2 } from "lucide-react";
-import ThemeToggle from "@/components/theme/ThemeToggle";
-import LanguageMenu from "@/i18n/LanguageMenu";
+import { ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
+import ConversationList from "./ConversationList";
+import type { Conversation } from "./conversationsApi";
 import type { Me } from "./authApi";
 
 const ROW =
   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black/70 transition hover:bg-black/5 dark:text-white/70 dark:hover:bg-white/10";
 
 /**
- * Left navigation for the chat app. Renders the same body in two wrappers: a
- * persistent rail on desktop (md+) and a slide-in overlay on mobile (driven by
- * `open`/`onClose`, mirroring the right-side drawers). Each action closes the
- * mobile overlay after running — a harmless no-op on the persistent desktop rail.
+ * Left navigation for the chat app: New chat, the history of past conversations, and the account.
+ *
+ * Renders the same body in two wrappers: a persistent rail on desktop (md+) and a slide-in overlay on
+ * mobile (driven by `open`/`onClose`, mirroring the right-side drawers). Each action closes the mobile
+ * overlay after running — a harmless no-op on the persistent desktop rail. Because `body` is mounted
+ * twice, nothing in here may own state or fetch anything; the history list is handed in as props.
+ *
+ * Preferences live behind the user's name rather than in the rail. Settings, language and theme are
+ * things you set once, and the standing space belongs to the chats you actually move between.
  */
 export default function Sidebar({
   user,
+  conversations,
+  activeConversationId,
+  historyLoading,
   onNewChat,
+  onOpenConversation,
+  onTogglePin,
   onOpenSettings,
   onSignOut,
   onDeleteAccount,
@@ -26,7 +36,12 @@ export default function Sidebar({
   onClose,
 }: {
   user: Me;
+  conversations: Conversation[];
+  activeConversationId: string | null;
+  historyLoading: boolean;
   onNewChat: () => void;
+  onOpenConversation: (conversationId: string) => void;
+  onTogglePin: (conversationId: string, pinned: boolean) => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
   onDeleteAccount: () => void;
@@ -34,12 +49,12 @@ export default function Sidebar({
   onClose: () => void;
 }) {
   const t = useT();
-  const act = (fn: () => void) => () => {
-    fn();
+  const act = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
+    fn(...args);
     onClose();
   };
 
-  // Account menu opened by clicking the user's name (holds Delete account + Sign out).
+  // Account menu opened by clicking the user's name: settings, plus the two account actions.
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Close the menu on outside click or Escape, only while it's open. `body` is rendered in BOTH the
@@ -86,29 +101,17 @@ export default function Sidebar({
           <SquarePen size={18} className="shrink-0" aria-hidden="true" />
           {t.sidebar.newChat}
         </button>
-        <button onClick={act(onOpenSettings)} className={ROW}>
-          <Settings2 size={18} className="shrink-0" aria-hidden="true" />
-          {t.sidebar.settings}
-        </button>
       </nav>
 
-      <div className="flex-1" />
-
-      <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
-        <span className="flex items-center gap-3 text-sm font-medium text-black/70 dark:text-white/70">
-          <Languages size={18} className="shrink-0" aria-hidden="true" />
-          {t.sidebar.language}
-        </span>
-        <LanguageMenu variant="row" />
-      </div>
-
-      <div className="flex items-center justify-between rounded-lg px-3 py-1.5">
-        <span className="flex items-center gap-3 text-sm font-medium text-black/70 dark:text-white/70">
-          <SunMoon size={18} className="shrink-0" aria-hidden="true" />
-          {t.sidebar.theme}
-        </span>
-        <ThemeToggle />
-      </div>
+      <ConversationList
+        conversations={conversations}
+        activeId={activeConversationId}
+        loading={historyLoading}
+        // Opening a chat is navigation, so on mobile the overlay gets out of the way to reveal it.
+        onOpen={act(onOpenConversation)}
+        // Pinning is not — it rearranges the list you are looking at, so the overlay stays put.
+        onTogglePin={onTogglePin}
+      />
 
       <div className="my-1 border-t border-black/10 dark:border-white/10" />
 
@@ -118,6 +121,11 @@ export default function Sidebar({
             role="menu"
             className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-neutral-900"
           >
+            <button onClick={runItem(onOpenSettings)} role="menuitem" className={ROW}>
+              <Settings2 size={18} className="shrink-0" aria-hidden="true" />
+              {t.sidebar.settings}
+            </button>
+            <div className="my-1 border-t border-black/10 dark:border-white/10" />
             <button
               onClick={runItem(onDeleteAccount)}
               role="menuitem"

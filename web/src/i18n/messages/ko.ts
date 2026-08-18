@@ -88,6 +88,20 @@ const ko: Messages = {
     accountMenu: "계정 메뉴",
     deleteAccount: "계정 삭제",
   },
+  history: {
+    pinned: "고정됨",
+    today: "오늘",
+    yesterday: "어제",
+    last7: "지난 7일",
+    last30: "지난 30일",
+    older: "이전",
+    empty: "대화가 여기에 표시됩니다.",
+    loading: "불러오는 중…",
+    untitled: "새 대화",
+    pin: "대화 고정",
+    unpin: "고정 해제",
+  },
+
   chat: {
     greeting: (name: string) => `안녕하세요, ${name}님`,
     greetingFallbackName: "친구",
@@ -221,6 +235,7 @@ const ko: Messages = {
     closeFile: "닫기",
   },
   settings: {
+    general: "일반",
     title: "설정",
     close: "닫기",
     managedNote: "EverVault가 AI를 제공하므로 API 키가 필요 없습니다. 텍스트, 음성 메시지, 통화 모두 바로 사용할 수 있습니다.",

@@ -88,6 +88,20 @@ const en = {
     accountMenu: "Account menu",
     deleteAccount: "Delete account",
   },
+  history: {
+    pinned: "Pinned",
+    today: "Today",
+    yesterday: "Yesterday",
+    last7: "Previous 7 days",
+    last30: "Previous 30 days",
+    older: "Older",
+    empty: "Your chats will show up here.",
+    loading: "Loading…",
+    untitled: "New chat",
+    pin: "Pin chat",
+    unpin: "Unpin chat",
+  },
+
   chat: {
     greeting: (name: string) => `Hi ${name}`,
     greetingFallbackName: "there",
@@ -226,6 +240,7 @@ const en = {
     closeFile: "Close",
   },
   settings: {
+    general: "General",
     title: "Settings",
     close: "Close",
     managedNote: "EverVault provides the AI — no API key needed. Text, voice messages, and calls all work out of the box.",

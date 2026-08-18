@@ -105,13 +105,16 @@ export async function retrieveContext(opts: {
   currentText: string;
   profileBlock?: string | null;
   nowMs: number;
+  /** The conversation being had right now. Anything recalled from it is dropped — see excludeOwn. */
+  excludeConversationId?: string | null;
 }): Promise<string | null> {
   const query = buildContextualQuery(opts.recent, opts.currentText);
   if (!query) return null;
 
   const qv = await embedQuery(query);
   // One wide search (summaries + turns compete); text fallback when there's no vector (no key/policy).
-  const hits = qv ? await searchMemories(qv, query, 15) : await searchMemories(null, opts.currentText, 8);
+  const all = qv ? await searchMemories(qv, query, 15) : await searchMemories(null, opts.currentText, 8);
+  const hits = excludeOwn(all, opts.excludeConversationId);
   if (hits.length === 0) return null;
 
   const ranked = [...hits].sort((a, b) => score(a, opts.nowMs) - score(b, opts.nowMs));
@@ -164,9 +167,27 @@ function describeHit(h: MemoryHit): string {
   return `(${when}) ${h.content}`;
 }
 
+/**
+ * Drop anything recalled from the conversation currently on screen.
+ *
+ * Recall is for what was said BEFORE now, and the block it builds says so in as many words — the model
+ * is told these are background and that nothing in them is a request. Applying that framing to messages
+ * sitting a few lines up the screen is the one case where it is simply wrong: they ARE the conversation.
+ * It costs a slot that a genuinely older memory could have used, and the 48-hour recency bonus makes the
+ * current conversation an unusually strong candidate for it — most of all right after reopening one,
+ * which is the whole point of a history list.
+ *
+ * The prefix match covers the summary a resumed conversation writes under its own continuation key.
+ */
+function excludeOwn(hits: MemoryHit[], exclude?: string | null): MemoryHit[] {
+  if (!exclude) return hits;
+  return hits.filter((h) => h.conversationId !== exclude && !h.conversationId?.startsWith(`${exclude}:`));
+}
+
 /** Recent episodic summaries as a continuity block for a voice call's system instruction, or null. */
-export async function buildRecentContext(k = 3): Promise<string | null> {
-  const hits = await searchMemories(null, "", k, { kind: "summary" });
+export async function buildRecentContext(k = 3, excludeConversationId?: string | null): Promise<string | null> {
+  // Ask for one extra: dropping the current conversation's own summary shouldn't cost the block a slot.
+  const hits = excludeOwn(await searchMemories(null, "", k + 1, { kind: "summary" }), excludeConversationId).slice(0, k);
   if (hits.length === 0) return null;
   return (
     "Recently this user talked with you about (your own summaries of past conversations, for " +

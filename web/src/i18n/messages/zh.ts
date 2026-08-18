@@ -89,6 +89,20 @@ const zh: Messages = {
     accountMenu: "账号菜单",
     deleteAccount: "删除账号",
   },
+  history: {
+    pinned: "已置顶",
+    today: "今天",
+    yesterday: "昨天",
+    last7: "过去 7 天",
+    last30: "过去 30 天",
+    older: "更早",
+    empty: "你的对话会显示在这里。",
+    loading: "加载中…",
+    untitled: "新对话",
+    pin: "置顶对话",
+    unpin: "取消置顶",
+  },
+
   chat: {
     greeting: (name: string) => `你好，${name}`,
     greetingFallbackName: "朋友",
@@ -222,6 +236,7 @@ const zh: Messages = {
     closeFile: "关闭",
   },
   settings: {
+    general: "通用",
     title: "设置",
     close: "关闭",
     managedNote: "AI 由 EverVault 提供，无需 API 密钥。文字、语音消息和通话都开箱即用。",

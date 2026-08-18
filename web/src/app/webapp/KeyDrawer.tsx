@@ -1,16 +1,24 @@
 "use client";
 
-import { AudioLines, MessageSquare, Mic, PhoneCall, Sparkles, X } from "lucide-react";
+import { AudioLines, Languages, MessageSquare, Mic, PhoneCall, Sparkles, SlidersHorizontal, SunMoon, X } from "lucide-react";
 import VoicePreviewButton from "./VoicePreviewButton";
 import VoiceSelect from "./VoiceSelect";
 import StyleSelect from "./StyleSelect";
+import ThemeToggle from "@/components/theme/ThemeToggle";
+import LanguageMenu from "@/i18n/LanguageMenu";
 import type { ResponseStyle } from "./lib/responseStyle";
 import { useT } from "@/i18n/LanguageProvider";
 
 /**
- * Settings drawer for the keyless /webapp. There's no API key to manage anymore — the backend supplies
- * the Gemini keys — so this holds the one setting the user still controls: the TTS voice. The model
- * choices are an admin concern and are deliberately never shown to end users.
+ * Settings drawer for the keyless /webapp, opened from the account menu. There's no API key to manage
+ * anymore — the backend supplies the Gemini keys — so this holds what the user actually controls:
+ * language and theme, the TTS voice, and how each surface is answered. Model choices are an admin
+ * concern and are deliberately never shown to end users.
+ *
+ * Language and theme sit here rather than in the sidebar, where they used to live, because the rail's
+ * standing space now belongs to the chat history. A scrollable panel is also the only one of the two
+ * that can hold them: the account popover they are reached through is `overflow-hidden` and grows
+ * upward from the bottom of a full-height column, with nowhere to go once it runs out of room.
  */
 export default function KeyDrawer({
   open,
@@ -56,6 +64,30 @@ export default function KeyDrawer({
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+          {/* General — the two preferences that used to sit at the foot of the sidebar. First in the
+              panel so reaching them never needs a scroll: LanguageMenu closes its own popover on any
+              outside scroll, and a language picker you have to scroll to is one you can dismiss by
+              accident on the way. */}
+          <section>
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <SlidersHorizontal size={15} aria-hidden="true" /> {t.settings.general}
+            </h3>
+            <div className="mt-2 flex items-center justify-between py-1.5">
+              <span className="flex items-center gap-3 text-sm font-medium text-black/80 dark:text-white/80">
+                <Languages size={18} className="shrink-0" aria-hidden="true" />
+                {t.sidebar.language}
+              </span>
+              <LanguageMenu variant="row" />
+            </div>
+            <div className="flex items-center justify-between py-1.5">
+              <span className="flex items-center gap-3 text-sm font-medium text-black/80 dark:text-white/80">
+                <SunMoon size={18} className="shrink-0" aria-hidden="true" />
+                {t.sidebar.theme}
+              </span>
+              <ThemeToggle />
+            </div>
+          </section>
+
           {/* Voice */}
           <section>
             <h3 className="flex items-center gap-2 text-sm font-semibold">

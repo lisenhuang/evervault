@@ -88,6 +88,20 @@ const ja: Messages = {
     accountMenu: "アカウントメニュー",
     deleteAccount: "アカウントを削除",
   },
+  history: {
+    pinned: "ピン留め",
+    today: "今日",
+    yesterday: "昨日",
+    last7: "過去 7 日間",
+    last30: "過去 30 日間",
+    older: "それ以前",
+    empty: "チャットはここに表示されます。",
+    loading: "読み込み中…",
+    untitled: "新しいチャット",
+    pin: "チャットをピン留め",
+    unpin: "ピン留めを解除",
+  },
+
   chat: {
     greeting: (name: string) => `こんにちは、${name}さん`,
     greetingFallbackName: "ゲスト",
@@ -221,6 +235,7 @@ const ja: Messages = {
     closeFile: "閉じる",
   },
   settings: {
+    general: "一般",
     title: "設定",
     close: "閉じる",
     managedNote: "AI は EverVault が提供します。API キーは不要です。テキスト・音声メッセージ・通話がそのまま使えます。",

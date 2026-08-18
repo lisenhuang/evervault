@@ -39,16 +39,28 @@ function modalityOf(kind: ChatMessage["kind"], inCall: boolean): TranscriptItem[
   return "text";
 }
 
+/** One message being handed back from the stored record, so the recorder knows it is already written. */
+export type HydratedMessage = {
+  id: string;
+  conversationId: string;
+  role: "user" | "assistant";
+  modality: TranscriptItem["modality"];
+  text: string;
+  /** When it was originally said — the stored `clientCreatedAt`, never now. */
+  at: string;
+};
+
 /**
  * @param messages   the current chat list (every mutation flows through applyMessages)
  * @param conversationId  the conversation a message appearing *now* belongs to
  * @param inCall     whether a realtime call is up, which is what makes a message "live"
+ * @returns `hydrate` — see below. Call it before putting messages read back from the record on screen.
  */
 export function useTranscriptRecorder(
   messages: ChatMessage[],
   conversationId: () => string,
   inCall: () => boolean,
-): void {
+): (loaded: HydratedMessage[]) => void {
   // Keyed by message id and kept independently of the list: a message deleted, or cleared by "New chat",
   // before its quiet period elapsed must still be recorded — it was said either way.
   const seen = useRef(new Map<string, Entry>());
@@ -162,4 +174,29 @@ export function useTranscriptRecorder(
       void flushTranscript();
     };
   }, [sync]);
+
+  /**
+   * Adopt messages that came back OUT of the record — reopening a past conversation — as already
+   * recorded, so putting them on screen doesn't write them straight back.
+   *
+   * Without this the effect above meets them as brand-new (`recorded: null`) and posts the lot a second
+   * and a half later. Mostly that would be a wasteful no-op the server discards as unchanged, but not
+   * always: a listing clips each message to 32k, so any message longer than that comes back as its own
+   * opening — and writing THAT back replaces the stored original with the clip, irreversibly. Seeding
+   * `recorded` with the same text is what makes `sync` skip them (it only sends genuine revisions), and
+   * it is why this must run before the messages are handed to applyMessages, not after.
+   */
+  return useCallback((loaded: HydratedMessage[]) => {
+    for (const m of loaded) {
+      seen.current.set(m.id, {
+        conversationId: m.conversationId,
+        role: m.role,
+        modality: m.modality,
+        text: m.text,
+        streaming: false,
+        at: m.at,
+        recorded: m.text,
+      });
+    }
+  }, []);
 }

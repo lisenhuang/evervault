@@ -21,6 +21,7 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<EmbeddingConfig> EmbeddingConfigs => Set<EmbeddingConfig>();
     public DbSet<ChatMemory> ChatMemories => Set<ChatMemory>();
     public DbSet<ChatTranscript> ChatTranscripts => Set<ChatTranscript>();
+    public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
     public DbSet<ChatFile> ChatFiles => Set<ChatFile>();
     public DbSet<UserMemoryFact> UserMemoryFacts => Set<UserMemoryFact>();
     public DbSet<UserTask> UserTasks => Set<UserTask>();
@@ -113,6 +114,14 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
             e.HasIndex(t => new { t.EndUserId, t.ConversationId, t.Id });
             // Newest-first listing across conversations.
             e.HasIndex(t => new { t.EndUserId, t.CreatedAt });
+        });
+
+        modelBuilder.Entity<ChatConversation>(e =>
+        {
+            e.Property(c => c.ConversationId).HasMaxLength(64);
+            // Supersede anchor: one row of preferences per conversation, so setting a pin twice
+            // updates it rather than stacking a second opinion.
+            e.HasIndex(c => new { c.EndUserId, c.ConversationId }).IsUnique();
         });
 
         modelBuilder.Entity<ChatFile>(e =>

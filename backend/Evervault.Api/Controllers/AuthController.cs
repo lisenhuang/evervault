@@ -101,8 +101,8 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>Permanently delete the signed-in user's account and ALL data derived from it:
-    /// chat memories, the verbatim conversation record, the memory profile, tasks, the durable chat files
-    /// (rows + blobs), every stored audio/image blob, and the account row itself. Chat files and the
+    /// chat memories, the verbatim conversation record and what the user pinned in it, the memory profile,
+    /// tasks, the durable chat files (rows + blobs), every stored audio/image blob, and the account row itself. Chat files and the
     /// conversation record are retained forever otherwise, so this is the only path that removes them.
     /// The session cookie is cleared so the browser is signed out. Irreversible.</summary>
     [HttpDelete("account")]
@@ -139,6 +139,7 @@ public class AuthController : ControllerBase
         // which would also make the promise we tell users ("everything is erased") untrue.
         await _db.UserStates.Where(s => s.EndUserId == uid).ExecuteDeleteAsync();
         await _db.UserLifeEvents.Where(e => e.EndUserId == uid).ExecuteDeleteAsync();
+        await _db.ChatConversations.Where(c => c.EndUserId == uid).ExecuteDeleteAsync();
         await _db.EndUsers.Where(u => u.Id == uid).ExecuteDeleteAsync();
 
         await HttpContext.SignOutAsync(Scheme);

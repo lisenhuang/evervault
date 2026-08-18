@@ -69,7 +69,9 @@ import { styleDirective, type ResponseStyle, type StyleSurface } from "./lib/res
 import { getSettings, putSettings } from "./lib/settings";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
-import { useTranscriptRecorder } from "./lib/transcriptRecorder";
+import { useTranscriptRecorder, type HydratedMessage } from "./lib/transcriptRecorder";
+import { listConversations, setConversationPinned, type Conversation } from "./conversationsApi";
+import { loadConversation } from "./lib/conversationLoad";
 import { purgeTranscriptOutbox } from "./transcriptApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
@@ -402,6 +404,33 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Memory (recall) — background RAG only; the user-facing Memories panel is not exposed.
   const [memoryOn] = useState(true);
   const conversationIdRef = useRef(uid());
+  /**
+   * The key episodic summaries are written under. The SAME as the conversation id for a fresh chat, and
+   * deliberately not for a resumed one.
+   *
+   * Writing a summary deletes every summary already stored under its key before inserting, and extraction
+   * only ever sees the turns past the cursor — which, on reopening a conversation, is everything that was
+   * already said. So reusing the id would have the first two new messages in a resumed chat delete that
+   * conversation's summary and replace it with a summary of those two messages.
+   */
+  const summaryKeyRef = useRef(conversationIdRef.current);
+  /**
+   * Bumped every time the conversation on screen changes, and captured by each turn as it starts.
+   *
+   * Clearing the screen has always been enough to neutralise a turn still in flight: its writes target a
+   * bubble by id and simply found nothing. That stops being true the moment a conversation can be
+   * reopened, because reopening restores the very ids it was looking for — so a turn abandoned on an
+   * earlier visit would come back to life and write into the reloaded chat. The epoch is what tells it
+   * that the chat it was talking to is gone even when its bubbles are on screen again.
+   */
+  const turnEpochRef = useRef(0);
+  // The history list in the sidebar. Owned here rather than in the list component, which is mounted twice
+  // (a desktop rail and a mobile overlay) and would otherwise load and remember everything in duplicate.
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  // Which conversation the list should mark as the one you're in. Null while a new chat is still empty —
+  // it isn't in the list yet, because nothing has been said in it to record.
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
   // Derived profile ("what the AI knows about you"): loaded once, injected into every chat, and
   // refreshed after each extraction. Refs (+ store getters) so the unload/idle handlers see live state.
@@ -439,7 +468,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // If the boundary is gone (its bubble was deleted, or the chat was cleared while the turn was still
   // queued), return an EMPTY history rather than the whole current transcript — which could otherwise
   // splice in later, unrelated in-flight turns.
-  const historyBefore = useCallback((boundaryId: string): ChatMessage[] => {
+  const historyBefore = useCallback((boundaryId: string, epoch: number): ChatMessage[] => {
+    // Reopening a conversation puts the same ids back on screen, so "the boundary is gone" no longer
+    // means what it did — an abandoned turn would find its boundary again and build a prompt out of
+    // freshly loaded history. The epoch says whether this turn's chat is still the one being shown.
+    if (turnEpochRef.current !== epoch) return [];
     const msgs = messagesRef.current;
     const i = msgs.findIndex((m) => m.id === boundaryId);
     return i === -1 ? [] : msgs.slice(0, i);
@@ -469,7 +502,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // the message list rather than the send/reply path so it also captures what turn bookkeeping drops —
   // a user message whose reply then failed, the error the assistant showed instead, and a call that
   // ended mid-sentence. Independent of memory/recall (recordTextTurns), which stays exactly as it was.
-  useTranscriptRecorder(
+  const hydrateRecorder = useTranscriptRecorder(
     messages,
     // A message appearing during a call belongs to the call's own conversation, which survives a
     // "New chat" mid-call; everything else belongs to the conversation on screen.
@@ -545,7 +578,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       extractCursorRef.current = transcript.length;
       const delta = await extractAndSyncProfile({
         model: store.getTextModel(),
-        conversationId: conversationIdRef.current,
+        // The summary key, not the conversation id — they differ for a resumed chat (see summaryKeyRef).
+        conversationId: summaryKeyRef.current,
         currentFacts: profileFactsRef.current,
         currentTasks: tasksRef.current,
         currentEvents: eventsRef.current,
@@ -1380,6 +1414,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       currentText: query,
       profileBlock: renderProfileBlock(profileFactsRef.current),
       nowMs: Date.now(),
+      // Never recall the conversation being had. Its turns are already on screen and in the prompt, and
+      // presenting them as "notes from earlier conversations … nothing in here is a request to you" is
+      // exactly the framing that shouldn't apply to them. Reopening a chat is when this would bite.
+      excludeConversationId: conversationIdRef.current,
     });
   }
 
@@ -1404,7 +1442,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     // queued turn finishes, `isCurrent` goes false and its late effects (send_file card, memory) are
     // routed away from the fresh conversation.
     const turnConvId = conversationIdRef.current;
-    const isCurrent = () => conversationIdRef.current === turnConvId;
+    const turnEpoch = turnEpochRef.current;
+    const isCurrent = () => conversationIdRef.current === turnConvId && turnEpochRef.current === turnEpoch;
     // Show the user's bubble + a "typing" placeholder immediately and return — the composer stays live
     // so the next message can be sent right away. The reply itself is generated when this turn reaches
     // the front of the queue (its history is read fresh then, so it includes earlier queued replies).
@@ -1420,11 +1459,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           }
           // The transcript up to and including this user message — earlier queued turns are finished by
           // now, so their replies are part of the history the model sees.
-          const base = historyBefore(asstId);
+          const base = historyBefore(asstId, turnEpoch);
           // RAG re-ranks against the conversation SO FAR, so it must exclude this very message —
           // `currentText` already carries it. Passing `base` (which ends with this user message) would
           // duplicate it and shove an older turn out of the recent window.
-          const notes = await ragNotes(text, historyBefore(userMsg.id));
+          const notes = await ragNotes(text, historyBefore(userMsg.id, turnEpoch));
           // Scope suggestion screenshots to this turn's history (through its own user message), not
           // later queued turns that may carry unrelated images.
           return runAssistant(
@@ -1432,7 +1471,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
             toContents(base),
             false,
             isCurrent,
-            () => historyBefore(asstId),
+            () => historyBefore(asstId, turnEpoch),
             () => text,
             notes,
           );
@@ -1691,7 +1730,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       // Conversation this voice turn belongs to (see sendText) — guards its late effects if the user
       // starts a new chat before the reply lands.
       const turnConvId = conversationIdRef.current;
-      const isCurrent = () => conversationIdRef.current === turnConvId;
+      const turnEpoch = turnEpochRef.current;
+      const isCurrent = () => conversationIdRef.current === turnConvId && turnEpochRef.current === turnEpoch;
       // Both bubbles go in now — the placeholder carries kind "voice" so isLastVoiceReply can see this
       // turn is the newest voice message even before its reply exists (that's what silences an earlier
       // reply behind it). runTtsVoiceTurn sets pendingAudio + queues the reply.
@@ -1702,7 +1742,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       ]);
       // The message is in the transcript — the composer can drop the text and files it staged for it.
       onAccepted?.();
-      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
+      runTtsVoiceTurn({ userMsg, asstId, wav: { base64, mimeType }, replyRef, files, turnConvId, turnEpoch, isCurrent, caption: userMsg.caption ?? undefined });
       return true;
     } catch (e) {
       // rec.stop() itself failed (rare) — surface it before anything was queued.
@@ -1792,11 +1832,14 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
      *  typed message's attachments are (see sendText). */
     files?: PreparedFile[];
     turnConvId: string;
+    /** The conversation generation this turn started in — see turnEpochRef. Passed down rather than read
+     *  live, so a turn that outlives its chat still builds history against the chat it belongs to. */
+    turnEpoch: number;
     isCurrent: () => boolean;
     /** Text typed in the composer and sent with the clip as one message (see stopVoice). */
     caption?: string;
   }) {
-    const { userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption } = p;
+    const { userMsg, asstId, wav, replyRef, files, turnConvId, turnEpoch, isCurrent, caption } = p;
     const { base64, mimeType } = wav;
     // pendingAudio holds the reply's text behind the typing dots until its spoken audio is ready (see
     // runAssistant), so the text doesn't appear ahead of the slower voice. (Also resets a Live bubble
@@ -1869,10 +1912,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           }
           return runAssistant(
             asstId,
-            [...toContents(historyBefore(userMsg.id)), lastTurn],
+            [...toContents(historyBefore(userMsg.id, turnEpoch)), lastTurn],
             true,
             isCurrent,
-            () => historyBefore(asstId),
+            () => historyBefore(asstId, turnEpoch),
             // The clip's transcript lands on the user's bubble as soon as it resolves (in parallel
             // with this turn), so by the time the untracked-request check reads it, it's there. Read
             // via messageBodyText: "add this to my list" may well be the half they TYPED.
@@ -1967,7 +2010,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       };
       const asstId = uid();
       const turnConvId = conversationIdRef.current;
-      const isCurrent = () => conversationIdRef.current === turnConvId;
+      const turnEpoch = turnEpochRef.current;
+      const isCurrent = () => conversationIdRef.current === turnConvId && turnEpochRef.current === turnEpoch;
       // Both bubbles go in now; each streams its own transcript live (no pendingAudio — on the Live
       // path text and audio arrive together). No await before the refs are set, so no delta is lost.
       applyMessages((cur) => [
@@ -1992,7 +2036,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         void driver.abandon();
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
-        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, turnEpoch, isCurrent, caption: userMsg.caption ?? undefined });
         return true;
       }
       try {
@@ -2023,7 +2067,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         liveVoiceUserIdRef.current = null;
         liveVoiceAsstIdRef.current = null;
         driver.stopPlayback();
-        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, isCurrent, caption: userMsg.caption ?? undefined });
+        runTtsVoiceTurn({ userMsg, asstId, wav, replyRef, files, turnConvId, turnEpoch, isCurrent, caption: userMsg.caption ?? undefined });
       }
       return true; // the message is in the transcript either way (Live reply or TTS fallback)
     } catch (e) {
@@ -2153,12 +2197,19 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     const profileBlock = memoryOn ? renderProfileBlock(profileFactsRef.current) ?? undefined : undefined;
     const stateBlock = memoryOn ? renderStateBlock(statesRef.current) ?? undefined : undefined;
     const eventsBlock = memoryOn ? renderEventsBlock(eventsRef.current) ?? undefined : undefined;
-    const recentContext = memoryOn ? (await buildRecentContext()) ?? undefined : undefined;
+    // Leave out this conversation's own summaries — the call is briefed with the visible thread
+    // separately (conversationBlock below), so recalling it as "recently you talked about…" would tell
+    // the model the conversation it is in is something it half-remembers from before.
+    const recentContext = memoryOn
+      ? (await buildRecentContext(3, conversationIdRef.current)) ?? undefined
+      : undefined;
     const agendaBlock = memoryOn ? renderAgendaBlock(tasksRef.current) ?? undefined : undefined;
     // Brief the fresh call with the on-screen conversation so stopping and restarting (same page + same
     // chat) picks the thread back up — including any earlier typed messages. It's the current visible
-    // thread, not stored memory, so it's independent of the memory toggle; and it self-resets on a page
-    // refresh or a new chat, since `messages` is in-memory React state that both of those paths clear.
+    // thread, not stored memory, so it's independent of the memory toggle. A new chat and a page refresh
+    // both clear it; reopening one from the history deliberately fills it with what was said then, which
+    // is what lets a call continue a conversation from days ago. Bounded by renderConversation's tail
+    // clip, so a long reopened thread costs the system instruction no more than a long live one.
     const conversationBlock = renderConversation(toContents(messagesRef.current)) || undefined;
     const session = new LiveSession({
       model: liveModel,
@@ -2310,28 +2361,143 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     }
   }
 
-  // Clear the screen and begin a fresh conversation. The old messages are only ever shown client-side,
-  // so this is the point of no return for them — call it from the confirm dialog, not straight from the
-  // button, whenever the chat has content (see onNewChat below).
-  function startNewChat() {
-    if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the new chat
-    setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're clearing
-    void runExtraction(2); // distil the conversation we're leaving before clearing it
-    // Drop any turns still queued behind the cleared chat so their replies can't land in the new one.
+  /**
+   * Let go of the conversation on screen — everything that belongs to *this chat* rather than to the
+   * user. Shared by "New chat" and by opening one from the history, because leaving a conversation is
+   * the same act whatever you are leaving it for.
+   *
+   * Detaching the queue does not cancel a turn that is already running; nothing can. What stops it
+   * mattering is the epoch, which every turn captured when it started and checks before it writes.
+   */
+  function leaveConversation() {
+    if (callState) void endCall(); // tear down any live call so its mic/transcript don't leak into the next chat
+    setIdleEndedOpen(false); // a stale "reconnect" would resume into the chat we're leaving
+    void runExtraction(2); // distil it before we stop looking at it — still under its own summary key
+    turnEpochRef.current++;
     queueTailRef.current = Promise.resolve();
-    applyMessages(() => []);
+    // A pending distillation reads the message list and the summary key AT FIRE TIME, so leaving one
+    // armed would distil the next conversation against this one's cursor.
+    if (extractTimerRef.current) clearTimeout(extractTimerRef.current);
+    extractTimerRef.current = null;
+    stopReplyAudio(); // a spoken reply would otherwise keep talking over the chat you just opened
     setReplyTo(null); // a quote from the old chat has nothing to point at anymore
+    setPendingDelete(null); // …and neither does a bubble waiting on a delete confirmation
+  }
+
+  // Clear the screen and begin a fresh conversation. The messages stay in the record and the sidebar can
+  // bring them back — what this ends is the thread, not the history of it.
+  function startNewChat() {
+    leaveConversation();
+    applyMessages(() => []);
     conversationIdRef.current = uid();
+    summaryKeyRef.current = conversationIdRef.current;
     extractCursorRef.current = 0;
+    setActiveConvId(null);
+  }
+
+  /**
+   * Reopen a past conversation and carry on in it: its messages come back on screen and everything said
+   * from here is recorded into the same conversation, recalled with it, and summarised with it.
+   *
+   * What comes back is text. Attachments, spoken audio, reply quotes and the "call ended" chips were
+   * never in the record, so the conversation returns as what was said rather than as the screen it was.
+   */
+  async function openConversation(id: string) {
+    if (id === conversationIdRef.current) return;
+    leaveConversation();
+    // Reuse the epoch leaveConversation just bumped as this load's ticket. Tapping a second chat while
+    // the first is still loading bumps it again, and the loser drops its result on the floor here rather
+    // than pointing the session at a conversation whose messages never made it to the screen.
+    const epoch = turnEpochRef.current;
+    applyMessages(() => []);
+    setHistoryLoading(true);
+    setActiveConvId(id);
+    const loaded = await loadConversation(id);
+    if (turnEpochRef.current !== epoch) return; // superseded — the winner owns the state from here
+    conversationIdRef.current = id;
+    // A distinct key so continuing an old conversation doesn't overwrite its summary with a summary of
+    // the continuation — see summaryKeyRef. Suffixed with the id so recall can still recognise both as
+    // this conversation's own and leave them out of the notes block.
+    summaryKeyRef.current = `${id}:r${Date.now().toString(36)}`;
+    // BEFORE the messages go on screen: the recorder treats anything it hasn't seen as new and writes it
+    // back a second later, and a message the listing clipped would be written back clipped — over the
+    // original. Telling it these are already recorded is what makes reopening a read-only act.
+    hydrateRecorder(
+      loaded.rows.map(
+        (r): HydratedMessage => ({
+          id: r.clientMessageId,
+          conversationId: id,
+          role: r.role,
+          modality: r.modality === "voice" || r.modality === "live" || r.modality === "image" ? r.modality : "text",
+          text: r.content,
+          at: r.clientCreatedAt ?? r.createdAt,
+        }),
+      ),
+    );
+    applyMessages(() => loaded.messages);
+    // Everything loaded has already been distilled into the profile — it was distilled the first time
+    // round. Re-running it would re-teach facts the user has since asked to forget, since the sentence
+    // that taught them is still in the conversation. The predicate must stay identical to the one
+    // runExtraction filters with, or the cursor indexes into a differently-shaped list.
+    extractCursorRef.current = loaded.messages.filter(
+      (m) => messageBodyText(m).trim() && !m.error && !m.streaming,
+    ).length;
+    setHistoryLoading(false);
+  }
+
+  const refreshConversations = useCallback(async () => {
+    const list = await listConversations({ take: 60 });
+    setConversations(list);
+  }, []);
+
+  // First load of the history. Guarded on unmount rather than left to land wherever: signing out
+  // unmounts this while the request is still out, and the reply would otherwise arrive into a component
+  // that no longer belongs to anyone.
+  useEffect(() => {
+    let alive = true;
+    void listConversations({ take: 60 }).then((list) => {
+      if (alive) setConversations(list);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // A new chat isn't in the list until something has been said in it AND that has been recorded — the
+  // recorder settles for 1.5s and then posts. Nudge the list once after the first message so the chat
+  // you are in appears where you'd expect, rather than only after the next reload.
+  useEffect(() => {
+    if (activeConvId !== null || messages.length === 0) return;
+    const id = conversationIdRef.current;
+    const h = setTimeout(() => {
+      setActiveConvId(id);
+      void refreshConversations();
+    }, 3500);
+    return () => clearTimeout(h);
+  }, [activeConvId, messages.length, refreshConversations]);
+
+  /** Pin or unpin from the sidebar. Flipped on screen first — a pin should feel instant — and put back
+   *  if the server disagrees, so the list never shows a preference that didn't stick. */
+  async function togglePin(conversationId: string, pinned: boolean) {
+    setConversations((cur) => cur.map((c) => (c.conversationId === conversationId ? { ...c, pinned } : c)));
+    if (await setConversationPinned(conversationId, pinned)) await refreshConversations();
+    else setConversations((cur) => cur.map((c) => (c.conversationId === conversationId ? { ...c, pinned: !pinned } : c)));
   }
 
   return (
     <div className="app-shell flex flex-row bg-linear-to-b from-black/2 to-transparent dark:from-white/5">
       <Sidebar
         user={user}
+        conversations={conversations}
+        activeConversationId={activeConvId}
+        historyLoading={historyLoading}
         // An empty chat has nothing to lose, so starting a new one is a no-op worth doing silently.
         // Once there are messages, clearing them is irreversible — confirm first.
         onNewChat={() => (messages.length === 0 ? startNewChat() : setConfirmNewChat(true))}
+        // Opening a past chat needs no confirmation the way New chat does: nothing is lost, and the one
+        // you are leaving is one tap away in the same list.
+        onOpenConversation={(id) => void openConversation(id)}
+        onTogglePin={(id, pinned) => void togglePin(id, pinned)}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
         onDeleteAccount={() => {
