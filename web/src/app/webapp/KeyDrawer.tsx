@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, Languages, MessageSquare, Mic, PhoneCall, Sparkles, SlidersHorizontal, SunMoon, X } from "lucide-react";
+import { AudioLines, Languages, MessageSquare, Mic, PhoneCall, Sparkles, SlidersHorizontal, SunMoon, Trash2, UserRound, X } from "lucide-react";
 import VoicePreviewButton from "./VoicePreviewButton";
 import VoiceSelect from "./VoiceSelect";
 import StyleSelect from "./StyleSelect";
@@ -31,6 +31,7 @@ export default function KeyDrawer({
   onChangeTextStyle,
   onChangeVoiceStyle,
   onChangeLiveStyle,
+  onDeleteAccount,
 }: {
   open: boolean;
   onClose: () => void;
@@ -42,6 +43,8 @@ export default function KeyDrawer({
   onChangeTextStyle: (v: ResponseStyle) => void;
   onChangeVoiceStyle: (v: ResponseStyle) => void;
   onChangeLiveStyle: (v: ResponseStyle) => void;
+  /** Start deleting the account. The panel only opens the confirmation; Chat.tsx owns what follows. */
+  onDeleteAccount: () => void;
 }) {
   const t = useT();
 
@@ -131,6 +134,24 @@ export default function KeyDrawer({
                 <StyleSelect value={liveStyle} onChange={onChangeLiveStyle} ariaLabel={t.settings.styleLive} />
               </div>
             </div>
+          </section>
+
+          {/* Account — last, and deliberately quiet. Deleting an account is the most destructive thing
+              in this app, but it is also a legitimate thing to want, and red text on a permanent row
+              reads as a warning that never stops firing. The confirmation it opens is where the weight
+              belongs; here it is just the thing it is. */}
+          <section className="border-t border-black/10 pt-5 dark:border-white/10">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <UserRound size={15} aria-hidden="true" /> {t.settings.account}
+            </h3>
+            <p className="mt-1 text-xs text-black/50 dark:text-white/50">{t.settings.deleteAccountHint}</p>
+            <button
+              onClick={onDeleteAccount}
+              className="mt-3 flex w-full items-center gap-3 rounded-lg border border-black/10 px-3 py-2.5 text-left text-sm font-medium transition hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10"
+            >
+              <Trash2 size={16} className="shrink-0 opacity-60" aria-hidden="true" />
+              {t.sidebar.deleteAccount}
+            </button>
           </section>
         </div>
       </aside>

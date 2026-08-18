@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronUp, LogOut, MessageCircle, Settings2, SquarePen, Trash2 } from "lucide-react";
+import { ChevronUp, LogOut, MessageCircle, Settings2, SquarePen } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import ConversationList from "./ConversationList";
 import type { Conversation } from "./conversationsApi";
@@ -33,7 +33,6 @@ export default function Sidebar({
   onRegenerateTitle,
   onOpenSettings,
   onSignOut,
-  onDeleteAccount,
   open,
   onClose,
 }: {
@@ -48,7 +47,6 @@ export default function Sidebar({
   onRegenerateTitle: (conversationId: string) => Promise<string>;
   onOpenSettings: () => void;
   onSignOut: () => void;
-  onDeleteAccount: () => void;
   open: boolean;
   onClose: () => void;
 }) {
@@ -132,14 +130,9 @@ export default function Sidebar({
               {t.sidebar.settings}
             </button>
             <div className="my-1 border-t border-black/10 dark:border-white/10" />
-            <button
-              onClick={runItem(onDeleteAccount)}
-              role="menuitem"
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-            >
-              <Trash2 size={18} className="shrink-0" aria-hidden="true" />
-              {t.sidebar.deleteAccount}
-            </button>
+            {/* Deleting the account lives at the foot of Settings now, not here: this popover is the
+                everyday one, and the most destructive action in the app does not belong one tap from
+                the avatar. */}
             <button
               onClick={runItem(onSignOut)}
               role="menuitem"

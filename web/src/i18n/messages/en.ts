@@ -277,6 +277,8 @@ const en = {
     voiceGenderFemale: "Female",
     responseStyle: "Response style",
     responseStyleHint: "Choose how EverVault talks. Default keeps its built-in tone — leave it there if you're not sure.",
+    account: "Account",
+    deleteAccountHint: "Erases your chats, memories and files. This cannot be undone.",
     styleText: "Text replies",
     styleTextHint: "How typed answers in the chat sound.",
     styleVoice: "Voice replies",

@@ -2603,10 +2603,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onRegenerateTitle={regenerateTitle}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
-        onDeleteAccount={() => {
-          setDeleteAccountError("");
-          setConfirmDeleteAccount(true);
-        }}
         open={navOpen}
         onClose={() => setNavOpen(false)}
       />
@@ -2699,6 +2695,10 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onChangeTextStyle={pickTextStyle}
         onChangeVoiceStyle={pickVoiceStyle}
         onChangeLiveStyle={pickLiveStyle}
+        onDeleteAccount={() => {
+          setDeleteAccountError("");
+          setConfirmDeleteAccount(true);
+        }}
       />
 
       <ConfirmDialog

@@ -273,6 +273,8 @@ const zh: Messages = {
     voiceGenderFemale: "女声",
     responseStyle: "回复风格",
     responseStyleHint: "选择 EverVault 的说话风格。默认保持其内置语气——不确定就保持默认。",
+    account: "账户",
+    deleteAccountHint: "将清除你的对话、记忆和文件，且无法恢复。",
     styleText: "文字回复",
     styleTextHint: "聊天中文字回答的语气。",
     styleVoice: "语音回复",

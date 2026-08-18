@@ -272,6 +272,8 @@ const ja: Messages = {
     voiceGenderFemale: "女性",
     responseStyle: "応答スタイル",
     responseStyleHint: "EverVault の話し方を選べます。デフォルトは組み込みの口調のままです — 迷ったらそのままで。",
+    account: "アカウント",
+    deleteAccountHint: "チャット・記憶・ファイルをすべて削除します。元に戻せません。",
     styleText: "テキスト応答",
     styleTextHint: "チャットでのテキスト回答の口調です。",
     styleVoice: "音声応答",

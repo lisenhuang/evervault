@@ -272,6 +272,8 @@ const ko: Messages = {
     voiceGenderFemale: "여성",
     responseStyle: "응답 스타일",
     responseStyleHint: "EverVault의 말투를 선택하세요. 기본값은 기본 말투를 유지합니다 — 잘 모르겠다면 그대로 두세요.",
+    account: "계정",
+    deleteAccountHint: "대화·기억·파일이 모두 지워집니다. 되돌릴 수 없습니다.",
     styleText: "텍스트 응답",
     styleTextHint: "채팅의 텍스트 답변 말투입니다.",
     styleVoice: "음성 응답",
