@@ -472,7 +472,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // state. Nothing else calls setMessages directly (that would let the ref drift out of sync).
   const messagesRef = useRef<ChatMessage[]>([]);
   const applyMessages = useCallback((updater: (cur: ChatMessage[]) => ChatMessage[]) => {
-    messagesRef.current = updater(messagesRef.current);
+    // Stamp anything that arrived without a time. Doing it at the one door every message comes through
+    // beats adding a field to the dozen places a bubble is built — and it can't be forgotten by the
+    // next one. Messages that already carry a time (a reopened conversation's) keep it.
+    //
+    // Checked before rewriting: this runs on every streamed token, and mapping unconditionally would
+    // rebuild every message object in a long transcript once per word revealed.
+    const next = updater(messagesRef.current);
+    const now = new Date().toISOString();
+    messagesRef.current = next.some((m) => !m.at) ? next.map((m) => (m.at ? m : { ...m, at: now })) : next;
     setMessages(messagesRef.current);
   }, []);
 

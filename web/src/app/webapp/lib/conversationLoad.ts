@@ -48,6 +48,9 @@ export function toChatMessage(row: TranscriptMessage): ChatMessage {
     role: row.role,
     text: row.content,
     kind: kindOf(row.modality),
+    // What the browser said the time was, falling back to when we recorded it. For a reply those differ
+    // by however long it streamed, so the client's own stamp is the truer answer.
+    at: row.clientCreatedAt ?? row.createdAt,
   };
 }
 

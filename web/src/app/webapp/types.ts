@@ -52,6 +52,16 @@ export type ChatMessage = {
   files?: PreparedFile[] | null;
   /** The earlier message this one replies to (set on user messages sent via "Reply"). */
   replyTo?: ReplyRef | null;
+  /**
+   * When the message was said, ISO. Stamped once as it enters the list (see applyMessages) and carried
+   * back from the record when a past conversation is reopened, so a restored bubble shows the time it
+   * was actually said rather than the time it was loaded.
+   *
+   * Optional because it is filled centrally rather than at each of the places a message is built, and
+   * because a message from before this existed simply has none — the bubble shows no time instead of
+   * a wrong one.
+   */
+  at?: string;
   /** True while the assistant message is still streaming in. */
   streaming?: boolean;
   error?: boolean;

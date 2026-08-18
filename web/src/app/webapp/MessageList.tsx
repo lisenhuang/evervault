@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Eraser,
@@ -20,6 +20,7 @@ import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markd
 import remarkGfm from "remark-gfm";
 import MessageMenu from "./MessageMenu";
 import Pressable from "./Pressable";
+import { formatDaySeparator, formatMessageTime, needsDaySeparator } from "./lib/messageTime";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import FilePreview from "./FilePreview";
 import type { ChatMessage, ReplyRef } from "./types";
@@ -29,7 +30,8 @@ import { formatSize, openFileInNewTab, type PreparedFile } from "./lib/files";
 import { isIOS } from "./lib/liveAudio";
 import type { StoredFileMeta } from "./lib/filesApi";
 import { linkify } from "./lib/linkify";
-import { useT } from "@/i18n/LanguageProvider";
+import { useLang, useT } from "@/i18n/LanguageProvider";
+import { htmlLang } from "@/i18n/config";
 
 // How a link looks in a bubble, on either side: the color is inherited (white on the user's blue
 // bubble, body text on the assistant's), so one class covers both the markdown `a` renderer below
@@ -227,98 +229,103 @@ export default function MessageList({
       className="chat-text mx-auto w-full max-w-3xl space-y-5 px-4 py-6"
       style={{ "--chat-scale": scale } as CSSProperties}
     >
-      {messages.map((m) =>
-        m.kind === "call" ? (
-          // Centered system chip logged when a realtime call ends — shows how long it lasted.
-          <div key={m.id} className="flex justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 chat-text-sm font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
-              <PhoneOff size={13} className="h-[1.08em] w-[1.08em]" aria-hidden="true" />
-              {t.message.callEnded}
-              <span aria-hidden="true">·</span>
-              <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
-            </span>
-          </div>
-        ) : m.kind === "forgetOffer" && m.forgetRef ? (
-          // The assistant found things it remembers and is asking before removing them. Tapping the
-          // confirm button IS the deletion — nothing has been removed at the point this renders.
-          <ForgetOfferCard
-            key={m.id}
-            note={m.text}
-            items={m.forgetRef}
-            onForget={() => onForget(m.id, m.forgetRef!)}
-          />
-        ) : m.kind === "fileOffer" && m.fileRef ? (
-          // The assistant found a stored file and is asking before handing it over. Kept ahead of the
-          // user/assistant split on purpose: an unhandled kind falls through to AssistantMessage and
-          // would render as an empty bubble.
-          <FileOfferCard
-            key={m.id}
-            note={m.text}
-            file={m.fileRef}
-            onSend={() => onSendFile(m.id, m.fileRef!.id)}
-          />
-        ) : m.role === "user" ? (
-          <div
-            key={m.id}
-            id={`msg-${m.id}`}
-            className={`flex items-start justify-end gap-3 ${rowFlashCls(flashId === m.id)}`}
-          >
-            <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />
-            <Pressable
-              onOpen={(x, y) => openMenu(m, x, y)}
-              className={`${BUBBLE_WRAP_CLS} max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none`}
+      {messages.map((m, i) => (
+        // A row is one message, preceded by a date separator whenever the calendar day changes.
+        <Fragment key={m.id}>
+          {needsDaySeparator(messages[i - 1]?.at, m.at) && <DaySeparator iso={m.at!} />}
+          {m.kind === "call" ? (
+            // Centered system chip logged when a realtime call ends — shows how long it lasted.
+            <div key={m.id} className="flex justify-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-black/5 px-3 py-1 chat-text-sm font-medium text-black/55 dark:bg-white/10 dark:text-white/55">
+                <PhoneOff size={13} className="h-[1.08em] w-[1.08em]" aria-hidden="true" />
+                {t.message.callEnded}
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums">{formatDuration(m.durationSec ?? 0)}</span>
+              </span>
+            </div>
+          ) : m.kind === "forgetOffer" && m.forgetRef ? (
+            // The assistant found things it remembers and is asking before removing them. Tapping the
+            // confirm button IS the deletion — nothing has been removed at the point this renders.
+            <ForgetOfferCard
+              key={m.id}
+              note={m.text}
+              items={m.forgetRef}
+              onForget={() => onForget(m.id, m.forgetRef!)}
+            />
+          ) : m.kind === "fileOffer" && m.fileRef ? (
+            // The assistant found a stored file and is asking before handing it over. Kept ahead of the
+            // user/assistant split on purpose: an unhandled kind falls through to AssistantMessage and
+            // would render as an empty bubble.
+            <FileOfferCard
+              key={m.id}
+              note={m.text}
+              file={m.fileRef}
+              onSend={() => onSendFile(m.id, m.fileRef!.id)}
+            />
+          ) : m.role === "user" ? (
+            <div
+              key={m.id}
+              id={`msg-${m.id}`}
+              className={`flex items-start justify-end gap-3 ${rowFlashCls(flashId === m.id)}`}
             >
-              {m.replyTo && <QuotedReply r={m.replyTo} onJump={jumpTo} />}
-              {m.files && m.files.length > 0 && (
-                <Attachments
-                  files={m.files}
-                  tone="user"
-                  className={m.text || m.caption ? "mb-2" : ""}
-                  onOpenImage={openLightbox}
-                  onOpenFile={openFile}
-                />
-              )}
-              {m.kind === "voice" ? (
-                <>
-                  {/* Typed and spoken in one bubble, in the order they were composed. The typed half
-                      reads as ordinary message text; the mic icon below marks where the clip starts,
-                      so it stays obvious which words were said rather than written. */}
-                  {m.caption && (
-                    <span className="mb-1.5 block whitespace-pre-wrap">{linkify(m.caption, LINK_CLS)}</span>
-                  )}
-                  {m.text ? (
-                    <span className="flex items-start gap-1.5">
-                      <Mic size={14} className="chat-icon mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
-                      <span className="min-w-0 whitespace-pre-wrap">{linkify(m.text, LINK_CLS)}</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 italic opacity-90">
-                      <Mic size={14} className="chat-icon" aria-hidden="true" /> {t.message.voiceMessage}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span className="whitespace-pre-wrap">{linkify(m.text, LINK_CLS)}</span>
-              )}
-            </Pressable>
-            <Avatar name={userName} picture={userPicture} />
-          </div>
-        ) : (
-          <AssistantMessage
-            key={m.id}
-            m={m}
-            flashing={flashId === m.id}
-            audioState={playingAudioId === m.id ? (audioPaused ? "paused" : "playing") : "idle"}
-            generating={generatingAudioIds.has(m.id)}
-            onPlayAudio={onPlayAudio}
-            onReveal={followReveal}
-            onOpenMenu={openMenu}
-            onOpenImage={openLightbox}
-            onOpenFile={openFile}
-            onReply={onReply}
-          />
-        ),
-      )}
+              <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />
+              <Pressable
+                onOpen={(x, y) => openMenu(m, x, y)}
+                className={`${BUBBLE_WRAP_CLS} max-w-[80%] rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white shadow-sm [-webkit-touch-callout:none] [@media(hover:none)]:select-none`}
+              >
+                {m.replyTo && <QuotedReply r={m.replyTo} onJump={jumpTo} />}
+                {m.files && m.files.length > 0 && (
+                  <Attachments
+                    files={m.files}
+                    tone="user"
+                    className={m.text || m.caption ? "mb-2" : ""}
+                    onOpenImage={openLightbox}
+                    onOpenFile={openFile}
+                  />
+                )}
+                {m.kind === "voice" ? (
+                  <>
+                    {/* Typed and spoken in one bubble, in the order they were composed. The typed half
+                        reads as ordinary message text; the mic icon below marks where the clip starts,
+                        so it stays obvious which words were said rather than written. */}
+                    {m.caption && (
+                      <span className="mb-1.5 block whitespace-pre-wrap">{linkify(m.caption, LINK_CLS)}</span>
+                    )}
+                    {m.text ? (
+                      <span className="flex items-start gap-1.5">
+                        <Mic size={14} className="chat-icon mt-0.5 shrink-0 opacity-90" aria-hidden="true" />
+                        <span className="min-w-0 whitespace-pre-wrap">{linkify(m.text, LINK_CLS)}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 italic opacity-90">
+                        <Mic size={14} className="chat-icon" aria-hidden="true" /> {t.message.voiceMessage}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="whitespace-pre-wrap">{linkify(m.text, LINK_CLS)}</span>
+                )}
+                <MessageTime at={m.at} tone="user" />
+              </Pressable>
+              <Avatar name={userName} picture={userPicture} />
+            </div>
+          ) : (
+            <AssistantMessage
+              key={m.id}
+              m={m}
+              flashing={flashId === m.id}
+              audioState={playingAudioId === m.id ? (audioPaused ? "paused" : "playing") : "idle"}
+              generating={generatingAudioIds.has(m.id)}
+              onPlayAudio={onPlayAudio}
+              onReveal={followReveal}
+              onOpenMenu={openMenu}
+              onOpenImage={openLightbox}
+              onOpenFile={openFile}
+              onReply={onReply}
+            />
+          )}
+        </Fragment>
+      ))}
       <div ref={endRef} />
       {menu && (
         <MessageMenu
@@ -525,6 +532,9 @@ function AssistantMessage({
             )}
           </button>
         )}
+        {/* Withheld while the reply is still arriving: a time under a half-written message would be
+            stamping something that hasn't finished being said. */}
+        {!m.streaming && <MessageTime at={m.at} tone="assistant" />}
       </Pressable>
       {!m.streaming && <HoverReplyButton label={t.message.reply} onClick={() => onReply(m)} />}
     </div>
@@ -866,6 +876,43 @@ function AiAvatar() {
 // mid-word when it has no other way to fit. `min-w-0` is the flex half of the same fix: without
 // it a row flex item refuses to shrink below its content's minimum width, so max-w-[80%] alone
 // would not hold. Applies to every bubble, since both sides can carry pasted text.
+/**
+ * The date a run of messages was said on, as a centered chip between them — "Today", "Yesterday", then
+ * the date itself. Marks the boundary the way a chat app does, rather than repeating the date on every
+ * bubble.
+ */
+function DaySeparator({ iso }: { iso: string }) {
+  const { lang, t } = useLang();
+  const label = formatDaySeparator(iso, htmlLang(lang), { today: t.history.today, yesterday: t.history.yesterday });
+  if (!label) return null;
+  return (
+    <div className="flex justify-center">
+      <span className="rounded-full bg-black/5 px-2.5 py-1 chat-text-xs font-medium text-black/50 dark:bg-white/10 dark:text-white/50">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The time in the corner of a bubble. Sized and dimmed to be findable without being read: it sits under
+ * the last line rather than beside it, so it can never squeeze the words it belongs to.
+ */
+function MessageTime({ at, tone }: { at: string | undefined; tone: "user" | "assistant" }) {
+  const { lang } = useLang();
+  const time = formatMessageTime(at, htmlLang(lang));
+  if (!time) return null;
+  return (
+    <div
+      className={`mt-1 text-right chat-text-xs leading-none ${
+        tone === "user" ? "text-white/65" : "text-black/40 dark:text-white/40"
+      }`}
+    >
+      {time}
+    </div>
+  );
+}
+
 const BUBBLE_WRAP_CLS = "min-w-0 break-words";
 
 const BUBBLE_CLS =
