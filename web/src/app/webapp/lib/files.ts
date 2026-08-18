@@ -19,6 +19,18 @@ export type PreparedFile = {
   dataUrl?: string;
   /** Extracted content for kind "text". */
   text?: string;
+  /**
+   * The stored ChatFile row this came from, for an attachment restored from history rather than picked
+   * in the composer. Such a file deliberately carries NO bytes: a reopened conversation can hold dozens
+   * of them, and inlining every one would download the whole chat's attachments to show a thumbnail.
+   */
+  remoteId?: number;
+  /**
+   * Same-origin URL the bytes can be read from, set alongside {@link remoteId}. An `<img>`, `<audio>` or
+   * PDF frame pointed here loads on demand and is cached by the browser, which is why a restored
+   * attachment needs no base64 to render.
+   */
+  url?: string;
 };
 
 /** Max attachments per message. */
@@ -315,7 +327,10 @@ export function fileObjectUrl(f: PreparedFile): string | null {
  * user's tap as its activation and isn't treated as a popup, which iOS Safari blocks readily.
  */
 export function openFileInNewTab(f: PreparedFile): void {
-  const url = fileObjectUrl(f);
+  const blob = fileObjectUrl(f);
+  // A restored attachment has no bytes to mint a blob from, but it does have a server URL — and that is
+  // strictly better here: there is nothing to revoke, and the new tab fetches it itself.
+  const url = blob ?? f.url;
   if (!url) return;
   const a = document.createElement("a");
   a.href = url;
@@ -327,5 +342,6 @@ export function openFileInNewTab(f: PreparedFile): void {
   // Deliberately NOT revoked synchronously: the new tab hasn't fetched the blob yet, so revoking
   // right after the click leaves it staring at a blank viewer. Give the handoff a generous window,
   // then reclaim — by then the viewer holds its own copy of the bytes.
-  setTimeout(() => URL.revokeObjectURL(url), HandoffRevokeMs);
+  // Only a blob URL is ours to reclaim; a server URL has nothing to release.
+  if (blob) setTimeout(() => URL.revokeObjectURL(blob), HandoffRevokeMs);
 }

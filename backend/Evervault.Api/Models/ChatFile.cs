@@ -20,6 +20,16 @@ public class ChatFile
     public int Id { get; set; }
     public int EndUserId { get; set; }
     public string ConversationId { get; set; } = string.Empty;
+
+    /// <summary>The browser's id for the message this file was attached to, when it is known — the same
+    /// key <see cref="ChatTranscript.ClientMessageId"/> uses, which is what lets a reopened conversation
+    /// put each attachment back on the message that carried it.
+    /// <para>
+    /// Nullable, and often null: every file stored before this column existed has none, and a file
+    /// deduped onto an earlier upload keeps the link it already had. Callers must treat "no link" as the
+    /// normal case and fall back rather than hiding the file.
+    /// </para></summary>
+    public string? ClientMessageId { get; set; }
     public string FileName { get; set; } = string.Empty;
     public string Kind { get; set; } = string.Empty;        // "image" | "pdf" | "audio" | "text"
     public string Mime { get; set; } = string.Empty;

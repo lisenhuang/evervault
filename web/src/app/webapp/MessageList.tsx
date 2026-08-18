@@ -589,7 +589,7 @@ function Attachments({
             onClick={() => {
               const imgs = files.filter((x) => x.kind === "image");
               onOpenImage(
-                imgs.map((x) => ({ src: `data:${x.mimeType};base64,${x.base64}`, alt: t.message.imageAlt })),
+                imgs.map((x) => ({ src: fileSrc(x), alt: t.message.imageAlt })),
                 imgs.findIndex((x) => x.id === f.id),
               );
             }}
@@ -600,8 +600,11 @@ function Attachments({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`data:${f.mimeType};base64,${f.base64}`}
+              src={fileSrc(f)}
               alt={t.message.imageAlt}
+              // Restored attachments read from the server, and a reopened chat can hold a lot of them —
+              // let the browser skip the ones that are scrolled away.
+              loading="lazy"
               className="max-h-64 w-full object-contain"
             />
           </button>
@@ -824,6 +827,18 @@ function HoverReplyButton({ label, onClick }: { label: string; onClick: () => vo
       <Reply size={15} aria-hidden="true" />
     </button>
   );
+}
+
+/**
+ * Where an attachment's bytes come from: the inline copy when it has one, otherwise the server.
+ *
+ * A file the user just picked carries its own base64 and renders without a round trip. One restored from
+ * a past conversation deliberately doesn't — see storedFileToPrepared — so it points at a same-origin URL
+ * the browser fetches (and caches) only if the image is actually on screen.
+ */
+function fileSrc(f: PreparedFile): string {
+  if (f.base64) return `data:${f.mimeType};base64,${f.base64}`;
+  return f.url ?? "";
 }
 
 function Avatar({ name, picture }: { name: string; picture: string | null }) {

@@ -127,6 +127,11 @@ public class AppDbContext : DbContext, IDataProtectionKeyContext
 
         modelBuilder.Entity<ChatFile>(e =>
         {
+            e.Property(f => f.ClientMessageId).HasMaxLength(64);
+            // Serves the per-conversation attachment read on reopen; without it that is a scan of every
+            // file the user has ever sent.
+            e.HasIndex(f => new { f.EndUserId, f.ConversationId });
+
             // Half-precision embedding of the file's Description. Dimensionless at the model level; the same
             // runtime step as ChatMemories (ChatMemoryVectorIndex) pins it to the locked dimension and builds
             // the HNSW cosine index — an HNSW index needs a fixed dimension, unknown here. No legacy

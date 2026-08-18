@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, FileAudio, FileText, Image as ImageIcon, X } from "lucide-react";
 import { fileObjectUrl, formatSize, HandoffRevokeMs, type PreparedFile } from "./lib/files";
+import { fetchChatFileContent } from "./lib/filesApi";
 import { useT } from "@/i18n/LanguageProvider";
 
 /** The icon standing in for the file in the header, by what kind of file it is. Mirrors the chips. */
@@ -27,10 +28,27 @@ const KIND_ICONS = {
 export default function FilePreview({ file, onClose }: { file: PreparedFile; onClose: () => void }) {
   const t = useT();
   // The blob URL, minted in a lazy initializer so the very first paint already has it — an iframe
-  // pointed at nothing flashes a browser error page. `null` for kind "text", which needs no blob.
-  // The call site keys this component on the file id, so a different attachment remounts and mints
-  // its own URL.
-  const [url] = useState<string | null>(() => fileObjectUrl(file));
+  // pointed at nothing flashes a browser error page. `null` for kind "text", which needs no blob, and
+  // for an attachment restored from history, which carries no bytes to mint one from. The call site keys
+  // this component on the file id, so a different attachment remounts and mints its own URL.
+  const [blobUrl] = useState<string | null>(() => fileObjectUrl(file));
+  // What the viewer actually points at: the local blob when there is one, else the file's own server URL.
+  const url = blobUrl ?? file.url ?? null;
+
+  // A restored text file has neither bytes nor extracted text — only the row it came from — so its
+  // content is fetched the first time it is opened. Every other kind renders straight from `url`, which
+  // is why this is the one fetch here.
+  const [fetchedText, setFetchedText] = useState<string | null>(null);
+  useEffect(() => {
+    if (file.kind !== "text" || file.text != null || file.remoteId == null) return;
+    let alive = true;
+    void fetchChatFileContent(file.remoteId).then((pf) => {
+      if (alive && pf?.text != null) setFetchedText(pf.text);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [file.kind, file.text, file.remoteId]);
 
   // Revoking matters — leaking a 10MB PDF per open piles up over a long session with nothing to
   // release it — but revoking the instant the modal closes is wrong twice over:
@@ -43,15 +61,15 @@ export default function FilePreview({ file, onClose }: { file: PreparedFile; onC
   // new-tab handoff in openFileInNewTab.
   const revokeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!url) return;
+    if (!blobUrl) return;
     if (revokeTimer.current) {
       clearTimeout(revokeTimer.current);
       revokeTimer.current = null;
     }
     return () => {
-      revokeTimer.current = setTimeout(() => URL.revokeObjectURL(url), HandoffRevokeMs);
+      revokeTimer.current = setTimeout(() => URL.revokeObjectURL(blobUrl), HandoffRevokeMs);
     };
-  }, [url]);
+  }, [blobUrl]);
 
   // Escape closes, matching the lightbox.
   useEffect(() => {
@@ -136,7 +154,7 @@ export default function FilePreview({ file, onClose }: { file: PreparedFile; onC
           )
         ) : file.kind === "text" ? (
           <pre className="min-h-0 flex-1 overflow-auto px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words">
-            {file.text}
+            {file.text ?? fetchedText}
           </pre>
         ) : file.kind === "audio" ? (
           <div className="flex items-center justify-center px-4 py-5">

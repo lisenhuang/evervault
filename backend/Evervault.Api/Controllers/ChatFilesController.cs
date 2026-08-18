@@ -85,12 +85,19 @@ public class ChatFilesController : ControllerBase
     private static string StoredContentType(string kind, string mime) =>
         kind == "text" ? "text/plain; charset=utf-8" : mime;
 
+    /// <param name="ClientMessageId">The message this file was attached to, when the caller knows it.
+    /// Optional and appended last: a client from before attachments were restorable simply omits it, and
+    /// its uploads keep working exactly as they did.</param>
     public record UploadRequest(string? ConversationId, string FileName, string Kind, string Mime,
-                                long SizeBytes, string? Base64, string? Text, string? Description, float[]? Embedding);
+                                long SizeBytes, string? Base64, string? Text, string? Description, float[]? Embedding,
+                                string? ClientMessageId = null);
     // Score is the fused hybrid-search relevance (higher = better); null on the pure-vector, newest-first,
     // and fallback paths — same shape as MemoryHit.
+    /// <param name="ClientMessageId">The message this file was attached to, or null when that was never
+    /// recorded. Appended with a default so a client that predates it is unaffected by its presence.</param>
     public record FileHit(int Id, string FileName, string Kind, string Mime, long SizeBytes,
-                          string Description, DateTimeOffset CreatedAt, double? Distance, double? Score = null);
+                          string Description, DateTimeOffset CreatedAt, double? Distance, double? Score = null,
+                          string? ClientMessageId = null);
     public record FileData(int Id, string FileName, string Kind, string Mime, long SizeBytes,
                            string? Base64, string? Text);
     public record FileSearchRequest(float[]? Vector, string? Q, int K = 8, string? Kind = null,
@@ -148,10 +155,25 @@ public class ChatFilesController : ControllerBase
         // re-send the same photo) reuses the stored object instead of writing a second copy. Only rows that
         // actually made it to R2 count: matching a keyless row would make a file that once failed to store
         // permanently unstorable, since every retry would dedupe onto the broken row.
-        var existing = await _db.ChatFiles.AsNoTracking()
+        var convId = Clip((req.ConversationId ?? "").Trim(), 64);
+        var msgId = Clip((req.ClientMessageId ?? "").Trim(), 64);
+        var existing = await _db.ChatFiles
             .FirstOrDefaultAsync(f => f.EndUserId == uid && f.Sha256 == sha && f.FileName == fileName
                 && f.ObjectKey != "", ct);
-        if (existing is not null) return Ok(new { id = existing.Id, deduped = true });
+        if (existing is not null)
+        {
+            // Adopt the message link if the row hasn't got one and this upload belongs to the same
+            // conversation. That is what makes a file stored before this column existed restorable the next
+            // time it is sent, without ever re-pointing a row that already names another message — a dedupe
+            // hit from a DIFFERENT conversation must leave the original alone, or restoring the earlier
+            // chat would lose the attachment it correctly owns.
+            if (string.IsNullOrEmpty(existing.ClientMessageId) && msgId.Length > 0 && existing.ConversationId == convId)
+            {
+                existing.ClientMessageId = msgId;
+                await _db.SaveChangesAsync(ct);
+            }
+            return Ok(new { id = existing.Id, deduped = true });
+        }
 
         var cfg = await _db.EmbeddingConfigs.AsNoTracking().FirstOrDefaultAsync(ct);
         var dim = cfg?.Dimensions ?? 0;
@@ -163,7 +185,8 @@ public class ChatFilesController : ControllerBase
         var row = new ChatFile
         {
             EndUserId = uid,
-            ConversationId = Clip((req.ConversationId ?? "").Trim(), 64),
+            ConversationId = convId,
+            ClientMessageId = msgId.Length > 0 ? msgId : null,
             FileName = fileName,
             Kind = kind,
             Mime = Clip(mime, 128),
@@ -406,16 +429,29 @@ public class ChatFilesController : ControllerBase
         return url is null ? NotFound() : Redirect(url);
     }
 
+    /// <summary>The user's files, newest first — or one conversation's, oldest first.
+    /// <para>
+    /// <paramref name="conversationId"/> is what a reopened chat reads to put its attachments back. It is
+    /// an optional filter on an endpoint that already existed, so a client that has never heard of it gets
+    /// the same user-wide listing it always got. Scoped reads come back oldest-first to match the order
+    /// the transcript is replayed in.
+    /// </para></summary>
     [HttpGet]
-    public async Task<IReadOnlyList<FileHit>> List([FromQuery] int take = 50)
+    public async Task<IReadOnlyList<FileHit>> List([FromQuery] int take = 50, [FromQuery] string? conversationId = null)
     {
         var uid = Uid;
         var t = Math.Clamp(take, 1, 200);
-        return await _db.ChatFiles
-            .Where(f => f.EndUserId == uid && f.ObjectKey != "")
-            .OrderByDescending(f => f.CreatedAt)
+        var q = _db.ChatFiles.Where(f => f.EndUserId == uid && f.ObjectKey != "");
+
+        var convId = (conversationId ?? "").Trim();
+        q = convId.Length > 0
+            ? q.Where(f => f.ConversationId == convId).OrderBy(f => f.CreatedAt).ThenBy(f => f.Id)
+            : q.OrderByDescending(f => f.CreatedAt);
+
+        return await q
             .Take(t)
-            .Select(f => new FileHit(f.Id, f.FileName, f.Kind, f.Mime, f.SizeBytes, f.Description, f.CreatedAt, (double?)null))
+            .Select(f => new FileHit(f.Id, f.FileName, f.Kind, f.Mime, f.SizeBytes, f.Description, f.CreatedAt,
+                (double?)null, null, f.ClientMessageId))
             .ToListAsync();
     }
 

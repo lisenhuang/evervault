@@ -19,6 +19,9 @@ export type StoredFileMeta = {
   // keyword/fused hits. Both are absent on newest-first listings — mirrors MemoryHit.
   distance?: number | null;
   score?: number | null;
+  /** The message this file was attached to, when that was recorded. Absent on files stored before the
+   *  link existed, and on any server that predates it. */
+  clientMessageId?: string | null;
 };
 
 /** Server shape of a file row (ChatFilesController.FileHit). Mapped to StoredFileMeta below. */
@@ -32,6 +35,7 @@ type FileHit = {
   createdAt: string;
   distance?: number | null;
   score?: number | null;
+  clientMessageId?: string | null;
 };
 
 /** Server shape of a file's bytes (ChatFilesController.FileData). */
@@ -61,6 +65,37 @@ function toMeta(h: FileHit): StoredFileMeta {
     createdAt: h.createdAt,
     distance: h.distance ?? null,
     score: h.score ?? null,
+    clientMessageId: h.clientMessageId ?? null,
+  };
+}
+
+/** Where a stored file's bytes can be read from. Same-origin; the server redirects to a short-lived
+ *  storage URL, so an `<img>`/`<audio>`/frame can point straight at it and the browser caches it. */
+export function chatFileContentUrl(id: number): string {
+  return `/api/chat/files/${id}/content`;
+}
+
+/**
+ * A stored file as a renderable attachment, WITHOUT downloading it.
+ *
+ * The counterpart to {@link fetchChatFileContent}, which pulls the bytes inline as base64. That is right
+ * for one file the assistant just offered; it is wrong for a reopened conversation, where it would mean
+ * downloading every attachment the chat ever held before the first bubble appears. This keeps the row's
+ * metadata and points at {@link chatFileContentUrl} instead, so each file loads only if it is actually
+ * shown — and the bytes can still be fetched later, on demand, via {@link PreparedFile.remoteId}.
+ */
+export function storedFileToPrepared(m: StoredFileMeta): PreparedFile {
+  return {
+    // A fresh client id: this is a distinct on-screen attachment, not the stored row's identity.
+    id: crypto.randomUUID(),
+    name: m.name,
+    size: m.sizeBytes,
+    kind: m.kind,
+    mimeType: m.mime,
+    remoteId: m.id,
+    url: chatFileContentUrl(m.id),
+    // dataUrl doubles as the composer's preview source; a restored file has no inline copy to build it
+    // from, and the renderers prefer `url` anyway.
   };
 }
 
@@ -70,6 +105,9 @@ export async function uploadChatFile(
   f: PreparedFile,
   description: string,
   embedding?: number[],
+  /** The message this file was attached to. Optional so existing callers are unaffected, but passing it
+   *  is what lets the attachment come back on the right bubble when the chat is reopened. */
+  clientMessageId?: string,
 ): Promise<number | null> {
   try {
     const res = await api("/api/chat/files", {
@@ -84,6 +122,7 @@ export async function uploadChatFile(
         text: f.text,
         description,
         embedding,
+        clientMessageId,
       }),
     });
     if (res.ok) {
@@ -156,4 +195,23 @@ export async function deleteChatFile(id: number): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Every file stored for one conversation, oldest first — what a reopened chat reads to put its
+ * attachments back on the messages that carried them.
+ *
+ * Bounded like every other listing here: a conversation with more attachments than this shows the
+ * earliest of them, which matches the order the transcript is replayed in.
+ */
+export async function listConversationFiles(conversationId: string, take = 200): Promise<StoredFileMeta[]> {
+  if (!conversationId) return [];
+  try {
+    const params = new URLSearchParams({ conversationId, take: String(take) });
+    const res = await api(`/api/chat/files?${params}`);
+    if (res.ok) return ((await res.json()) as FileHit[]).map(toMeta);
+  } catch {
+    /* offline, or a server that predates the filter — the chat just reopens without its files */
+  }
+  return [];
 }

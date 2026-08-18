@@ -1514,7 +1514,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
                 files.map(async (f, i) => {
                   const desc = lines[i];
                   const embedding = (await embedDocument(desc)) ?? undefined;
-                  await uploadChatFile(turnConvId, f, desc, embedding);
+                  // The message the file was attached to, so reopening this chat can put it back on
+                  // that bubble instead of losing it.
+                  await uploadChatFile(turnConvId, f, desc, embedding, userMsg.id);
                 }),
               );
             }
@@ -1784,6 +1786,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
    */
   function recordVoiceTurn(p: {
     files?: PreparedFile[];
+    /** The user's message id, so a stored attachment knows which bubble carried it. */
+    userMessageId: string;
     replyRef: ReplyRef | null;
     /** What the user's message said — the typed half and the spoken half (see messageBodyText). */
     userText: string;
@@ -1791,7 +1795,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     audioBase64: string;
     turnConvId: string;
   }) {
-    const { files, replyRef, userText, reply, audioBase64, turnConvId } = p;
+    const { files, userMessageId, replyRef, userText, reply, audioBase64, turnConvId } = p;
     const quote = replyRef ? replyContext(replyRef) : "";
     if (!files?.length) {
       void recordTextTurns(
@@ -1822,7 +1826,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         await Promise.all(
           files.map(async (f, i) => {
             const embedding = (await embedDocument(lines[i])) ?? undefined;
-            await uploadChatFile(turnConvId, f, lines[i], embedding);
+            await uploadChatFile(turnConvId, f, lines[i], embedding, userMessageId);
           }),
         );
       }
@@ -1940,7 +1944,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // order they were composed. Recalled later it reads as the one message it was.
         const spoken = transcript || "(voice message)";
         const userText = caption ? `${caption}\n${spoken}` : spoken;
-        recordVoiceTurn({ files, replyRef, userText, reply, audioBase64: base64, turnConvId });
+        recordVoiceTurn({ files, userMessageId: userMsg.id, replyRef, userText, reply, audioBase64: base64, turnConvId });
       } catch (e) {
         const fe = friendlyAiError(e, t);
         reportAiError(fe, "chat.voice");
@@ -2069,7 +2073,15 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         const userText = caption?.trim() ? `${caption.trim()}\n${spokenText}` : spokenText;
         // Same recording the classic path does, attachments included — a Live session can carry
         // documents and images now, and they have to reach storage whichever path answered.
-        recordVoiceTurn({ files, replyRef, userText, reply: reply.modelText, audioBase64: wav.base64, turnConvId });
+        recordVoiceTurn({
+          files,
+          userMessageId: userMsg.id,
+          replyRef,
+          userText,
+          reply: reply.modelText,
+          audioBase64: wav.base64,
+          turnConvId,
+        });
       } catch {
         // Live failed mid-reply (socket error / timeout) — reuse the same bubbles and answer via TTS.
         // Clearing the refs first stops any late Live delta from appending; runTtsVoiceTurn's
