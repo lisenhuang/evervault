@@ -209,16 +209,28 @@ public class ChatConversationsController : ControllerBase
         if (only is not null) rows = rows.Where(m => only.Contains(m.ConversationId));
         return rows
             .GroupBy(m => m.ConversationId)
-            .Select(g => new ConversationGroup(
-                g.Key,
-                g.Max(m => m.Id),
+            // Member-init, not a constructor: EF translates a grouped aggregate only when the projection
+            // binds members it can see (an anonymous type or an object initializer). A positional record's
+            // constructor call carries no member bindings, and the whole query fails at runtime — which an
+            // empty sidebar in production is how we found out.
+            .Select(g => new ConversationGroup
+            {
+                ConversationId = g.Key,
+                LastId = g.Max(m => m.Id),
                 // The first message the USER sent — the assistant's opening line would title every
                 // conversation the same way. Null when they never typed one (a call, say).
-                g.Min(m => m.Role == "user" ? (long?)m.Id : null),
-                g.Count()));
+                FirstUserId = g.Min(m => m.Role == "user" ? (long?)m.Id : null),
+                Count = g.Count(),
+            });
     }
 
-    private record ConversationGroup(string ConversationId, long LastId, long? FirstUserId, int Count);
+    private sealed class ConversationGroup
+    {
+        public string ConversationId { get; set; } = string.Empty;
+        public long LastId { get; set; }
+        public long? FirstUserId { get; set; }
+        public int Count { get; set; }
+    }
 
     /// <summary>Squash an opening message into one line of title. Newlines become spaces (a pasted block
     /// would otherwise render as a tall blank row) and the result is trimmed; the client decides how much
