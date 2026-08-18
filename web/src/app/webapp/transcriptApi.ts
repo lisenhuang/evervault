@@ -147,6 +147,35 @@ function isPermanentlyRejected(status: number): boolean {
   return status === 400 || status === 413 || status === 422;
 }
 
+/**
+ * Called with a conversation id each time messages for it are accepted by the server.
+ *
+ * The history sidebar is built from recorded messages, so a brand-new chat only exists to it once one
+ * has actually landed — which is not a fixed moment after the message appears on screen: the recorder
+ * waits for the list to go quiet, and a reply that streams for six seconds, or is still being spoken,
+ * keeps it waiting. Guessing a delay is how the new chat ends up missing from its own sidebar; this is
+ * the event that actually happened.
+ */
+type RecordedListener = (conversationId: string) => void;
+const recordedListeners = new Set<RecordedListener>();
+
+/** Subscribe to "messages for this conversation are now on the server". Returns an unsubscribe. */
+export function onTranscriptRecorded(fn: RecordedListener): () => void {
+  recordedListeners.add(fn);
+  return () => recordedListeners.delete(fn);
+}
+
+function announceRecorded(conversationId: string) {
+  // A listener throwing must not abandon the rest of the flush — it is a UI refresh, not the record.
+  for (const fn of recordedListeners) {
+    try {
+      fn(conversationId);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /** Send everything queued, grouped by conversation. Anything that fails stays queued for the next
  *  flush — which the recorder also triggers on mount, when connectivity returns, and as the tab closes. */
 export async function flushTranscript(): Promise<void> {
@@ -236,6 +265,7 @@ export async function flushTranscript(): Promise<void> {
           // different object under the same id, and deleting it would lose the newer wording.
           for (const q of batch) if (outbox.get(q.clientMessageId) === q) outbox.delete(q.clientMessageId);
           persist();
+          announceRecorded(conversationId);
         }
         if (stalled) break;
       }

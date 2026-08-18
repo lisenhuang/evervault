@@ -70,9 +70,15 @@ import { getSettings, putSettings } from "./lib/settings";
 import { currentTimeContext } from "./lib/time";
 import { recordTurn, type TurnItem } from "./recordApi";
 import { useTranscriptRecorder, type HydratedMessage } from "./lib/transcriptRecorder";
-import { listConversations, setConversationPinned, type Conversation } from "./conversationsApi";
+import {
+  listConversations,
+  setConversationPinned,
+  setConversationTitle,
+  type Conversation,
+} from "./conversationsApi";
 import { loadConversation } from "./lib/conversationLoad";
-import { purgeTranscriptOutbox } from "./transcriptApi";
+import { summarizeConversationTitle } from "./lib/conversationTitle";
+import { purgeTranscriptOutbox, onTranscriptRecorded } from "./transcriptApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
 import { friendlyAiError, micErrorMessage } from "./lib/aiError";
@@ -431,6 +437,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Which conversation the list should mark as the one you're in. Null while a new chat is still empty —
   // it isn't in the list yet, because nothing has been said in it to record.
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  // Conversations this tab has already tried to name, so a failed attempt costs one call rather than one
+  // per recorded message. Naming is once-per-conversation; the server's `named` flag covers reloads.
+  const titledRef = useRef(new Set<string>());
 
   // Derived profile ("what the AI knows about you"): loaded once, injected into every chat, and
   // refreshed after each extraction. Refs (+ store getters) so the unload/idle handlers see live state.
@@ -2463,18 +2472,69 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     };
   }, []);
 
-  // A new chat isn't in the list until something has been said in it AND that has been recorded — the
-  // recorder settles for 1.5s and then posts. Nudge the list once after the first message so the chat
-  // you are in appears where you'd expect, rather than only after the next reload.
+  // A new chat only exists to the sidebar once one of its messages has actually been recorded, and that
+  // moment is not a fixed delay after sending: the recorder waits for the list to settle, so a reply that
+  // streams for ten seconds — or a voice message still being transcribed — holds it off for exactly as
+  // long as it takes. Waiting on the record itself is the difference between the chat you are in showing
+  // up in its own history and it silently missing until the next reload.
   useEffect(() => {
-    if (activeConvId !== null || messages.length === 0) return;
-    const id = conversationIdRef.current;
-    const h = setTimeout(() => {
-      setActiveConvId(id);
+    return onTranscriptRecorded((conversationId) => {
+      if (conversationId === conversationIdRef.current) setActiveConvId(conversationId);
       void refreshConversations();
-    }, 3500);
-    return () => clearTimeout(h);
-  }, [activeConvId, messages.length, refreshConversations]);
+    });
+  }, [refreshConversations]);
+
+  /**
+   * Name a conversation the first time it has something to be named after.
+   *
+   * Runs off the list rather than off the send path: the server is what knows whether a conversation
+   * already has a name, and it only appears in the list once its opening message has been recorded —
+   * which is exactly when there is something to summarise. That also means an old conversation from
+   * before any of this gets named the first time you open it, rather than being stuck with its opening
+   * words forever.
+   *
+   * Once per conversation, ever. `titledRef` stops a failed attempt from retrying on every list refresh
+   * within this tab; the server's `named` flag stops it across reloads and keeps a name the user typed
+   * from being overwritten by a summary.
+   */
+  useEffect(() => {
+    const id = activeConvId;
+    if (!id || historyLoading) return;
+    const conv = conversations.find((c) => c.conversationId === id);
+    if (!conv || conv.named || titledRef.current.has(id)) return;
+    const firstUser = messagesRef.current.find((m) => m.role === "user" && messageBodyText(m).trim());
+    if (!firstUser) return;
+    titledRef.current.add(id);
+    void (async () => {
+      // The reply too, when there is one: "can you help me with this" is only nameable through what it
+      // was answered with.
+      const firstReply = messagesRef.current.find(
+        (m) => m.role === "assistant" && !m.error && !m.streaming && messageBodyText(m).trim(),
+      );
+      const title = await summarizeConversationTitle(
+        store.getTextModel(),
+        messageBodyText(firstUser),
+        firstReply ? messageBodyText(firstReply) : undefined,
+      );
+      // No title is a real answer — a greeting has nothing to be about — and the opening words are
+      // still there to fall back on.
+      if (!title) return;
+      if (await setConversationTitle(id, title)) await refreshConversations();
+    })();
+  }, [conversations, activeConvId, historyLoading, refreshConversations]);
+
+  /** Rename a conversation from the sidebar. An empty name forgets it, back to the opening words. */
+  async function renameConversation(conversationId: string, title: string) {
+    const trimmed = title.trim();
+    setConversations((cur) =>
+      cur.map((c) => (c.conversationId === conversationId ? { ...c, title: trimmed, named: !!trimmed } : c)),
+    );
+    // Renaming is also how you say "this summary was wrong", so it must stick even when it lands on a
+    // conversation the summariser is about to name — marking it here keeps that call from overwriting.
+    titledRef.current.add(conversationId);
+    await setConversationTitle(conversationId, trimmed);
+    await refreshConversations();
+  }
 
   /** Pin or unpin from the sidebar. Flipped on screen first — a pin should feel instant — and put back
    *  if the server disagrees, so the list never shows a preference that didn't stick. */
@@ -2498,6 +2558,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         // you are leaving is one tap away in the same list.
         onOpenConversation={(id) => void openConversation(id)}
         onTogglePin={(id, pinned) => void togglePin(id, pinned)}
+        onRename={(id, title) => void renameConversation(id, title)}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
         onDeleteAccount={() => {
