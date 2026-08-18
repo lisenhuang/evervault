@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Pencil, Pin, PinOff } from "lucide-react";
+import { Pencil, Pin, PinOff, Trash2 } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 
 /**
@@ -23,6 +23,7 @@ export default function ConversationMenu({
   y,
   onRename,
   onTogglePin,
+  onDelete,
   onClose,
 }: {
   /** The conversation's label, shown as the sheet's heading so a long-press is obviously scoped. */
@@ -33,6 +34,8 @@ export default function ConversationMenu({
   y: number;
   onRename: () => void;
   onTogglePin: () => void;
+  /** Remove it from the history list. The caller confirms first. */
+  onDelete: () => void;
   onClose: () => void;
 }) {
   const t = useT();
@@ -76,6 +79,12 @@ export default function ConversationMenu({
         label={pinned ? t.history.unpin : t.history.pin}
         sheet={sheet}
         onClick={onTogglePin}
+      />
+      <MenuItem
+        icon={<Trash2 size={sheet ? 18 : 15} aria-hidden="true" />}
+        label={t.history.delete}
+        sheet={sheet}
+        onClick={onDelete}
       />
     </>
   );

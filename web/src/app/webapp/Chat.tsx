@@ -72,6 +72,7 @@ import { recordTurn, type TurnItem } from "./recordApi";
 import { useTranscriptRecorder, type HydratedMessage } from "./lib/transcriptRecorder";
 import {
   listConversations,
+  setConversationHidden,
   setConversationPinned,
   setConversationTitle,
   type Conversation,
@@ -300,6 +301,8 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // Starting a new chat clears the current one from the screen for good, so we ask first — but only
   // when there's actually something to lose (see the New chat handler).
   const [confirmNewChat, setConfirmNewChat] = useState(false);
+  /** The conversation the user is about to remove from their history, pending confirmation. */
+  const [confirmDeleteConv, setConfirmDeleteConv] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState("");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -2577,6 +2580,27 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     return title;
   }
 
+  /**
+   * Take a conversation out of the history list.
+   *
+   * Removed from the list and nothing more: what was said stays in the record and any files stay in
+   * storage, so the assistant can still recall the subject and still hand back a document from a chat
+   * that has been tidied away. Wiping everything is a separate, explicit act — deleting the account.
+   *
+   * Deleting the conversation you are CURRENTLY in also starts a new one. Otherwise you would carry on
+   * typing into a chat that is no longer listed, and every message after this point would vanish from
+   * the history the moment it was written.
+   */
+  async function deleteConversation(conversationId: string) {
+    setConversations((cur) => cur.filter((c) => c.conversationId !== conversationId));
+    if (conversationId === conversationIdRef.current) startNewChat();
+    else if (conversationId === activeConvId) setActiveConvId(null);
+    // Refreshed either way: on success to settle the list, and on failure to put back a conversation
+    // that is still there — the list must not keep claiming something that did not happen.
+    await setConversationHidden(conversationId, true);
+    await refreshConversations();
+  }
+
   /** Pin or unpin from the sidebar. Flipped on screen first — a pin should feel instant — and put back
    *  if the server disagrees, so the list never shows a preference that didn't stick. */
   async function togglePin(conversationId: string, pinned: boolean) {
@@ -2601,6 +2625,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onTogglePin={(id, pinned) => void togglePin(id, pinned)}
         onRename={(id, title) => void renameConversation(id, title)}
         onRegenerateTitle={regenerateTitle}
+        onDeleteConversation={(id) => setConfirmDeleteConv(id)}
         onOpenSettings={() => setDrawerOpen(true)}
         onSignOut={() => setConfirmLogout(true)}
         open={navOpen}
@@ -2698,6 +2723,21 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onDeleteAccount={() => {
           setDeleteAccountError("");
           setConfirmDeleteAccount(true);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDeleteConv}
+        title={t.history.deleteTitle}
+        message={t.history.deleteMessage}
+        confirmLabel={t.history.delete}
+        cancelLabel={t.common.cancel}
+        confirmVariant="danger"
+        onClose={() => setConfirmDeleteConv(null)}
+        onConfirm={() => {
+          const id = confirmDeleteConv;
+          setConfirmDeleteConv(null);
+          if (id) void deleteConversation(id);
         }}
       />
 

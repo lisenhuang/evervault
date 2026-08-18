@@ -5,6 +5,7 @@ import { Check, Loader2, Sparkles, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import { groupConversations, type BucketId } from "./lib/historyGroups";
 import ConversationMenu from "./ConversationMenu";
+import RenameDialog from "./RenameDialog";
 import Pressable from "./Pressable";
 import { decideRenameOutcome } from "./lib/renameOutcome";
 import type { Conversation } from "./conversationsApi";
@@ -30,6 +31,7 @@ export default function ConversationList({
   onTogglePin,
   onRename,
   onRegenerateTitle,
+  onDelete,
 }: {
   conversations: Conversation[];
   /** The conversation currently on screen, highlighted. Null while a brand-new chat is still empty. */
@@ -41,6 +43,8 @@ export default function ConversationList({
   onRename: (conversationId: string, title: string) => void;
   /** Ask the AI to name this conversation from the whole of it. Resolves to "" if it can't. */
   onRegenerateTitle: (conversationId: string) => Promise<string>;
+  /** Remove a conversation from the list. The caller confirms first. */
+  onDelete: (conversationId: string) => void;
 }) {
   const t = useT();
   const groups = groupConversations(conversations);
@@ -63,6 +67,12 @@ export default function ConversationList({
   const pendingRegen = useRef<string | null>(null);
   // Which conversation the context menu belongs to, and where it was opened.
   const [menu, setMenu] = useState<{ c: Conversation; x: number; y: number } | null>(null);
+  /** The conversation being renamed in the dialog, on touch. Null on pointer devices, which edit in place. */
+  const [renaming, setRenaming] = useState<Conversation | null>(null);
+  // Settled once, at mount: a device does not change its input class while the sidebar is open.
+  const [touch] = useState(
+    () => typeof window !== "undefined" && !!window.matchMedia?.("(hover: none) and (pointer: coarse)").matches,
+  );
 
   // Select the existing name on open, so replacing it outright is one keystroke and refining it is still
   // possible. The mobile sidebar animates in with a transform, so focus is deferred a frame.
@@ -164,6 +174,25 @@ export default function ConversationList({
         onRename(conversationId, title);
         if (editingThis) setEditing(null);
         return;
+    }
+  }
+
+  /**
+   * Generate a name and hand it straight back, for the dialog.
+   *
+   * The dialog needs none of the routing the inline editor does: it is a modal in front of the user, so
+   * the name always goes into its box for them to accept — there is no case where it has to be applied
+   * because they have wandered off. It shares the in-flight guard so the two surfaces can never overlap.
+   */
+  async function regenerateFor(conversationId: string): Promise<string> {
+    if (pendingRegen.current) return "";
+    pendingRegen.current = conversationId;
+    setRegeneratingId(conversationId);
+    try {
+      return await onRegenerateTitle(conversationId);
+    } finally {
+      if (pendingRegen.current === conversationId) pendingRegen.current = null;
+      setRegeneratingId(null);
     }
   }
 
@@ -294,14 +323,33 @@ export default function ConversationList({
           x={menu.x}
           y={menu.y}
           onRename={() => {
-            startRename(menu.c.conversationId, menu.c.title || "");
+            // A row on a phone is too narrow to edit a name in — see RenameDialog.
+            if (touch) setRenaming(menu.c);
+            else startRename(menu.c.conversationId, menu.c.title || "");
             setMenu(null);
           }}
           onTogglePin={() => {
             onTogglePin(menu.c.conversationId, !menu.c.pinned);
             setMenu(null);
           }}
+          onDelete={() => {
+            onDelete(menu.c.conversationId);
+            setMenu(null);
+          }}
           onClose={() => setMenu(null)}
+        />
+      )}
+
+      {renaming && (
+        <RenameDialog
+          initialTitle={renaming.title || ""}
+          regenerating={regeneratingId === renaming.conversationId}
+          onRegenerate={() => regenerateFor(renaming.conversationId)}
+          onSave={(title) => {
+            onRename(renaming.conversationId, title);
+            setRenaming(null);
+          }}
+          onClose={() => setRenaming(null)}
         />
       )}
     </div>

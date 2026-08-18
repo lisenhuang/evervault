@@ -1,7 +1,8 @@
 namespace Evervault.Api.Models;
 
 /// <summary>
-/// What the user has decided ABOUT one of their conversations — today, only whether it is pinned.
+/// What the user has decided ABOUT one of their conversations: whether it is pinned, what it is called,
+/// and whether it still appears in their history.
 /// <para>
 /// The conversation itself is not a row anywhere and deliberately isn't: it exists as the set of
 /// <see cref="ChatTranscript"/> messages sharing a <c>ConversationId</c>, a browser-minted token the
@@ -31,6 +32,17 @@ public class ChatConversation
 
     /// <summary>Pinned conversations sort above every unpinned one, whatever their last activity.</summary>
     public bool Pinned { get; set; }
+
+    /// <summary>
+    /// Whether the user has removed this conversation from their history list.
+    /// <para>
+    /// It hides the conversation; it does not destroy anything. The transcript and any files stay
+    /// exactly where they are, which is what keeps the assistant's recall of what was discussed — and
+    /// its ability to hand back a file from months ago — working after a user tidies their sidebar.
+    /// Erasing everything is a separate, explicit act: deleting the account.
+    /// </para>
+    /// </summary>
+    public bool Hidden { get; set; }
 
     /// <summary>A name for the conversation: written once from a short summary of the opening message,
     /// and replaceable by the user. Null means nobody has named it, and the listing falls back to the

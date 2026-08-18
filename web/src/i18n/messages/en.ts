@@ -104,6 +104,9 @@ const en = {
     renameSave: "Save name",
     chatActions: "Chat actions",
     regenerateTitle: "Rename with AI",
+    delete: "Delete",
+    deleteTitle: "Delete chat",
+    deleteMessage: "This chat will be removed from your history.",
   },
 
   chat: {

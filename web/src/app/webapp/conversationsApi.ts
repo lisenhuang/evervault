@@ -48,9 +48,21 @@ export async function setConversationTitle(conversationId: string, title: string
   return patchConversation(conversationId, { title });
 }
 
+/**
+ * Take a conversation out of the history list.
+ *
+ * It stops being listed and nothing else happens to it: what was said and any files sent stay where they
+ * are, so the assistant can still recall the subject months later and still hand back a document from a
+ * chat the user has since tidied away. Erasing everything is a different act with its own confirmation —
+ * deleting the account.
+ */
+export async function setConversationHidden(conversationId: string, hidden: boolean): Promise<boolean> {
+  return patchConversation(conversationId, { hidden });
+}
+
 async function patchConversation(
   conversationId: string,
-  patch: { pinned?: boolean; title?: string },
+  patch: { pinned?: boolean; title?: string; hidden?: boolean },
 ): Promise<boolean> {
   try {
     const res = await api(`/api/chat/conversations/${encodeURIComponent(conversationId)}`, {

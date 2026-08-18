@@ -31,6 +31,7 @@ export default function Sidebar({
   onTogglePin,
   onRename,
   onRegenerateTitle,
+  onDeleteConversation,
   onOpenSettings,
   onSignOut,
   open,
@@ -45,6 +46,7 @@ export default function Sidebar({
   onTogglePin: (conversationId: string, pinned: boolean) => void;
   onRename: (conversationId: string, title: string) => void;
   onRegenerateTitle: (conversationId: string) => Promise<string>;
+  onDeleteConversation: (conversationId: string) => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
   open: boolean;
@@ -115,6 +117,7 @@ export default function Sidebar({
         onTogglePin={onTogglePin}
         onRename={onRename}
         onRegenerateTitle={onRegenerateTitle}
+        onDelete={onDeleteConversation}
       />
 
       <div className="my-1 border-t border-black/10 dark:border-white/10" />

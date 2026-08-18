@@ -104,6 +104,9 @@ const ja: Messages = {
     renameSave: "名前を保存",
     chatActions: "チャットの操作",
     regenerateTitle: "AI で名前を付け直す",
+    delete: "削除",
+    deleteTitle: "チャットを削除",
+    deleteMessage: "このチャットは履歴から削除されます。",
   },
 
   chat: {

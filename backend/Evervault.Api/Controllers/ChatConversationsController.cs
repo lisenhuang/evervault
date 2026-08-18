@@ -76,9 +76,11 @@ public class ChatConversationsController : ControllerBase
     /// conversation back to being labelled by its opening words. There is no other way to say that,
     /// since null already means "don't touch it".
     /// </para></summary>
-    public record ConversationPrefsPatch(bool? Pinned, string? Title = null);
+    /// <param name="Hidden">Whether to take the conversation out of the history list. Appended with a
+    /// default, like every field here, so an older client's request means exactly what it always did.</param>
+    public record ConversationPrefsPatch(bool? Pinned, string? Title = null, bool? Hidden = null);
 
-    public record ConversationPrefsDto(string ConversationId, bool Pinned, string? Title = null);
+    public record ConversationPrefsDto(string ConversationId, bool Pinned, string? Title = null, bool Hidden = false);
 
     /// <summary>The conversation list: pinned first, then most recently spoken in. Derived from the
     /// transcript on every call — there is no list to keep in sync, and nothing to backfill.</summary>
@@ -94,13 +96,16 @@ public class ChatConversationsController : ControllerBase
         // cut-off below.
         var prefs = await _db.ChatConversations.AsNoTracking()
             .Where(c => c.EndUserId == uid)
-            .ToDictionaryAsync(c => c.ConversationId, c => new { c.Pinned, c.Title }, StringComparer.Ordinal);
+            .ToDictionaryAsync(c => c.ConversationId, c => new { c.Pinned, c.Title, c.Hidden }, StringComparer.Ordinal);
+        // Conversations the user has removed from their history. Everything they contain is untouched —
+        // this is the list they asked not to see, not a deletion.
+        var hidden = prefs.Where(p => p.Value.Hidden).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
 
         var groups = await GroupConversations(uid).OrderByDescending(g => g.LastId).Take(MaxConversations).ToListAsync();
 
         // A conversation pinned long ago can sit outside the most-recent window above, and dropping it
         // would quietly undo the one thing a pin is for. Fetch any such stragglers by id.
-        var pinnedIds = prefs.Where(p => p.Value.Pinned).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+        var pinnedIds = prefs.Where(p => p.Value.Pinned && !p.Value.Hidden).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
         pinnedIds.ExceptWith(groups.Select(g => g.ConversationId));
         if (pinnedIds.Count > 0) groups.AddRange(await GroupConversations(uid, pinnedIds.ToList()).ToListAsync());
 
@@ -119,6 +124,8 @@ public class ChatConversationsController : ControllerBase
                 Head = m.Content.Length > MaxTitleChars ? m.Content.Substring(0, MaxTitleChars) : m.Content,
             })
             .ToDictionaryAsync(a => a.Id);
+
+        if (hidden.Count > 0) groups.RemoveAll(g => hidden.Contains(g.ConversationId));
 
         return groups
             .Select(g =>
@@ -172,6 +179,12 @@ public class ChatConversationsController : ControllerBase
                 row.UpdatedAt = now;
             }
 
+            if (req?.Hidden is bool hidden && hidden != row.Hidden)
+            {
+                row.Hidden = hidden;
+                row.UpdatedAt = now;
+            }
+
             if (req?.Title is not null)
             {
                 // Squashed to one line and clipped, for the same reason the derived title is: this is a
@@ -188,7 +201,7 @@ public class ChatConversationsController : ControllerBase
             try
             {
                 await _db.SaveChangesAsync();
-                return Ok(new ConversationPrefsDto(convId, row.Pinned, row.Title));
+                return Ok(new ConversationPrefsDto(convId, row.Pinned, row.Title, row.Hidden));
             }
             catch (DbUpdateException) when (attempt == 0)
             {

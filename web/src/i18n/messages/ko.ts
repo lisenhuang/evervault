@@ -104,6 +104,9 @@ const ko: Messages = {
     renameSave: "이름 저장",
     chatActions: "채팅 작업",
     regenerateTitle: "AI로 이름 다시 짓기",
+    delete: "삭제",
+    deleteTitle: "채팅 삭제",
+    deleteMessage: "이 채팅은 기록에서 제거됩니다.",
   },
 
   chat: {

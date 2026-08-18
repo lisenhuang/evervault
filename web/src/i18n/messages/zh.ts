@@ -105,6 +105,9 @@ const zh: Messages = {
     renameSave: "保存名称",
     chatActions: "对话操作",
     regenerateTitle: "用 AI 重新命名",
+    delete: "删除",
+    deleteTitle: "删除对话",
+    deleteMessage: "该对话将从你的历史记录中移除。",
   },
 
   chat: {
