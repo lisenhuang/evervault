@@ -4,6 +4,14 @@ Guidance for Claude Code when working in this repository.
 
 ## Rules
 
+- **Pull before you code.** Start every task with `git fetch origin && git status -sb`, and if the
+  branch is behind, `git pull --rebase origin main` before writing anything. (Commit or stash first —
+  a rebase won't run over a dirty tree.) Work written on a stale base has to be reconciled afterwards,
+  which is where conflicts get resolved badly. It is worst for EF migrations: one authored against an
+  out-of-date `AppDbContextModelSnapshot.cs` collides with whatever landed meanwhile, and recovering
+  means deleting the migration files, restoring the snapshot from `origin/main`, and regenerating it on
+  top. Rebasing first avoids all of that.
+
 - **Do not commit or push to `main` automatically.** Leave committing and pushing
   to `main` for a human to do. You may stage changes, draft commit messages, and
   prepare work, but the human performs the actual commit/push to `main`. If a
