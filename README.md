@@ -1,6 +1,24 @@
 # 🔐 EverVault
 
-> **Your Personal Memory AI**
+> **Your personal memory AI.** Remember everything. Carry nothing.
+
+Every chat AI forgets you the moment you close the tab. EverVault doesn't — it quietly keeps what
+matters from each conversation and brings it back on its own, weeks later, without being asked. And it
+runs on hardware you own, in your own Postgres.
+
+| | |
+|---|---|
+| 🧠 **It remembers** | Pulls the facts worth keeping out of what you say, embeds them, and recalls them mid-conversation. Vector + full-text + trigram search, so *"that coast trip I was planning"* actually finds it. |
+| 🗣️ **It listens and speaks** | Type, send a voice message, or hold a realtime call. Replies come back spoken and written. |
+| 📎 **It keeps your files** | Photos and documents stay findable for good — ask months later and it hands the file back. |
+| 🧰 **It reaches for tools** | Web search, page reading and your to-do list, used when the answer needs them. |
+| 🔒 **It's yours** | One `make up` on your own machine. Your keys, your database, your disk — nobody else holding your history. |
+
+**👉 The full story: [evervault.life](https://evervault.life)** — what it's for, what's coming next, and a web app you can try.
+
+Everything below is how it's built and how to run it.
+
+## 🏗️ Architecture
 
 One stack. One domain. Web + API behind nginx, with Postgres + pgvector. 🐳
 
