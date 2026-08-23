@@ -126,10 +126,6 @@ const en = {
     aiBusy: "The AI is handling a lot of requests right now — please try again shortly.",
     aiFailedGeneric: "Something went wrong. Please try again.",
     errorCodeLabel: "Error code: ",
-    newChatTitle: "Start a new chat?",
-    newChatMessage:
-      "This clears the current conversation from your screen. What the AI has remembered about you is kept.",
-    newChatConfirm: "New chat",
     signOutTitle: "Sign out?",
     signOutMessage: "You'll need to sign in again to continue chatting.",
     signOutConfirm: "Sign out",

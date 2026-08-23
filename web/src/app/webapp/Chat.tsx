@@ -298,9 +298,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const [navOpen, setNavOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
-  // Starting a new chat clears the current one from the screen for good, so we ask first — but only
-  // when there's actually something to lose (see the New chat handler).
-  const [confirmNewChat, setConfirmNewChat] = useState(false);
   /** The conversation the user is about to remove from their history, pending confirmation. */
   const [confirmDeleteConv, setConfirmDeleteConv] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -2624,11 +2621,9 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         conversations={conversations}
         activeConversationId={activeConvId}
         historyLoading={historyLoading}
-        // An empty chat has nothing to lose, so starting a new one is a no-op worth doing silently.
-        // Once there are messages, clearing them is irreversible — confirm first.
-        onNewChat={() => (messages.length === 0 ? startNewChat() : setConfirmNewChat(true))}
-        // Opening a past chat needs no confirmation the way New chat does: nothing is lost, and the one
-        // you are leaving is one tap away in the same list.
+        // Neither starting a new chat nor opening a past one asks first: nothing is lost either way —
+        // the thread you leave stays in the history list beside it, one tap away.
+        onNewChat={startNewChat}
         onOpenConversation={(id) => void openConversation(id)}
         onTogglePin={(id, pinned) => void togglePin(id, pinned)}
         onRename={(id, title) => void renameConversation(id, title)}
@@ -2746,19 +2741,6 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           const id = confirmDeleteConv;
           setConfirmDeleteConv(null);
           if (id) void deleteConversation(id);
-        }}
-      />
-
-      <ConfirmDialog
-        open={confirmNewChat}
-        title={t.chat.newChatTitle}
-        message={t.chat.newChatMessage}
-        confirmLabel={t.chat.newChatConfirm}
-        cancelLabel={t.common.cancel}
-        onClose={() => setConfirmNewChat(false)}
-        onConfirm={() => {
-          setConfirmNewChat(false);
-          startNewChat();
         }}
       />
 

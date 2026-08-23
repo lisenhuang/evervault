@@ -4,9 +4,10 @@ Guidance for Claude Code when working in this repository.
 
 ## Rules
 
-- **Pull before you code.** Start every task with `git fetch origin && git status -sb`, and if the
-  branch is behind, `git pull --rebase origin main` before writing anything. (Commit or stash first —
-  a rebase won't run over a dirty tree.) Work written on a stale base has to be reconciled afterwards,
+- **Pull before you code — every time, no exceptions.** Before writing a single line, check what is
+  on GitHub: `git fetch origin && git status -sb`. If the remote is ahead of your local branch, rebase
+  onto it first — `git pull --rebase origin main` — and only then start editing. (Commit or stash
+  first — a rebase won't run over a dirty tree.) Work written on a stale base has to be reconciled afterwards,
   which is where conflicts get resolved badly. It is worst for EF migrations: one authored against an
   out-of-date `AppDbContextModelSnapshot.cs` collides with whatever landed meanwhile, and recovering
   means deleting the migration files, restoring the snapshot from `origin/main`, and regenerating it on
