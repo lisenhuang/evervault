@@ -148,6 +148,10 @@ const en = {
       completed: (items: string) => `Marked as done: ${items}.`,
       dismissed: (items: string) => `Taken off your to-do list: ${items}.`,
       updated: (items: string) => `Updated on your to-do list: ${items}.`,
+      // Said when a task they asked for was already on the list, so add_task refused to add a
+      // second copy (see lib/taskDuplicates.ts) — without this, a reply that never mentioned the
+      // clash would just look like the request was ignored.
+      duplicate: (items: string) => `Already on your to-do list, so nothing new was added: ${items}.`,
       // Said outright when they asked for something to go on the list and nothing did — the reply
       // itself may claim otherwise, which is exactly why this one isn't gated on what the reply says.
       notAdded: "Nothing has been added to your to-do list.",

@@ -197,12 +197,18 @@ export function buildRecheckNudge(opts: {
   userText: string;
   /** Titles of the tasks add_task actually created this turn, as the server returned them. */
   addedTitles: string[];
+  /** Titles add_task REFUSED to create this turn because the user already had them (see
+   *  taskDuplicates.ts). A tracking request that ends this way has been handled — the model was handed
+   *  the task they already have and told to raise it — so the untracked nudge must not fire and send it
+   *  back to add the second copy this whole check exists to prevent. */
+  duplicateTitles?: string[];
   /** Everything said in this conversation through the user's latest message. */
   conversation: string;
   /** The recalled-notes block injected into this turn's system instruction, if any. */
   notes: string | null;
 }): string | null {
   if (opts.addedTitles.length === 0) {
+    if (opts.duplicateTitles?.length) return null;
     return asksToTrackSomething(opts.userText) ? UNTRACKED_REQUEST_NUDGE : null;
   }
   const stray = straySavedTasks(opts.addedTitles, opts.conversation, opts.notes);

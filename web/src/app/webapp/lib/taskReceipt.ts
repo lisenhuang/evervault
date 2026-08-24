@@ -14,6 +14,7 @@
 
 import { htmlLang, type Lang } from "@/i18n/config";
 import type { Messages } from "@/i18n/messages/en";
+import { titlesLookAlike } from "./taskDuplicates";
 import type { ChangedTask, TaskChange, TaskChangeKind } from "./taskTools";
 
 /** Case-, spacing- and punctuation-insensitive form, so "Fix the door lock." and "fix the door lock"
@@ -99,8 +100,9 @@ function mergeChanges(changes: TaskChange[]): { kind: TaskChangeKind; task: Chan
 }
 
 /** Reported in a stable order rather than call order, so a turn that adds and completes things reads
- *  the same way every time. */
-const KIND_ORDER: TaskChangeKind[] = ["added", "completed", "dismissed", "updated"];
+ *  the same way every time. "duplicate" sits next to "added" because it answers the same question the
+ *  user is asking — did the thing I asked for go on my list? */
+const KIND_ORDER: TaskChangeKind[] = ["added", "duplicate", "completed", "dismissed", "updated"];
 
 /**
  * The line(s) to append to a finished reply, or null when there's nothing to add — either because the
@@ -115,6 +117,10 @@ const KIND_ORDER: TaskChangeKind[] = ["added", "completed", "dismissed", "update
  * the lines above — because the claim being contradicted is exactly the thing that can't be trusted
  * here. The cost when the model behaved correctly and said so itself is one redundant, true sentence.
  *
+ * A "duplicate" change is an add that was REFUSED because the task was already there (see
+ * taskDuplicates.ts). It reports the task they already have, so a reply that quietly dropped the
+ * request still leaves them knowing why nothing new appeared.
+ *
  * `reply` is the model's finished text. Kept pure (no React, no network) so it can be reasoned about
  * and reused by any surface.
  */
@@ -125,10 +131,19 @@ export function buildTaskReceipt(
   lang: Lang,
   askedToAdd = false,
 ): string | null {
-  const merged = mergeChanges(changes);
+  const all = mergeChanges(changes);
+  // A duplicate the user was told about and then approved: the second copy really is on the list now,
+  // so "already there, nothing added" would contradict the add reported beside it. The add is the news.
+  const addedTitles = all.filter((m) => m.kind === "added").map((m) => m.task.title);
+  const merged = all.filter(
+    (m) => m.kind !== "duplicate" || !addedTitles.some((added) => titlesLookAlike(added, m.task.title)),
+  );
   // Judged on the MERGED view, so "added" means still on the list when the turn ended — a task added
   // and dismissed again within the turn leaves them with nothing, and this line says exactly that.
-  const nothingAdded = askedToAdd && !merged.some((m) => m.kind === "added");
+  // A refused duplicate is the one case where nothing being added is the correct outcome rather than a
+  // miss: its own line below says why, so this one would only contradict it.
+  const nothingAdded =
+    askedToAdd && !merged.some((m) => m.kind === "added") && !merged.some((m) => m.kind === "duplicate");
 
   const groups = new Map<TaskChangeKind, string[]>();
   for (const { kind, task } of merged) {

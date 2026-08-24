@@ -1293,6 +1293,12 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
       const nudge = buildRecheckNudge({
         userText: userText(),
         addedTitles: taskChanges.filter((c) => c.kind === "added").flatMap((c) => c.tasks.map((x) => x.title)),
+        // An add refused because the task was already there is a HANDLED request, not a missed one:
+        // without this the untracked-request nudge would fire on "nothing saved" and push the model
+        // into adding the very duplicate the check just stopped.
+        duplicateTitles: taskChanges
+          .filter((c) => c.kind === "duplicate")
+          .flatMap((c) => c.tasks.map((x) => x.title)),
         // Everything said this conversation THROUGH the user's latest message — deliberately not the
         // reply being composed, whose whole problem is that it names the stray task.
         conversation: scopedHistory().map(messageBodyText).join("\n"),

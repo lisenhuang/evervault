@@ -146,6 +146,7 @@ const ko: Messages = {
       completed: (items: string) => `완료로 표시했어요: ${items}.`,
       dismissed: (items: string) => `할 일 목록에서 뺐어요: ${items}.`,
       updated: (items: string) => `할 일 목록을 업데이트했어요: ${items}.`,
+      duplicate: (items: string) => `이미 할 일 목록에 있어서 새로 추가하지 않았어요: ${items}.`,
       notAdded: "할 일 목록에 추가된 것은 없어요.",
       itemWhen: (title: string, when: string) => `${title}(${when})`,
       separator: "; ",

@@ -146,6 +146,7 @@ const ja: Messages = {
       completed: (items: string) => `完了にしました：${items}。`,
       dismissed: (items: string) => `やることリストから削除しました：${items}。`,
       updated: (items: string) => `やることリストを更新しました：${items}。`,
+      duplicate: (items: string) => `すでにやることリストにあるため、追加していません：${items}。`,
       notAdded: "やることリストには何も追加されていません。",
       itemWhen: (title: string, when: string) => `${title}（${when}）`,
       separator: "、",

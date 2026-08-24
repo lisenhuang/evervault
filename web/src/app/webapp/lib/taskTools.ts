@@ -6,6 +6,7 @@
 
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { describeRecurrence, firstOccurrence, isRecurring, nextOccurrence } from "./recurrence";
+import { claimAdd, findSimilarTasks, normalizeTitle } from "./taskDuplicates";
 import { createTask, fetchTasks, getTasks, localDateStr, patchTask, TASK_FETCH_TAKE, type Task } from "./tasks";
 import { formatMemoryDate } from "./time";
 
@@ -42,6 +43,22 @@ export const TASKS_PERSONA =
   "YYYY-MM-DD date, and omit the date if they didn't give one. When the user says something is done, " +
   "call complete_task with its id; use update_task to reschedule a task or to dismiss one they no longer " +
   "want (dismiss, don't complete, when it wasn't actually done). " +
+  // The reported failure: asked to put something on the list, the assistant added it AGAIN — the user
+  // ended up with two identical "Enroll with a GP" tasks and a reply that mentioned "both of your
+  // 'Enroll with a GP' tasks" as though that were normal, and had to ask for one to be deleted.
+  // add_task now looks before it writes (see taskDuplicates.ts); this is the half that tells the model
+  // what to do when the check fires, since a `duplicate` response it never relays is invisible.
+  "\n\nCHECK THE LIST BEFORE YOU ADD — NEVER ADD THE SAME TASK TWICE. Every add_task call is checked " +
+  "against what they already have, so a request matching something already on their list comes back " +
+  "`duplicate`, with the task(s) it matched, and NOTHING is saved. That is the check working, not a " +
+  "failure. When it happens, say so in that same reply: name the task they already have and its date " +
+  "(\"you've already got 'enrol with a GP' on your list — it's undated\"), and ask whether they still " +
+  "want a second copy. NEVER report a duplicate as added, and never quietly move on as though they " +
+  "hadn't asked. Add it only once they have answered yes — then call add_task again with " +
+  "allowDuplicate true — and never set allowDuplicate on a first attempt or on your own initiative: " +
+  "the check exists precisely because you cannot tell from the conversation alone what is already " +
+  "there. When what they actually want is the task they already have moved, renamed or given a date, " +
+  "use update_task on it rather than adding another.\n\n" +
   // The reported failure: the assistant opened with "you have that task to generate the NotebookLM
   // video, which was due yesterday", the user replied (by voice) "I have finished the task", and it
   // answered "which one did you finish?" — of a task it had named itself one turn earlier. Which task
@@ -186,7 +203,9 @@ export const ADD_TASK_DECLARATION: FunctionDeclaration = {
     "Add a new task to the user's list. An explicit request to track something (\"remind me to X\", " +
     "\"add X to my to-do list\") already counts as the user's go-ahead — add it right away and confirm " +
     "what you saved in the same reply. Only ask first when a to-do merely came up in passing and they " +
-    "haven't asked you to track it — then add it once they say yes.",
+    "haven't asked you to track it — then add it once they say yes. The list is checked for you before " +
+    "anything is saved: a task they already have comes back as `duplicate` with the matching task(s) " +
+    "and is NOT added, so tell them it's already there and ask before adding a second copy.",
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -207,6 +226,13 @@ export const ADD_TASK_DECLARATION: FunctionDeclaration = {
           "'monthly:<day-of-month>' (e.g. 'monthly:15'). Use 'weekends' for \"every weekend\". Omit " +
           "for a one-off task. When set, dueDate is optional — the first occurrence is worked out for " +
           "you — and the task moves to its next date each time it is completed.",
+      },
+      allowDuplicate: {
+        type: Type.BOOLEAN,
+        description:
+          "Add this even though it looks like a task they already have. ONLY after a previous " +
+          "add_task came back `duplicate`, you told the user which task they already have, and they " +
+          "said they want a second one anyway. Never set it on a first attempt.",
       },
     },
     required: ["title"],
@@ -325,15 +351,6 @@ const brief = (t: Task) => ({
  *  otherwise sweep in every unrelated task that happens to contain them. */
 const MIN_PARTIAL_MATCH_CHARS = 3;
 
-/** Case-, spacing- and punctuation-insensitive form of a title, so "Buy a bedside table." and
- *  "buy a bedside table" are the same name. Strips punctuation/symbols only — CJK titles survive. */
-const normalizeTitle = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[\p{P}\p{S}]+/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
 type Targets = {
   /** Ids to act on, de-duplicated, in the order the model named them. */
   ids: number[];
@@ -430,8 +447,11 @@ async function remainingOpen(): Promise<{ openCount: number; stillOpen: { id: nu
 
 // --- What actually changed, reported back to the surface ---
 
-/** The four ways a turn can move a task on or around the list. */
-export type TaskChangeKind = "added" | "completed" | "dismissed" | "updated";
+/** The four ways a turn can move a task on or around the list — plus the one way it deliberately
+ *  doesn't: "duplicate" is an add that was refused because the task was already there. It travels the
+ *  same channel because the user has exactly the same right to be told about it (see taskReceipt.ts);
+ *  the task it carries is the EXISTING one, not a new row. */
+export type TaskChangeKind = "added" | "completed" | "dismissed" | "updated" | "duplicate";
 
 /** One task a mutating call actually changed, as the SERVER came back with it. */
 export type ChangedTask = {
@@ -446,10 +466,11 @@ export type ChangedTask = {
 export type TaskChange = { kind: TaskChangeKind; tasks: ChangedTask[] };
 
 /**
- * Fired after every successful mutation. The caller has always used this to refresh its agenda cache;
- * it now also receives WHAT changed, so a surface can check the model's reply against what really
- * happened and tell the user itself when the reply didn't (see lib/taskReceipt.ts). Optional argument,
- * so an existing `() => void` handler keeps working untouched.
+ * Fired after every successful mutation — and after an add refused as a duplicate, which changes
+ * nothing but is just as much news to the user. The caller has always used this to refresh its agenda
+ * cache; it now also receives WHAT changed, so a surface can check the model's reply against what
+ * really happened and tell the user itself when the reply didn't (see lib/taskReceipt.ts). Optional
+ * argument, so an existing `() => void` handler keeps working untouched.
  */
 export type OnTasksChanged = (change?: TaskChange) => void;
 
@@ -525,16 +546,62 @@ export async function runTaskTool(
     // Anchor the series so a repeating task always has a first date: without one there is nothing to
     // roll forward from, and the task would sit undated forever instead of coming due.
     const dueDate = str(args.dueDate) ?? (repeat ? firstOccurrence(repeat) ?? undefined : undefined);
-    const task = await createTask(
-      { title, details: str(args.details), dueDate, dueTime: str(args.dueTime), recurrence: repeat, conversationId },
-      "ai",
-    );
-    if (!task) return JSON.stringify({ error: "could not add the task" });
-    onChanged?.({
-      kind: "added",
-      tasks: [{ id: task.id, title: task.title, due: task.dueDate, time: task.dueTime }],
-    });
-    return JSON.stringify({ ok: true, task: brief(task) });
+
+    // Look before writing. Only an explicit allowDuplicate — which the persona only lets the model send
+    // after the user has been told about the clash and asked for a second copy anyway — skips this.
+    const allowDuplicate = args.allowDuplicate === true || args.allowDuplicate === "true";
+    // Claimed synchronously, ahead of every await below: in a Live turn tool calls run in parallel, so
+    // two add_task calls for the same thing would otherwise both read the list before either write
+    // reached it, and both create. Released in `finally` — a failed add must not block the retry.
+    const claim = allowDuplicate ? null : claimAdd(title);
+    if (claim?.clash) {
+      return JSON.stringify({
+        duplicate: true,
+        notAdded: title,
+        note:
+          `you are already adding "${claim.clash}" in this same turn — it is not added twice. Confirm ` +
+          "the one task, and do not call add_task for it again.",
+      });
+    }
+    try {
+      // fetchTasks, not getTasks: a read that FAILED comes back null, and a duplicate check that
+      // couldn't run must never be the reason a task doesn't get added. Unknown means add it.
+      const open = await fetchTasks("open");
+      const already = allowDuplicate || !open ? [] : findSimilarTasks(title, open);
+      if (already.length > 0) {
+        // Nothing is created. The model is handed what they already have so the reply can name it and
+        // ask; the surface is told too (onChanged), so a reply that stays silent about it still can't
+        // leave the user thinking their task was saved.
+        onChanged?.({
+          kind: "duplicate",
+          tasks: already.map((t) => ({ id: t.id, title: t.title, due: t.dueDate, time: t.dueTime })),
+        });
+        return JSON.stringify({
+          duplicate: true,
+          notAdded: title,
+          existing: already.map(brief),
+          note:
+            "NOT added — the user's list already has " +
+            (already.length === 1 ? "this task" : "tasks that say this") +
+            ". Tell them it is already there, naming it and its date, and ask whether they still want " +
+            "a second copy; add it only if they say so, by calling add_task again with " +
+            "allowDuplicate true. If what they want is the task they already have rescheduled, " +
+            "renamed or given a date, use update_task on it instead. Never say you added anything.",
+        });
+      }
+      const task = await createTask(
+        { title, details: str(args.details), dueDate, dueTime: str(args.dueTime), recurrence: repeat, conversationId },
+        "ai",
+      );
+      if (!task) return JSON.stringify({ error: "could not add the task" });
+      onChanged?.({
+        kind: "added",
+        tasks: [{ id: task.id, title: task.title, due: task.dueDate, time: task.dueTime }],
+      });
+      return JSON.stringify({ ok: true, task: brief(task) });
+    } finally {
+      claim?.release();
+    }
   }
 
   // Both mutations below act on however many tasks the call named (see resolveTargets): one PATCH per
