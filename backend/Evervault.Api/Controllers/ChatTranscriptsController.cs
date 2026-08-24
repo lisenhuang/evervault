@@ -15,14 +15,20 @@ namespace Evervault.Api.Controllers;
 /// <para>
 /// Separate from <c>/chat/memories</c> on purpose. That endpoint feeds recall: it clips content, embeds
 /// it, mixes in summaries/digests, and its rows are removable one-by-one through the forget flow. This
-/// one only has to be faithful — full text, every message including replies that errored, append-only.
+/// one only has to be faithful — full text, every message including replies that errored.
 /// The browser writes to both; neither depends on the other.
 /// </para>
 /// <para>
 /// Writes are idempotent on the browser's message id, so the client can retry, re-send a reply once it
 /// settles, and flush again as the tab closes without ever duplicating a message.
 /// </para>
-/// Scoped to the signed-in end-user (UserCookie); rows are removed only by deleting the account.
+/// <para>
+/// Faithful is not the same as immutable: a message the user deletes from the chat is deleted here too
+/// (<see cref="Delete"/>), because a record that keeps handing back a bubble the user removed isn't a
+/// record of their conversation — it is a screen they can't clear. Nothing else erases a row short of
+/// deleting the account.
+/// </para>
+/// Scoped to the signed-in end-user (UserCookie).
 /// </summary>
 [ApiController]
 [Route("chat/transcript")]
@@ -148,6 +154,41 @@ public class ChatTranscriptsController : ControllerBase
                 _db.ChangeTracker.Clear();
             }
         }
+    }
+
+    /// <summary>
+    /// Erase one message from the record — the server half of deleting a bubble in the chat.
+    /// <para>
+    /// Addressed by the browser's own message id, which is what the client has (bubbles carry it; the
+    /// row id is only ever seen by a listing) and is already unique per user, so the lookup is the same
+    /// one <see cref="Record"/> uses as its idempotency key. Scoped to the signed-in user, so an id
+    /// belonging to somebody else simply matches nothing.
+    /// </para>
+    /// <para>
+    /// Idempotent, and deliberately answers the same way whether a row was there or not: the client
+    /// deletes a bubble that may never have been recorded yet (an unsent message, one dropped from the
+    /// outbox) and retries a delete that failed offline, and every one of those is asking for the same
+    /// end state — this message is not in the record. A 404 would make the client retry forever over a
+    /// message that was already gone.
+    /// </para>
+    /// <para>
+    /// Only the transcript row goes. Any file the message carried stays in storage (it is still the
+    /// user's document, and the assistant can still hand it back), and what the recall corpus learned
+    /// from the conversation is a separate store with its own forget flow — see <c>/chat/memories</c>.
+    /// </para>
+    /// </summary>
+    [HttpDelete("{clientMessageId}")]
+    public async Task<IActionResult> Delete(string clientMessageId)
+    {
+        var id = (clientMessageId ?? "").Trim();
+        // Longer than the column can hold is an id that cannot be stored, so nothing can match it.
+        if (id.Length is 0 or > 64) return NoContent();
+
+        var uid = Uid;
+        await _db.ChatTranscripts
+            .Where(t => t.EndUserId == uid && t.ClientMessageId == id)
+            .ExecuteDeleteAsync();
+        return NoContent();
     }
 
     /// <summary>Read the record back, oldest-first within a conversation (newest-first across all of

@@ -80,7 +80,7 @@ import {
 import { loadConversation } from "./lib/conversationLoad";
 import { regenerateConversationTitle, summarizeConversationTitle } from "./lib/conversationTitle";
 import type { TitleTurn } from "./lib/conversationTitle";
-import { purgeTranscriptOutbox, onTranscriptRecorded } from "./transcriptApi";
+import { purgeTranscriptOutbox, onTranscriptRecorded, deleteTranscriptMessage } from "./transcriptApi";
 import { useVisualViewport } from "./useVisualViewport";
 import { api, type Me } from "./authApi";
 import { friendlyAiError, micErrorMessage } from "./lib/aiError";
@@ -520,7 +520,7 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   // the message list rather than the send/reply path so it also captures what turn bookkeeping drops —
   // a user message whose reply then failed, the error the assistant showed instead, and a call that
   // ended mid-sentence. Independent of memory/recall (recordTextTurns), which stays exactly as it was.
-  const hydrateRecorder = useTranscriptRecorder(
+  const { hydrate: hydrateRecorder, forget: forgetRecorded } = useTranscriptRecorder(
     messages,
     // A message appearing during a call belongs to the call's own conversation, which survives a
     // "New chat" mid-call; everything else belongs to the conversation on screen.
@@ -2139,14 +2139,23 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     playAudioClip(m.id, m.audio.base64, m.audio.sampleRate);
   }
 
-  // Remove a message from the transcript (from the long-press / right-click menu). History is
-  // in-memory only, so dropping it here is all it takes for it to disappear from the chatbox.
+  // Remove a message from the chat (from the long-press / right-click menu).
+  //
+  // Taking it off screen is only half of it. Every message is written to the durable record, and a
+  // reopened or refreshed conversation is rebuilt from exactly those rows — so a message dropped only
+  // from this list is handed straight back the next time the page loads. It has to leave the record too,
+  // and it has to stop being on its way there: the recorder deliberately keeps messages that vanish from
+  // the list (cleared by "New chat", deleted before their quiet period elapsed) because they were still
+  // said, and a delete is the one case where that is wrong. Both halves are queued and survive being
+  // offline or the tab closing — see transcriptApi.
   function deleteMessage(m: ChatMessage) {
     // If this message's spoken clip is the one loaded in the player, stop it — its bubble is leaving.
     if (audioPlaying?.id === m.id) stopReplyAudio();
     applyMessages((cur) => cur.filter((x) => x.id !== m.id));
     // Drop a pending reply that quoted the now-deleted message.
     setReplyTo((r) => (r?.id === m.id ? null : r));
+    forgetRecorded(m.id);          // …so the next settle doesn't write it
+    deleteTranscriptMessage(m.id); // …and so the copy already on the server goes
   }
 
   // --- Realtime voice call (Live API) ---

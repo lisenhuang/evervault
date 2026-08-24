@@ -12,7 +12,7 @@
 // the same message twice (a retry, a reply re-sent once it finished streaming, a flush as the tab closes)
 // updates one row instead of appending copies.
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { flushTranscript, recordTranscript, type TranscriptItem } from "../transcriptApi";
 import { messageBodyText, type ChatMessage } from "../types";
 
@@ -50,17 +50,25 @@ export type HydratedMessage = {
   at: string;
 };
 
+/** What the chat needs from the recorder beyond it simply running. */
+export type TranscriptRecorder = {
+  /** Adopt messages read back OUT of the record as already recorded — see the implementation. */
+  hydrate: (loaded: HydratedMessage[]) => void;
+  /** Stop tracking a message the user has DELETED, so it is not written back — see the implementation. */
+  forget: (id: string) => void;
+};
+
 /**
  * @param messages   the current chat list (every mutation flows through applyMessages)
  * @param conversationId  the conversation a message appearing *now* belongs to
  * @param inCall     whether a realtime call is up, which is what makes a message "live"
- * @returns `hydrate` — see below. Call it before putting messages read back from the record on screen.
+ * @returns `hydrate` and `forget` — see below.
  */
 export function useTranscriptRecorder(
   messages: ChatMessage[],
   conversationId: () => string,
   inCall: () => boolean,
-): (loaded: HydratedMessage[]) => void {
+): TranscriptRecorder {
   // Keyed by message id and kept independently of the list: a message deleted, or cleared by "New chat",
   // before its quiet period elapsed must still be recorded — it was said either way.
   const seen = useRef(new Map<string, Entry>());
@@ -186,7 +194,7 @@ export function useTranscriptRecorder(
    * `recorded` with the same text is what makes `sync` skip them (it only sends genuine revisions), and
    * it is why this must run before the messages are handed to applyMessages, not after.
    */
-  return useCallback((loaded: HydratedMessage[]) => {
+  const hydrate = useCallback((loaded: HydratedMessage[]) => {
     for (const m of loaded) {
       seen.current.set(m.id, {
         conversationId: m.conversationId,
@@ -199,4 +207,22 @@ export function useTranscriptRecorder(
       });
     }
   }, []);
+
+  /**
+   * Drop a message the user has DELETED, so the recorder never writes it.
+   *
+   * A message leaving the list normally means the opposite (see the effect above): it was still said, so
+   * it is kept and recorded even though the bubble is gone — cleared by "New chat", or deleted before its
+   * quiet period elapsed. A deliberate delete is the one case where that is wrong, and it is not
+   * something the list can tell us: both look identical from here. So the chat says so explicitly, and
+   * this is what stops the very next settle from writing the message the user just removed.
+   *
+   * Erasing what is ALREADY on the server is a separate step (deleteTranscriptMessage) — this only stops
+   * the recorder putting it back.
+   */
+  const forget = useCallback((id: string) => {
+    seen.current.delete(id);
+  }, []);
+
+  return useMemo(() => ({ hydrate, forget }), [hydrate, forget]);
 }

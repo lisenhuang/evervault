@@ -18,8 +18,10 @@ namespace Evervault.Api.Models;
 /// clip; with no such index here the text can be stored whole.
 /// </para>
 /// <para>
-/// Retention is account-level: rows live as long as the account does and are removed only when the user
-/// deletes it (see <c>AuthController.DeleteAccount</c>) — the one deletion strategy the assistant offers.
+/// Retention is account-level: rows live as long as the account does. The two things that remove one are
+/// the user deleting that message from the chat (<c>DELETE /chat/transcript/{clientMessageId}</c>, so a
+/// bubble they removed doesn't come back on the next refresh) and the user deleting the account, which
+/// takes everything (see <c>AuthController.DeleteAccount</c>).
 /// </para>
 /// </summary>
 public class ChatTranscript

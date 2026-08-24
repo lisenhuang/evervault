@@ -5,7 +5,10 @@
 //
 // Separate from recordApi.ts on purpose. That writes the *recall* corpus (clipped, embedded, summarized,
 // and removable one item at a time through the forget flow). This writes the *record*: full text, every
-// message including replies that errored, append-only. Both are written; neither waits on the other.
+// message including replies that errored. Both are written; neither waits on the other.
+//
+// The record is what a reopened or refreshed conversation is rebuilt from, so deleting a message is a
+// write too — see deleteTranscriptMessage. Without it, removing a bubble only clears the screen.
 //
 // Every write carries the browser's own message id, and the server treats it as an idempotency key. That
 // is what makes the outbox below safe: a failed send is simply retried, and a reply re-sent after it grew
@@ -35,6 +38,13 @@ type Queued = TranscriptItem & { conversationId: string; attempts?: number };
 // (lib/errorReport.ts) and the style cache (lib/store.ts).
 const OUTBOX_PREFIX = "ev:transcriptOutbox:";
 
+// The other half of the record: messages the user has DELETED from the chat and that the server has not
+// erased yet. Queued and persisted exactly like the outbox above, per account and for the same reasons —
+// a delete has to survive being offline, the tab closing, and a deploy. Without it, deleting a bubble
+// only clears the screen and the message is handed straight back by the next refresh.
+const DELETIONS_PREFIX = "ev:transcriptDeletions:";
+const MAX_DELETIONS = 500;
+
 // A send that fails (offline, tab frozen mid-flight) is kept and retried on the next flush. The cap
 // stops an outage from growing localStorage without bound; oldest entries go first, since the newest
 // messages are the ones the user is most likely to still be looking at.
@@ -55,10 +65,14 @@ const MAX_ATTEMPTS = 12;
 /** Messages not yet confirmed by the server, keyed by message id so a revision of a message still
  *  queued simply replaces it. Insertion order is send order. */
 const outbox = new Map<string, Queued>();
+/** Ids the user has deleted, mapped to how many times the server has answered and refused to erase them.
+ *  Consulted by the sending path too: an id in here is never written, whatever is queued for it. */
+const deletions = new Map<string, number>();
 /** The signed-in account these messages belong to. Empty means "nobody" — nothing sends. */
 let owner = "";
 let loaded = false;
 let flushing = false;
+let deleting = false;
 /** Bumped on every account change. A flush belongs to the generation it started in; if that number has
  *  moved by the time an await resolves, the batches it is still holding belong to a previous account and
  *  must not be sent under the new cookie, nor allowed to write over the new account's queue. Comparing
@@ -73,6 +87,7 @@ let generation = 0;
 export function setTranscriptOutboxOwner(email: string): void {
   if (email === owner) return;
   outbox.clear();
+  deletions.clear();
   loaded = false;
   owner = email;
   generation++;
@@ -91,11 +106,13 @@ export function purgeTranscriptOutbox(): void {
   if (owner) {
     try {
       localStorage.removeItem(OUTBOX_PREFIX + owner);
+      localStorage.removeItem(DELETIONS_PREFIX + owner);
     } catch {
       /* storage disabled — nothing was persisted to remove */
     }
   }
   outbox.clear();
+  deletions.clear();
   loaded = false;
   owner = "";
   generation++;
@@ -106,11 +123,21 @@ function load(): void {
   loaded = true;
   try {
     const raw = localStorage.getItem(OUTBOX_PREFIX + owner);
-    if (!raw) return;
-    const rows = JSON.parse(raw) as Queued[];
-    for (const r of rows) if (r?.clientMessageId) outbox.set(r.clientMessageId, r);
+    if (raw) {
+      const rows = JSON.parse(raw) as Queued[];
+      for (const r of rows) if (r?.clientMessageId) outbox.set(r.clientMessageId, r);
+    }
   } catch {
     /* unreadable outbox — start clean rather than block recording */
+  }
+  try {
+    const raw = localStorage.getItem(DELETIONS_PREFIX + owner);
+    if (raw) {
+      const rows = JSON.parse(raw) as [string, number][];
+      for (const [id, attempts] of rows) if (id) deletions.set(id, typeof attempts === "number" ? attempts : 0);
+    }
+  } catch {
+    /* unreadable — a delete that can't be replayed is no worse than one that was never queued */
   }
 }
 
@@ -125,6 +152,17 @@ function persist(): void {
   }
 }
 
+function persistDeletions(): void {
+  if (!owner) return;
+  try {
+    const key = DELETIONS_PREFIX + owner;
+    if (deletions.size === 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify([...deletions]));
+  } catch {
+    /* storage full / disabled — the in-memory queue still flushes this session */
+  }
+}
+
 /** Queue messages for recording and start a flush. Fire-and-forget: recording must never delay or
  *  interfere with the chat, so nothing here throws and nothing is awaited by the caller. */
 export function recordTranscript(conversationId: string, items: TranscriptItem[]): void {
@@ -132,12 +170,95 @@ export function recordTranscript(conversationId: string, items: TranscriptItem[]
   load();
   for (const it of items) {
     if (!it.clientMessageId || !it.text.trim()) continue;
+    // Deleted by the user while it was still on its way to the server. Re-queueing it here is how a
+    // message comes back from the dead: the erase would land and this write would put it straight back.
+    if (deletions.has(it.clientMessageId)) continue;
     // Re-inserting under the same key keeps the newest wording and its original queue position.
     outbox.set(it.clientMessageId, { ...it, conversationId });
   }
   while (outbox.size > MAX_OUTBOX) outbox.delete(outbox.keys().next().value as string);
   persist();
   void flushTranscript();
+}
+
+/**
+ * Erase one message from the record, and stop it ever being written if it hasn't been yet.
+ *
+ * Called when the user deletes a bubble. Deleting it on screen is not enough on its own: the recorder
+ * writes every message that passes through the chat to the server, and a reopened or refreshed
+ * conversation is rebuilt from exactly those rows — so a message removed only locally is handed back
+ * intact the next time the page loads.
+ *
+ * Fire-and-forget, like recording, and queued for the same reasons: a delete made offline, or as the tab
+ * closes, still has to land. Until the server confirms it, the id also acts as a tombstone that blocks
+ * any write of that message — see recordTranscript and flushTranscript.
+ */
+export function deleteTranscriptMessage(clientMessageId: string): void {
+  if (!owner || !clientMessageId) return;
+  load();
+  // Anything still queued for this message is moot — it is not going to be recorded at all.
+  outbox.delete(clientMessageId);
+  persist();
+  deletions.set(clientMessageId, 0);
+  // Oldest first, same as the outbox: a delete this far back has had many chances to send already.
+  while (deletions.size > MAX_DELETIONS) deletions.delete(deletions.keys().next().value as string);
+  persistDeletions();
+  void flushTranscriptDeletions();
+}
+
+/**
+ * Send every queued erase. One request per message: deletes are rare (a user removing a bubble), so
+ * there is nothing to batch, and one failing must not hold up the rest.
+ *
+ * A server that answers anything other than success is counted against the message, exactly as a refused
+ * write is — which is also what retires an erase aimed at a server that predates the endpoint (404) once
+ * it has been tried enough times. Being offline costs nothing: the queue simply waits for the next flush.
+ */
+export async function flushTranscriptDeletions(): Promise<void> {
+  load();
+  if (deleting || !owner || deletions.size === 0) return;
+  deleting = true;
+  const gen = generation;
+  // Ids this pass has already sent a request for. Deleting a second bubble while the first erase is in
+  // flight lands here mid-run (and its own call is turned away by the guard above), so the queue is
+  // re-read each time round rather than iterated over a snapshot — while this set stops a message that
+  // just failed from being retried immediately and burning its whole attempt budget in one flush.
+  const tried = new Set<string>();
+  try {
+    for (;;) {
+      if (generation !== gen) return; // account changed — these erases belong to somebody else's cookie
+      const id = [...deletions.keys()].find((k) => !tried.has(k));
+      if (id === undefined) return;
+      tried.add(id);
+      let ok = false;
+      let answered = false;
+      try {
+        const res = await api(`/api/chat/transcript/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          // No body, so it is always small enough — a delete made as the tab closes still goes out.
+          keepalive: true,
+        });
+        answered = true;
+        ok = res.ok;
+      } catch {
+        ok = false;
+      }
+      if (generation !== gen) return;
+      if (ok) {
+        deletions.delete(id);
+        persistDeletions();
+        continue;
+      }
+      // Offline: stop here rather than burning every message's attempts on one dead network.
+      if (!answered) return;
+      const attempts = (deletions.get(id) ?? 0) + 1;
+      if (attempts >= MAX_ATTEMPTS) deletions.delete(id);
+      else deletions.set(id, attempts);
+      persistDeletions();
+    }
+  } finally {
+    deleting = false;
+  }
 }
 
 /** Whether a failed send is worth keeping. Only a request the server will never accept is dropped;
@@ -180,8 +301,14 @@ function announceRecorded(conversationId: string) {
  *  flush — which the recorder also triggers on mount, when connectivity returns, and as the tab closes. */
 export async function flushTranscript(): Promise<void> {
   load();
+  // Erases go first, and on every trigger this flush has (mount, reconnect, unload) — a message the user
+  // deleted should leave the server at the first opportunity, not wait for the next one they send.
+  await flushTranscriptDeletions();
   if (flushing || !owner || outbox.size === 0) return;
   flushing = true;
+  // Set when a batch that has just been written turns out to contain a message deleted while it was in
+  // flight: the erase raced the write and lost, so the row is back and has to be erased again.
+  let raced = false;
   // The account this flush belongs to. A sign-out or account switch can land on any await below, and
   // from that moment these messages are somebody else's business: the cookie now belongs to another
   // user (so the server would file them under them) and `outbox`/the storage key have been re-pointed
@@ -261,6 +388,7 @@ export async function flushTranscript(): Promise<void> {
             stalled = true;
             break;
           }
+          if (batch.some((q) => deletions.has(q.clientMessageId))) raced = true;
           // Drop by identity, not by key: a revision queued while this batch was in flight is a
           // different object under the same id, and deleting it would lose the newer wording.
           for (const q of batch) if (outbox.get(q.clientMessageId) === q) outbox.delete(q.clientMessageId);
@@ -273,6 +401,7 @@ export async function flushTranscript(): Promise<void> {
     }
   } finally {
     flushing = false;
+    if (raced) void flushTranscriptDeletions();
   }
 }
 
