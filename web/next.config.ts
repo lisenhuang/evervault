@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
   // Pin file tracing to THIS dir so the standalone bundle only traces web/'s deps and
   // does not walk up to the repo root (which holds app/ and backend/).
   outputFileTracingRoot: path.join(__dirname),
+  // /ppt is the name people type when they are looking for a slide deck; /deck is what it is
+  // called. Keep both working so a link written either way lands in the same place.
+  async redirects() {
+    return [{ source: "/ppt", destination: "/deck", permanent: false }];
+  },
 };
 
 export default nextConfig;
