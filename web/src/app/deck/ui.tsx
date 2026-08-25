@@ -145,6 +145,37 @@ export function Mono({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * An external link inside a slide. The click MUST stop propagating: the canvas treats a click
+ * anywhere as "next slide", so without this, following a link would also turn the page under you —
+ * you would come back from the new tab to a different slide than you left.
+ */
+export function Ext({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-baseline gap-[3px] text-blue-600 underline decoration-blue-600/30 underline-offset-[3px] transition-colors hover:decoration-blue-600 dark:text-blue-400 dark:decoration-blue-400/30 dark:hover:decoration-blue-400"
+    >
+      {children}
+      <svg
+        viewBox="0 0 24 24"
+        className="h-[0.72em] w-[0.72em] self-center"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M7 17 17 7M9 7h8v8" />
+      </svg>
+    </a>
+  );
+}
+
 /** A keycap, for the shortcut legend. */
 export function Kbd({ children }: { children: ReactNode }) {
   return (

@@ -284,6 +284,92 @@ export function EmbeddingSpace() {
   );
 }
 
+/* ------------------------------------- 3b. two spaces that cannot be compared */
+
+/**
+ * A 2-D vector beside a 3-D one, drawn in deliberately identical style — same axis length, same
+ * arrow, same decomposition dashes — so the ONLY visible difference is the number of axes. That is
+ * the argument: nothing about these two is incompatible except their width, and their width is
+ * enough. The first two components are even printed the same, to head off the obvious
+ * "but couldn't you just pad it?" — same numbers, still no shared space to measure in.
+ *
+ * 2 against 3 is what fits on a slide; the real pair is 768 against 1536.
+ */
+export function DimensionMismatch() {
+  const l = useDeckLabel();
+
+  const AX = "stroke-black/30 dark:stroke-white/35";
+  const DASH = "stroke-black/20 dark:stroke-white/25";
+  const VEC = "stroke-blue-500";
+  const VECFILL = "fill-blue-500";
+
+  return (
+    <Frame viewBox="0 0 560 320">
+      {/* ---------------------------------------------------------- 2-D, left */}
+      <text x="78" y="16" className={`${MUTED} font-mono text-[12px] uppercase tracking-[0.12em]`}>
+        {l("model A · 2 dimensions", "模型 A · 2 维")}
+      </text>
+
+      <line x1="78" y1="190" x2="188" y2="190" className={AX} strokeWidth={1.5} />
+      <line x1="78" y1="190" x2="78" y2="80" className={AX} strokeWidth={1.5} />
+      <line x1="146" y1="126" x2="146" y2="190" className={DASH} strokeWidth={1.25} strokeDasharray="3 4" />
+      <line x1="146" y1="126" x2="78" y2="126" className={DASH} strokeWidth={1.25} strokeDasharray="3 4" />
+      <line x1="78" y1="190" x2="146" y2="126" className={VEC} strokeWidth={2.5} />
+      <path d="M 146 126 L 140.7 137.8 L 133.9 130.6 Z" className={VECFILL} />
+      <circle cx="78" cy="190" r="3" className="fill-black/40 dark:fill-white/45" />
+
+      <text x="78" y="246" className={`${LABEL} font-mono text-[13px]`}>
+        [ 0.42, −0.13 ]
+      </text>
+
+      {/* ---------------------------------------------------------- 3-D, right */}
+      <text x="392" y="16" className={`${MUTED} font-mono text-[12px] uppercase tracking-[0.12em]`}>
+        {l("model B · 3 dimensions", "模型 B · 3 维")}
+      </text>
+
+      <line x1="392" y1="190" x2="502" y2="190" className={AX} strokeWidth={1.5} />
+      <line x1="392" y1="190" x2="392" y2="80" className={AX} strokeWidth={1.5} />
+      {/* the third axis, angled toward the viewer — the whole difference between the two panels */}
+      <line x1="392" y1="190" x2="345" y2="224" className={AX} strokeWidth={1.5} />
+      <line x1="392" y1="190" x2="460" y2="190" className={DASH} strokeWidth={1.25} strokeDasharray="3 4" />
+      <line x1="460" y1="190" x2="436.5" y2="207" className={DASH} strokeWidth={1.25} strokeDasharray="3 4" />
+      <line x1="436.5" y1="207" x2="436.5" y2="143" className={DASH} strokeWidth={1.25} strokeDasharray="3 4" />
+      <line x1="392" y1="190" x2="436.5" y2="143" className={VEC} strokeWidth={2.5} />
+      <path d="M 436.5 143 L 431.8 155.1 L 424.6 148.3 Z" className={VECFILL} />
+      <circle cx="392" cy="190" r="3" className="fill-black/40 dark:fill-white/45" />
+
+      <text x="392" y="246" className={`${LABEL} font-mono text-[13px]`}>
+        [ 0.42, −0.13, 0.77 ]
+      </text>
+
+      {/* --------------------------------------------- the operation that cannot run */}
+      <line x1="0" y1="266" x2="560" y2="266" className={STROKE} strokeWidth={1} strokeDasharray="4 6" />
+      <g transform="translate(150 282)">
+        <circle cx="11" cy="11" r="11" className="fill-black/[0.05] dark:fill-white/[0.08]" />
+        <path
+          d="M 5 5 L 17 17 M 17 5 L 5 17"
+          className="stroke-black/40 dark:stroke-white/45"
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
+        <text x="32" y="16" className={`${LABEL} font-mono text-[14px]`}>
+          cosine( a, b )
+        </text>
+        <text x="152" y="16" className={`${MUTED} text-[13px]`}>
+          {l("no shared space to measure in", "没有一个共同的空间可以度量")}
+        </text>
+      </g>
+
+      <text x="0" y="316" className={`${MUTED} font-mono text-[11px]`}>
+        {l(
+          "2 against 3 here · 768 against 1536 in the code · the same error",
+          "这里是 2 对 3 · 代码里是 768 对 1536 · 同一个报错",
+        )}
+      </text>
+    </Frame>
+  );
+}
+
 /* ------------------------------------------------- 4. three lanes, one list */
 
 /** Vector / full-text / trigram each rank independently; RRF fuses the ranks. */

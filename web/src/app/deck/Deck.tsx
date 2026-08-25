@@ -249,7 +249,7 @@ export default function Deck() {
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
     // Horizontal intent only, so scrolling a reflowed slide is never read as a page turn.
-    if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    if (Math.abs(dx) < 44 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
     go(index + (dx < 0 ? 1 : -1));
   };
 
@@ -343,7 +343,9 @@ export default function Deck() {
 
         {/* controls, top right */}
         <div
-          className={`pointer-events-auto absolute right-3 top-3 flex items-center gap-1 ${pill}`}
+          className={`pointer-events-auto absolute right-3 top-3 flex items-center ${
+            flow ? "gap-0.5 p-0.5" : "gap-1"
+          } ${pill}`}
           onClick={(e) => e.stopPropagation()}
         >
           <LangButton lang={lang} onToggle={() => setLang((v) => (v === "en" ? "zh" : "en"))} />
@@ -356,9 +358,13 @@ export default function Deck() {
           </IconButton>
         </div>
 
-        {/* counter + arrows, bottom right */}
+        {/* counter + arrows, bottom right — desktop only; the phone gets the bar below. Rendered
+            conditionally rather than hidden with a class: a `hidden` copy stays in the
+            accessibility tree, so a screen reader would find two different controls both called
+            "Next" and read both out. */}
+        {flow ? null : (
         <div
-          className={`pointer-events-auto absolute bottom-3 right-3 flex items-center gap-1 ${pill}`}
+          className="pointer-events-auto absolute bottom-3 right-3 flex items-center gap-1"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -379,14 +385,62 @@ export default function Deck() {
             <ChevronRight size={16} />
           </IconButton>
         </div>
+        )}
 
-        {/* progress */}
-        <div className="absolute bottom-0 left-0 h-[3px] w-full bg-black/[0.06] dark:bg-white/10">
+        {/* progress — desktop */}
+        {flow ? null : (
+          <div className="absolute bottom-0 left-0 h-[3px] w-full bg-black/[0.06] dark:bg-white/10">
+            <div
+              className="h-full bg-linear-to-r from-blue-500 to-violet-500 transition-[width] duration-200"
+              style={{ width: `${((index + 1) / count) * 100}%` }}
+            />
+          </div>
+        )}
+
+        {/* ------------------------------------------------ phone navigation bar */}
+        {flow ? (
           <div
-            className="h-full bg-linear-to-r from-blue-500 to-violet-500 transition-[width] duration-200"
-            style={{ width: `${((index + 1) / count) * 100}%` }}
-          />
-        </div>
+            className="pointer-events-auto absolute inset-x-0 bottom-0 border-t border-black/10 bg-background/92 backdrop-blur dark:border-white/10"
+            // Clears the iPhone home indicator, which otherwise sits on top of the buttons.
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            <div className="h-[3px] w-full bg-black/[0.06] dark:bg-white/10">
+              <div
+                className="h-full bg-linear-to-r from-blue-500 to-violet-500 transition-[width] duration-200"
+                style={{ width: `${((index + 1) / count) * 100}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2 px-3 py-2">
+              <NavButton
+                side="prev"
+                label={lang === "zh" ? "上一页" : "Prev"}
+                disabled={index === 0}
+                onClick={() => go(index - 1)}
+              />
+              {/* The counter doubles as the way into the grid — the fastest jump on a phone, and it
+                  puts a third target in the middle of the bar where neither thumb has to stretch. */}
+              <button
+                type="button"
+                onClick={() => setOverview(true)}
+                className="flex h-12 flex-1 flex-col items-center justify-center rounded-xl text-black/55 transition active:bg-black/5 dark:text-white/55 dark:active:bg-white/10"
+                aria-label={lang === "zh" ? "所有幻灯片" : "All slides"}
+              >
+                <span className="font-mono text-[15px] font-medium tabular-nums">
+                  {index + 1} / {count}
+                </span>
+                <span className="text-[11px] opacity-60">
+                  {lang === "zh" ? "全部" : "all slides"}
+                </span>
+              </button>
+              <NavButton
+                side="next"
+                label={lang === "zh" ? "下一页" : "Next"}
+                disabled={index === last}
+                onClick={() => go(index + 1)}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {overview ? (
@@ -468,6 +522,37 @@ function ThemeButton() {
     <IconButton label={THEME_LABEL[preference]} onClick={toggle}>
       <Icon size={16} />
     </IconButton>
+  );
+}
+
+/**
+ * A phone-sized navigation target. 48px tall and at least 104px wide, because the desktop icon
+ * buttons are 32px squares in a corner — fine for a cursor, too small and too far for a thumb, and
+ * swiping cannot be the answer when the same gesture axis is already scrolling the slide.
+ */
+function NavButton({
+  side,
+  label,
+  disabled,
+  onClick,
+}: {
+  side: "prev" | "next";
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="flex h-12 min-w-[104px] items-center justify-center gap-1.5 rounded-xl border border-black/10 bg-white/70 px-4 text-[15px] font-medium text-black/75 transition active:bg-black/[0.06] disabled:opacity-30 dark:border-white/10 dark:bg-white/5 dark:text-white/80 dark:active:bg-white/10"
+    >
+      {side === "prev" ? <ChevronLeft size={20} aria-hidden="true" /> : null}
+      {label}
+      {side === "next" ? <ChevronRight size={20} aria-hidden="true" /> : null}
+    </button>
   );
 }
 
@@ -698,7 +783,8 @@ function DeckStyles() {
         .deck-flow .dk-frame {
           height: auto;
           min-height: 100dvh;
-          padding: 68px 20px 92px;
+          /* top clears the floating chrome; bottom clears the navigation bar + the home indicator */
+          padding: 68px 20px calc(112px + env(safe-area-inset-bottom));
           justify-content: flex-start;
         }
         /* Every two- and three-column grid inside a slide becomes one column. Scoped to .dk-frame

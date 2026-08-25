@@ -35,11 +35,13 @@ import {
   Note,
   Chips,
   Rows,
+  Ext,
 } from "./ui";
 import {
   TextInTextOut,
   RagPaths,
   EmbeddingSpace,
+  DimensionMismatch,
   ThreeLanes,
   LiveModelIO,
   VoicePipelines,
@@ -333,33 +335,28 @@ export const SLIDES: SlideDef[] = [
         <Eyebrow icon={BrainCircuit} tone="violet">
           A past · the constraint
         </Eyebrow>
-        <div className="mt-[18px] max-w-[1000px]">
+        <div className="mt-[14px] max-w-[1000px]">
           <H2>Why the embedding model, and its dimension, can never change.</H2>
         </div>
-        <div className="mt-[28px]">
-          <Cols ratio="1.06fr 0.94fr" gap={48} align="start">
-            <Bullets
-              items={[
-                "A vector only means anything inside the space that produced it. Dimension 400 means whatever model A decided it means. Model B’s dimension 400 means something else entirely.",
-                "Compare a vector from model A against one from model B and cosine still returns a number. It just is not a similarity. Silent, plausible garbage: the worst failure mode there is.",
-                <>
-                  Different widths do not even get that far. 768 against 1536 is a hard error, and an
-                  HNSW index is built for one fixed width.
-                </>,
-                "So the query must be embedded by the same model, at the same dimension, as everything already stored. Store and search are two halves of one decision.",
-              ]}
-            />
-            <div className="space-y-[18px]">
+        <div className="mt-[16px]">
+          <Cols ratio="0.98fr 1.02fr" gap={44} align="start">
+            <DimensionMismatch />
+            <div className="space-y-[14px]">
+              <Bullets
+                items={[
+                  "A vector only means anything inside the space that produced it. Dimension 400 means whatever model A decided; model B’s dimension 400 means something else.",
+                  "Compare across the two and cosine still returns a number. It just is not a similarity. Silent, plausible garbage.",
+                  "So the query must be embedded by the same model, at the same width, as everything already stored. Writing and searching are two halves of one decision.",
+                ]}
+              />
               <Card title="How that is enforced">
-                The embedding config is locked the first time it is used (<Mono>LockedAt</Mono>), and
-                the API rejects any vector whose length is not the locked dimension. Changing the
-                embedding model means re-embedding every row. It is a migration, not a setting.
+                Locked on first use (<Mono>LockedAt</Mono>), and the API rejects any vector of the wrong
+                length. Changing the model means re-embedding every row: a migration, not a setting.
               </Card>
-              <Card title="One subtlety">
-                Same model, asymmetric hints. Stored text is embedded as{" "}
-                <Mono>RETRIEVAL_DOCUMENT</Mono>, the query as <Mono>RETRIEVAL_QUERY</Mono>. A
-                question and the answer it is looking for are not the same kind of text.
-              </Card>
+              <Note>
+                Same model, asymmetric hints: stored text goes in as <Mono>RETRIEVAL_DOCUMENT</Mono>, the
+                query as <Mono>RETRIEVAL_QUERY</Mono>.
+              </Note>
             </div>
           </Cols>
         </div>
@@ -919,8 +916,8 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
         </div>
         <div className="mt-[28px] grid grid-cols-3 gap-[18px]">
           <Card title="The box">
-            Oracle Cloud Always Free. Four cores, 24 GB of memory, 200 GB of disk, 4 Gbps of
-            bandwidth. Enough to host the whole stack, and free indefinitely.
+            <Ext href="https://www.oracle.com/anz/cloud/free/">Oracle Cloud Always Free</Ext>. Four cores, 24 GB of memory, 200 GB of
+            disk, 4 Gbps of bandwidth. Enough to host the whole stack, and free indefinitely.
           </Card>
           <Card title="Voice, speech and vectors">
             Live calls, speech to text, text to speech, embeddings and memory extraction all run on

@@ -34,11 +34,13 @@ import {
   Note,
   Chips,
   Rows,
+  Ext,
 } from "./ui";
 import {
   TextInTextOut,
   RagPaths,
   EmbeddingSpace,
+  DimensionMismatch,
   ThreeLanes,
   LiveModelIO,
   VoicePipelines,
@@ -305,27 +307,27 @@ export const SLIDES_ZH: SlideDef[] = [
         <Eyebrow icon={BrainCircuit} tone="violet">
           一个过去 · 那条硬约束
         </Eyebrow>
-        <div className="mt-[18px] max-w-[1000px]">
+        <div className="mt-[14px] max-w-[1000px]">
           <H2>为什么嵌入模型和它的维度永远不能改。</H2>
         </div>
-        <div className="mt-[28px]">
-          <Cols ratio="1.06fr 0.94fr" gap={48} align="start">
-            <Bullets
-              items={[
-                "一个向量只在生成它的那个空间里有意义。第 400 维代表什么，是 A 模型说了算；B 模型的第 400 维，代表的是完全不同的东西。",
-                "拿 A 模型的向量去和 B 模型的比，余弦照样给你一个数。它只是不再是相似度而已。安静、看起来合理的垃圾，最糟糕的一种故障。",
-                "维度不同的话，连这一步都走不到。768 对 1536 是一个硬报错，而 HNSW 索引本来就只为一个固定宽度而建。",
-                "所以查询必须由同一个模型、在同一个维度下向量化，和已经存进去的一切保持一致。写入和检索是同一个决定的两半。",
-              ]}
-            />
-            <div className="space-y-[18px]">
+        <div className="mt-[20px]">
+          <Cols ratio="0.98fr 1.02fr" gap={44} align="start">
+            <DimensionMismatch />
+            <div className="space-y-[14px]">
+              <Bullets
+                items={[
+                  "一个向量只在生成它的那个空间里有意义。第 400 维代表什么，是 A 模型说了算；B 模型的第 400 维，代表的是完全不同的东西。",
+                  "跨着两个空间去比，余弦照样给你一个数。它只是不再是相似度而已。安静、看起来合理的垃圾，最糟糕的一种故障。",
+                  "所以查询必须由同一个模型、在同一个宽度下向量化，和已经存进去的一切保持一致。写入和检索是同一个决定的两半。",
+                ]}
+              />
               <Card title="代码里怎么保证">
-                嵌入配置在第一次使用时就被锁定（<Mono>LockedAt</Mono>），之后 API 会拒绝任何长度不等于锁定维度的向量。换嵌入模型意味着把每一行重新向量化一遍。那是一次迁移，不是一个设置项。
+                嵌入配置在第一次使用时就被锁定（<Mono>LockedAt</Mono>），之后 API 会拒绝任何长度不等于锁定维度的向量。换模型意味着把每一行重新向量化：那是一次迁移，不是一个设置项。
               </Card>
-              <Card title="一个容易忽略的细节">
-                同一个模型，但提示是不对称的。入库的文本按 <Mono>RETRIEVAL_DOCUMENT</Mono> 向量化，查询按{" "}
-                <Mono>RETRIEVAL_QUERY</Mono>。一个问题和它要找的那个答案，本来就不是同一类文本。
-              </Card>
+              <Note>
+                一个容易忽略的细节：同一个模型，但提示不对称。入库文本按 <Mono>RETRIEVAL_DOCUMENT</Mono>{" "}
+                进，查询按 <Mono>RETRIEVAL_QUERY</Mono>。一个问题和它要找的那个答案，本来就不是同一类文本。
+              </Note>
             </div>
           </Cols>
         </div>
@@ -848,7 +850,7 @@ export const SLIDES_ZH: SlideDef[] = [
         </div>
         <div className="mt-[28px] grid grid-cols-3 gap-[18px]">
           <Card title="机器">
-            Oracle Cloud 永久免费层。4 核 CPU、24 GB 内存、200 GB 磁盘、4 Gbps 带宽。足够跑下整套东西，而且是长期免费。
+            <Ext href="https://www.oracle.com/anz/cloud/free/">Oracle Cloud 永久免费层</Ext>。4 核 CPU、24 GB 内存、200 GB 磁盘、4 Gbps 带宽。足够跑下整套东西，而且是长期免费。
           </Card>
           <Card title="语音、语音识别与向量">
             实时通话、语音转文字、文字转语音、向量化、记忆抽取，全都跑在池化的 Gemini 免费额度密钥上。每次对话的边际成本基本是零。
