@@ -1035,7 +1035,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
             <Bullets
               items={[
                 "GitHub Copilot shipped in 2021 as autocomplete, running on Codex. Not because an agent was a worse idea, but because that model could finish a function and could not hold a plan across a repository. It was the right product for the model that existed.",
-                "Everything since — debugging, code review, pull requests, agent mode — arrived when models could carry it, not when somebody first thought of it.",
+                "Agent mode did not arrive until February 2025. Three and a half years, and several model generations, for a feature anyone could already picture in 2021. Debugging, code review and pull requests came the same way: when models could carry them, not when someone first thought of them.",
                 "Every decision in this talk sits on the same ceiling. Barge-in exists because the model streams. A voice message is one call because the model takes audio and images natively. Recall runs unasked because extraction is reliable enough to trust unattended.",
                 "Two years ago, half of these would have been bad ideas, well built.",
               ]}
