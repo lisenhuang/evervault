@@ -41,6 +41,8 @@ import {
   RagPaths,
   EmbeddingSpace,
   ThreeLanes,
+  LiveModelIO,
+  VoicePipelines,
   ToolLoop,
   Architecture,
 } from "./diagrams";
@@ -132,6 +134,7 @@ export const SLIDES: SlideDef[] = [
               <Bullets
                 items={[
                   "The voice call talks over me. The reply will not stop. On iPhone the audio simply does not play.",
+                  "I want to reply to one particular message and talk about that one. Every messaging app has had that for a decade. Almost no assistant does.",
                   "None of these are hard problems. All of them are unfixable from the outside.",
                   "You file feedback into a black hole and wait for a roadmap that is not yours.",
                 ]}
@@ -697,57 +700,81 @@ Memories, files, config and encrypted secrets all live in the same Postgres. Vec
   /* ----------------------------------------------------------------- 17 */
   {
     id: "voice-thesis",
-    title: "Voice is the interface",
+    title: "Not an LLM",
     node: (
       <Slide>
         <Eyebrow icon={Mic}>Interaction</Eyebrow>
-        <div className="mt-[16px] max-w-[1000px]">
+        <div className="mt-[16px] max-w-[1020px]">
           <H2>
-            Voice is how people actually communicate. <Grad>Text is the compression.</Grad>
+            The Live model is <Grad>not an LLM with speech bolted on</Grad>.
           </H2>
         </div>
-        <div className="mt-[20px]">
-          <Cols ratio="1fr 1fr" gap={48} align="start">
-            <div className="space-y-[14px]">
-              <Card title="The usual way">
-                Record. Upload the file. Transcribe it. Generate. Synthesize. Five hops, strictly in
-                order, and the model never hears you. It reads a transcript of you.
-              </Card>
+        <div className="mt-[22px]">
+          <Cols ratio="1.08fr 0.92fr" gap={48}>
+            <LiveModelIO />
+            <div className="space-y-[16px]">
               <Bullets
                 items={[
-                  "EverVault runs the live call and the one-shot voice message on the same model, over a WebSocket.",
-                  "Your voice streams while you are still speaking. Nothing waits for a finished recording to upload.",
-                  "So by the time you stop, the model already holds most of the turn. It has begun reasoning, and it may already have called a tool. The reply starts almost at once.",
+                  "Twelve slides ago this picture had one input, one output, and three crosses. Same model family, one tier up, and the shape of the product changes with it.",
+                  "It is not transcribing you and reading the transcript. The audio is the input, so tone, hesitation and stopping mid-sentence all survive the trip.",
                 ]}
               />
-            </div>
-            <div className="space-y-[14px]">
-              <Card title="One call, both transcripts">
-                Spoken audio and text for both sides come back from a single streaming call, with no
-                separate transcribe, reply and synthesize hops. Images go in the same way, so speaking
-                over a photo is still one call.
-              </Card>
-              <Card title="Keyless by construction">
-                The backend mints a short-lived token and the browser connects straight to the
-                provider. Your audio never touches my server, and no key ever reaches the page. A
-                plain reconnect deliberately keeps the same key, because a resumption handle only
-                works inside the project that issued it. Only a quota or auth close advances to the
-                next key in the pool.
-              </Card>
+              <Note>
+                Gemini 3.1 Flash Live, a native-audio model. Those support an audio response and
+                nothing else, so the two transcripts are the documented way to get text out — not a
+                second answer. Keyless, too: the browser connects straight to the provider on a
+                short-lived token, so your audio never reaches my server.
+              </Note>
             </div>
           </Cols>
         </div>
-        <div className="mt-[18px]">
-          <Note>
-            Speed and depth trade against each other, and for everyday conversation speed is the
-            right thing to buy. It is also why you should not ask it a hard maths question out loud.
-          </Note>
+        <div className="mt-[24px]">
+          <Quote>
+            Every interaction decision in the next four slides is downstream of this one picture.
+            Change what the model can take in, and you change what the product can be.
+          </Quote>
         </div>
       </Slide>
     ),
   },
 
   /* ----------------------------------------------------------------- 18 */
+  {
+    id: "voice-latency",
+    title: "It does not wait",
+    node: (
+      <Slide>
+        <Eyebrow icon={Mic}>Interaction</Eyebrow>
+        <div className="mt-[14px] max-w-[1020px]">
+          <H2>
+            And it does not wait for you <Grad>to finish</Grad>.
+          </H2>
+        </div>
+        <div className="mt-[20px]">
+          <VoicePipelines />
+        </div>
+        <div className="mt-[20px]">
+          <Cols ratio="1fr 1fr" gap={48} align="start">
+            <Bullets
+              items={[
+                "With a text-only model nothing can start until you stop: upload, transcribe, generate, synthesize, all strictly in order. The wait is structural, not slow code.",
+                "A native audio model hears you live, so it can begin reasoning — and call recall_memory or search_web — before you have finished the sentence that asked for it.",
+              ]}
+            />
+            <div className="space-y-[16px]">
+              <Card title="Which is why it feels instant">
+                By the time you stop talking, the tool results are already back and the first syllable
+                is about a second away. Not because the model is faster, but because most of the work
+                happened while you were still speaking.
+              </Card>
+            </div>
+          </Cols>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 19 */
   {
     id: "voice-message",
     title: "Room to think",
@@ -791,7 +818,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 19 */
+  /* ----------------------------------------------------------------- 20 */
   {
     id: "barge-in",
     title: "Barge-in",
@@ -834,7 +861,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 20 */
+  /* ----------------------------------------------------------------- 21 */
   {
     id: "three-fixes",
     title: "Three fixes",
@@ -878,7 +905,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 21 */
+  /* ----------------------------------------------------------------- 22 */
   {
     id: "cost",
     title: "Running it for free",
@@ -923,7 +950,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 22 */
+  /* ----------------------------------------------------------------- 23 */
   {
     id: "ops",
     title: "Operated by talking",
@@ -972,7 +999,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 23 */
+  /* ----------------------------------------------------------------- 24 */
   {
     id: "compounding",
     title: "Why it compounds",
@@ -1016,7 +1043,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 24 */
+  /* ----------------------------------------------------------------- 25 */
   {
     id: "ceiling",
     title: "The model is the ceiling",
@@ -1059,7 +1086,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
     ),
   },
 
-  /* ----------------------------------------------------------------- 25 */
+  /* ----------------------------------------------------------------- 26 */
   {
     id: "close",
     title: "Close",

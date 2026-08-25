@@ -346,6 +346,203 @@ export function ThreeLanes() {
   );
 }
 
+/* --------------------------------------- 1b. the same picture, one tier up */
+
+/**
+ * Deliberately the same composition as TextInTextOut — same viewBox, same box coordinates, same
+ * divider, same row of three at the foot — so that when it appears the audience recognises the
+ * shape before they read a word, and the only thing that has changed is what is IN it. One input
+ * becomes three, one output becomes three, and the row of crosses becomes a row of ticks.
+ */
+export function LiveModelIO() {
+  const l = useDeckLabel();
+  const chip = (x: number, y: number, label: string, sub?: string) => (
+    <g key={`${x}-${y}`}>
+      <rect x={x} y={y} width="126" height="40" rx="11" className={BOX} strokeWidth={1.5} />
+      <text
+        x={x + 63}
+        y={sub ? y + 18 : y + 25}
+        textAnchor="middle"
+        className={`${LABEL} text-[13px] font-medium`}
+      >
+        {label}
+      </text>
+      {sub ? (
+        <text x={x + 63} y={y + 32} textAnchor="middle" className={`${MUTED} font-mono text-[10px]`}>
+          {sub}
+        </text>
+      ) : null}
+    </g>
+  );
+
+  return (
+    <Frame viewBox="0 0 560 300">
+      {chip(6, 46, l("audio", "音频"), "16 kHz")}
+      {chip(6, 98, l("image", "图片"), "JPEG")}
+      {chip(6, 150, l("text", "文本"))}
+
+      <Arrow d="M 140 118 L 208 118" />
+
+      <rect x="216" y="66" width="128" height="100" rx="18" fill="url(#dg)" />
+      <text x="280" y="106" textAnchor="middle" className="fill-white text-[16px] font-semibold">
+        {l("Live model", "Live 模型")}
+      </text>
+      <text x="280" y="130" textAnchor="middle" className="fill-white/75 font-mono text-[11px]">
+        {l("native audio", "原生音频")}
+      </text>
+
+      <Arrow d="M 352 118 L 420 118" />
+
+      {chip(428, 46, l("audio", "音频"), "24 kHz")}
+      {chip(428, 98, l("your transcript", "你的转写"))}
+      {chip(428, 150, l("its transcript", "它的转写"))}
+
+      {/* the row that was three crosses, one slide ago */}
+      <line x1="6" y1="206" x2="554" y2="206" className={STROKE} strokeWidth={1} strokeDasharray="4 6" />
+      {[
+        l("hears tone, not a transcript", "听见语气，不是转写稿"),
+        l("sees the image itself", "直接看见那张图"),
+        l("answers before you finish", "你没说完就能答"),
+      ].map((label, i) => (
+        <g key={label} transform={`translate(24 ${222 + i * 26})`}>
+          <circle cx="9" cy="9" r="9" className="fill-blue-500/15" />
+          <path
+            d="M 5 9.5 L 8 12.5 L 13.5 6"
+            fill="none"
+            className="stroke-blue-600 dark:stroke-blue-400"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <text x="28" y="14" className={`${LABEL} text-[13px]`}>
+            {label}
+          </text>
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
+/* ------------------------------------- 4b. two ways to answer a spoken turn */
+
+/**
+ * The same spoken turn on one time axis, twice. Drawn as a timeline rather than a flowchart because
+ * the point is not the boxes, it is WHEN they happen: with a text-only model every stage waits for
+ * the one before it and none of them start until you stop talking, so first sound lands at the far
+ * right. With a native audio model the model is already working while you are still speaking, so the
+ * "you stop speaking" marker and first sound are almost the same instant.
+ */
+export function VoicePipelines() {
+  const l = useDeckLabel();
+  const STOP = 340;
+
+  const seg = (
+    x: number,
+    w: number,
+    y: number,
+    h: number,
+    label: string,
+    tone: "plain" | "warm" | "grad",
+  ) => (
+    <g key={`${x}-${y}-${label}`}>
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx="8"
+        {...(tone === "grad"
+          ? { fill: "url(#dg)" }
+          : {
+              className:
+                tone === "warm"
+                  ? "fill-blue-500/12 stroke-blue-500/35"
+                  : "fill-black/[0.04] stroke-black/15 dark:fill-white/[0.06] dark:stroke-white/20",
+              strokeWidth: 1.25,
+            })}
+      />
+      <text
+        x={x + w / 2}
+        y={y + h / 2 + 4}
+        textAnchor="middle"
+        className={
+          tone === "grad" ? "fill-white text-[12px] font-medium" : `${LABEL} text-[12px]`
+        }
+      >
+        {label}
+      </text>
+    </g>
+  );
+
+  /** A caret plus a label marking the instant the listener first hears something. */
+  const firstSound = (x: number, y: number, text: string, strong: boolean) => (
+    <g>
+      <path
+        d={`M ${x - 6} ${y + 11} L ${x} ${y + 2} L ${x + 6} ${y + 11} Z`}
+        className={strong ? "fill-violet-500" : "fill-black/35 dark:fill-white/40"}
+      />
+      <text
+        x={x}
+        y={y + 26}
+        textAnchor="middle"
+        className={`${strong ? "fill-violet-600 dark:fill-violet-300" : MUTED} text-[12px] font-medium`}
+      >
+        {text}
+      </text>
+    </g>
+  );
+
+  return (
+    <Frame viewBox="0 0 1000 244">
+      {/* the shared instant both rows are measured against */}
+      <line
+        x1={STOP}
+        y1="16"
+        x2={STOP}
+        y2="206"
+        className="stroke-black/25 dark:stroke-white/30"
+        strokeWidth={1.5}
+        strokeDasharray="4 4"
+      />
+      <text x={STOP + 8} y="12" className={`${LABEL} text-[12px] font-semibold`}>
+        {l("you stop speaking", "你说完了")}
+      </text>
+
+      {/* ---- row 1: a text-only model, five stages, none of them overlapping ---- */}
+      <text x="0" y="34" className={`${MUTED} font-mono text-[11px] uppercase tracking-[0.14em]`}>
+        {l("text-only model · each stage waits for the last", "纯文本模型 · 每一段都在等上一段")}
+      </text>
+      {seg(0, 340, 42, 38, l("you speak", "你说话"), "plain")}
+      {seg(340, 100, 42, 38, l("upload", "上传"), "plain")}
+      {seg(440, 160, 42, 38, l("transcribe", "转写"), "plain")}
+      {seg(600, 190, 42, 38, l("model", "模型"), "plain")}
+      {seg(790, 150, 42, 38, l("synthesize", "合成"), "plain")}
+      {firstSound(940, 80, l("first sound", "第一声"), false)}
+
+      {/* ---- row 2: a native audio model, overlapping because it hears you live ---- */}
+      <text x="0" y="122" className={`${MUTED} font-mono text-[11px] uppercase tracking-[0.14em]`}>
+        {l("native audio model · one streaming session", "原生音频模型 · 一条流式会话")}
+      </text>
+      {seg(0, 340, 130, 32, l("you speak · streaming", "你说话 · 边说边传"), "warm")}
+      {seg(200, 190, 168, 32, l("reasoning · calling tools", "推理 · 调用工具"), "warm")}
+      {seg(390, 170, 168, 32, l("spoken reply", "语音回复"), "grad")}
+      {firstSound(390, 200, l("first sound", "第一声"), true)}
+      {/* The tool round-trip is the part that surprises people: it completes before the user has
+          finished the sentence that prompted it. */}
+      <text x="204" y="178" className={`${MUTED} font-mono text-[11px]`}>
+        {l("recall_memory · search_web — answered before you finish", "recall_memory · search_web — 你还没说完就已经返回")}
+      </text>
+
+      <text x="600" y="222" className={`${MUTED} font-mono text-[11px]`}>
+        {l(
+          "same turn, same axis — the difference is overlap, not speed",
+          "同一轮，同一条时间轴 — 差别在于重叠，不是快慢",
+        )}
+      </text>
+    </Frame>
+  );
+}
+
 /* --------------------------------------------------- 5. the tool-call loop */
 
 /** The model asks; your code acts; the result goes back in. Repeat until it writes prose. */
