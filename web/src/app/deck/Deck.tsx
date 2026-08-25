@@ -245,10 +245,14 @@ export default function Deck() {
     const start = touchStart.current;
     touchStart.current = null;
     if (!start || overview || help) return;
+    // No swipe navigation in the reflowed layout. A slide there is taller than the screen, so the
+    // finger is already doing something on this surface, and no threshold cleanly separates "turn
+    // the page" from "scroll at a slight angle" — the failure mode is losing your place mid-read,
+    // which is worse than the gesture is worth. The bar at the foot of the screen is the control.
+    if (flow) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
-    // Horizontal intent only, so scrolling a reflowed slide is never read as a page turn.
     if (Math.abs(dx) < 44 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
     go(index + (dx < 0 ? 1 : -1));
   };
@@ -701,10 +705,10 @@ function Help({ onClose, flow }: { onClose: () => void; flow: boolean }) {
           ))}
         </dl>
         <p className="mt-6 border-t border-black/10 pt-4 text-xs leading-relaxed text-black/45 dark:border-white/10 dark:text-white/45">
-          Any slide can be linked directly: add <span className="font-mono">#7</span> to the URL.
-          Swipe left and right on a touchscreen. On a narrow or upright screen the slides reflow into
-          a scrollable reading layout, and wide diagrams scroll sideways on their own. Printing gives
-          one slide per page, so switch to the light theme first if you want a PDF to hand out.
+          Any slide can be linked directly: add <span className="font-mono">#7</span> to the URL. On a
+          narrow or upright screen the slides reflow into a scrollable reading layout with its own
+          navigation bar, and wide diagrams scroll sideways on their own. Printing gives one slide per
+          page, so switch to the light theme first if you want a PDF to hand out.
         </p>
         <button
           type="button"
