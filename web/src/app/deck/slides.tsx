@@ -729,10 +729,10 @@ Memories, files, config and encrypted secrets all live in the same Postgres. Vec
               </Card>
               <Card title="Keyless by construction">
                 The backend mints a short-lived token and the browser connects straight to the
-                provider. Your audio never touches my server, and no key ever reaches the page.
-                Session resumption stitches a long call across the provider’s socket cap, and each
-                reconnect mints from a different pooled key, which is also how failover happens
-                mid-call.
+                provider. Your audio never touches my server, and no key ever reaches the page. A
+                plain reconnect deliberately keeps the same key, because a resumption handle only
+                works inside the project that issued it. Only a quota or auth close advances to the
+                next key in the pool.
               </Card>
             </div>
           </Cols>
@@ -836,45 +836,41 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
 
   /* ----------------------------------------------------------------- 20 */
   {
-    id: "ios-unlock",
-    title: "The iOS unlock",
+    id: "three-fixes",
+    title: "Three fixes",
     node: (
       <Slide>
         <Eyebrow icon={Mic}>Interaction</Eyebrow>
-        <div className="mt-[18px] max-w-[1000px]">
-          <H2>The bug that explains why I wanted my own app.</H2>
+        <div className="mt-[16px] max-w-[1000px]">
+          <H2>Three fixes that needed the source.</H2>
         </div>
-        <div className="mt-[26px]">
-          <Cols ratio="1.05fr 0.95fr" gap={48} align="start">
+        <div className="mt-[22px]">
+          <Cols ratio="1.25fr 0.75fr" gap={44} align="start">
             <Numbered
               items={[
                 {
-                  title: "Symptom.",
-                  body: "On iPhone the spoken reply arrived silently. On macOS it worked every time, which is the worst kind of bug report.",
+                  title: "The spoken reply arrived silently on iPhone.",
+                  body: "iOS unlocks autoplay only once an audio element has begun playing inside a user gesture, and playback is suppressed while the microphone is capturing, so priming it on the record button never took. Unlock on the first tap anywhere instead, before any capture exists, with ten milliseconds of silence.",
                 },
                 {
-                  title: "Cause.",
-                  body: "iOS only unlocks autoplay once an audio element has begun playing inside a user gesture.",
+                  title: "The provider caps a live call at about ten minutes.",
+                  body: "It closes the socket mid-conversation, and warns first. So the client keeps the latest resumption handle, reconnects on close, and hands it back: the new socket continues the same conversation with its context intact, and a sliding context window keeps an hours-long call off the model’s ceiling. People talk for an hour and never see the seam.",
                 },
                 {
-                  title: "The trap.",
-                  body: "Playback is suppressed while the microphone is capturing, so priming it on the record button never took.",
-                },
-                {
-                  title: "Fix.",
-                  body: "Unlock on the user’s first tap anywhere, before any capture exists. Play ten milliseconds of silence. Unlocked for the element’s lifetime.",
+                  title: "A call left open bills for silence.",
+                  body: "Talk to it lying down at night and you will fall asleep with the socket running. An idle monitor hangs up for you, but only the user’s silent turn counts: the window resets while the model is speaking and while a reconnect is in flight, because a naive no-audio timer would hang up in the middle of a monologue.",
                 },
               ]}
             />
-            <div className="space-y-[18px]">
-              <Card title="And a fallback behind it">
-                A Web Audio replay path, and behind that an explicit “Play reply” button that always
-                works. In-app webviews still block the automatic path.
-              </Card>
+            <div className="space-y-[16px]">
               <Quote>
-                Thirty lines of code and a week of understanding. In someone else’s app it would
-                still be broken, and I would still be waiting.
+                A few dozen lines each. Also three things that, anywhere else, you can only file as
+                feedback and then wait.
               </Quote>
+              <Note>
+                Nobody asked for any of them. All three are the difference between something you use
+                and something you try once.
+              </Note>
             </div>
           </Cols>
         </div>
@@ -1021,6 +1017,49 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
   },
 
   /* ----------------------------------------------------------------- 24 */
+  {
+    id: "ceiling",
+    title: "The model is the ceiling",
+    node: (
+      <Slide>
+        <Eyebrow icon={Sparkles} tone="violet">
+          What I actually learned
+        </Eyebrow>
+        <div className="mt-[18px] max-w-[1020px]">
+          <H2>
+            The interaction you can offer is <Grad>capped by the model you have</Grad>.
+          </H2>
+        </div>
+        <div className="mt-[24px]">
+          <Cols ratio="1.05fr 0.95fr" gap={48} align="start">
+            <Bullets
+              items={[
+                "GitHub Copilot shipped in 2021 as autocomplete, running on Codex. Not because an agent was a worse idea, but because that model could finish a function and could not hold a plan across a repository. It was the right product for the model that existed.",
+                "Everything since — debugging, code review, pull requests, agent mode — arrived when models could carry it, not when somebody first thought of it.",
+                "Every decision in this talk sits on the same ceiling. Barge-in exists because the model streams. A voice message is one call because the model takes audio and images natively. Recall runs unasked because extraction is reliable enough to trust unattended.",
+                "Two years ago, half of these would have been bad ideas, well built.",
+              ]}
+            />
+            <div className="space-y-[16px]">
+              <Card title="So build for the next ceiling, not this one">
+                It changes what you optimise for: the least scaffolding you can manage between the
+                model and the person, so that when the ceiling lifts the product rises with it and you
+                delete code instead of writing it. Here that means one tool definition serving every
+                surface, a memory that is only rows in Postgres, and the model itself being a dropdown
+                in the admin page rather than an assumption in the code.
+              </Card>
+              <Quote>
+                EverVault’s roadmap is not really mine. It belongs to the model, and I am building the
+                part that gets to take advantage of it.
+              </Quote>
+            </div>
+          </Cols>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 25 */
   {
     id: "close",
     title: "Close",
