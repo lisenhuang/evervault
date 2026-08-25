@@ -3,6 +3,11 @@ import type { Metadata, Viewport } from "next";
 export const metadata: Metadata = {
   title: "EverVault — Chat",
   description: "Chat with AI by text or voice.",
+  // Installability lives here and nowhere else. The manifest is served by a route handler rather
+  // than the app/manifest.ts convention precisely so that this link is the only one on the site:
+  // the convention would add it to the landing page, the deck and the admin panel too, and offer
+  // to install pages that are outside the manifest's own scope.
+  manifest: "/manifest.webmanifest",
   // iOS decides "open this like an app" from these rather than from the manifest on older versions,
   // and still reads the title for the home-screen label. The status bar stays "default" so iOS keeps
   // reserving its strip instead of letting the chat header slide underneath it.
