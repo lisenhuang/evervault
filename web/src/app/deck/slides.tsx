@@ -941,8 +941,8 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
               ]}
             />
             <Quote>
-              The running cost of a memory that keeps my whole life is a domain name and an hour of
-              my weekend.
+              The running cost of a memory that keeps a whole life is a domain name and an hour of a
+              weekend.
             </Quote>
           </Cols>
         </div>
@@ -1095,8 +1095,8 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
         <Eyebrow icon={Sparkles}>Where it goes</Eyebrow>
         <div className="mt-[20px] max-w-[1000px]">
           <H2>
-            Two reasons, still the same two: <Grad>a memory I own</Grad>, and an interaction I am
-            allowed to fix.
+            The same two things, for you as much as for me: <Grad>a memory you own</Grad>, and an
+            interaction you are allowed to fix.
           </H2>
         </div>
         <div className="mt-[28px]">

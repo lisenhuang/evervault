@@ -866,7 +866,7 @@ export const SLIDES_ZH: SlideDef[] = [
               ]}
             />
             <Quote>
-              一份装着我整个生活的记忆，跑起来的成本是一个域名，加上我一个周末的一小时。
+              存下一整个人生，跑起来的成本是一个域名，加上一个周末的一小时。
             </Quote>
           </Cols>
         </div>
@@ -999,7 +999,7 @@ export const SLIDES_ZH: SlideDef[] = [
         <Eyebrow icon={Sparkles}>它要去哪</Eyebrow>
         <div className="mt-[20px] max-w-[1000px]">
           <H2>
-            还是那两个理由：<Grad>一份属于我的记忆</Grad>，和一个我有权去修的交互。
+            还是那两件事，对你也一样：<Grad>一份属于你的记忆</Grad>，和一个你有权去修的交互。
           </H2>
         </div>
         <div className="mt-[28px]">
