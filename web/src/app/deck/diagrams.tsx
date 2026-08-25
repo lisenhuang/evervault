@@ -1,12 +1,18 @@
-// Inline SVG diagrams for the /deck talk. Inline rather than image files so they inherit the
-// theme: every stroke and label uses a Tailwind fill-/stroke- utility, so the same markup reads
-// correctly on a white projector and on a dark laptop. The blue-violet gradient is the one fixed
-// colour — it is the product's, and it carries in both themes.
+"use client";
+
+// Inline SVG diagrams for the /deck talk. Inline rather than image files so they inherit two things
+// they could not inherit as assets: the theme (every stroke and label uses a Tailwind fill-/stroke-
+// utility, so the same markup reads correctly on a white projector and a dark laptop) and the
+// language (labels come from useDeckLabel, so they switch with the prose). The blue-violet gradient
+// is the one fixed colour — it is the product's, and it carries in both themes.
 //
 // Each diagram is drawn in its own coordinate space and scales with the slide canvas, so the
-// numbers below are layout units, not pixels on any particular screen.
+// numbers below are layout units, not pixels on any particular screen. Coordinates are shared
+// between languages; Chinese labels are shorter than their English counterparts in nearly every
+// case, so a layout that fits in English fits in Chinese.
 
 import type { CSSProperties, ReactNode } from "react";
+import { useDeckLabel } from "./lang";
 
 /* ------------------------------------------------------------ shared bits */
 
@@ -81,39 +87,44 @@ function Frame({ viewBox, children }: { viewBox: string; children: ReactNode }) 
 
 /** text in -> model -> text out, with the three things it demonstrably cannot do. */
 export function TextInTextOut() {
+  const l = useDeckLabel();
   return (
     <Frame viewBox="0 0 560 300">
       <rect x="6" y="86" width="126" height="60" rx="14" className={BOX} strokeWidth={1.5} />
       <text x="69" y="112" textAnchor="middle" className={`${LABEL} text-[15px] font-medium`}>
-        prompt
+        {l("prompt", "提示词")}
       </text>
       <text x="69" y="132" textAnchor="middle" className={`${MUTED} font-mono text-[12px]`}>
-        text
+        {l("text", "文本")}
       </text>
 
       <Arrow d="M 140 116 L 208 116" />
 
       <rect x="216" y="66" width="128" height="100" rx="18" fill="url(#dg)" />
       <text x="280" y="106" textAnchor="middle" className="fill-white text-[16px] font-semibold">
-        LLM
+        {l("LLM", "大模型")}
       </text>
       <text x="280" y="130" textAnchor="middle" className="fill-white/75 font-mono text-[12px]">
-        stateless
+        {l("stateless", "无状态")}
       </text>
 
       <Arrow d="M 352 116 L 420 116" />
 
       <rect x="428" y="86" width="126" height="60" rx="14" className={BOX} strokeWidth={1.5} />
       <text x="491" y="112" textAnchor="middle" className={`${LABEL} text-[15px] font-medium`}>
-        reply
+        {l("reply", "回复")}
       </text>
       <text x="491" y="132" textAnchor="middle" className={`${MUTED} font-mono text-[12px]`}>
-        text
+        {l("text", "文本")}
       </text>
 
       {/* what it cannot reach on its own */}
       <line x1="6" y1="206" x2="554" y2="206" className={STROKE} strokeWidth={1} strokeDasharray="4 6" />
-      {["no memory", "no database", "no internet"].map((label, i) => (
+      {[
+        l("no memory", "没有记忆"),
+        l("no database", "没有数据库"),
+        l("no internet", "没有网络"),
+      ].map((label, i) => (
         <g key={label} transform={`translate(${34 + i * 178} 236)`}>
           <circle cx="12" cy="12" r="12" className="fill-black/[0.05] dark:fill-white/[0.08]" />
           <path
@@ -135,6 +146,7 @@ export function TextInTextOut() {
 
 /** Write path (conversation -> facts -> vectors) above, read path (question -> neighbours -> prompt) below. */
 export function RagPaths() {
+  const l = useDeckLabel();
   const step = (x: number, y: number, w: number, label: string, sub?: string) => (
     <g key={`${x}-${y}`}>
       <rect x={x} y={y} width={w} height="56" rx="13" className={BOX} strokeWidth={1.5} />
@@ -157,13 +169,13 @@ export function RagPaths() {
   return (
     <Frame viewBox="0 0 1000 260">
       <text x="0" y="14" className={`${MUTED} font-mono text-[12px] uppercase tracking-[0.14em]`}>
-        write · after the conversation
+        {l("write · after the conversation", "写入 · 对话之后")}
       </text>
-      {step(0, 26, 176, "conversation", "20 turns")}
+      {step(0, 26, 176, l("conversation", "一段对话"), l("20 turns", "20 轮"))}
       <Arrow d="M 184 54 L 214 54" />
-      {step(222, 26, 176, "extract facts", "one model call")}
+      {step(222, 26, 176, l("extract facts", "抽取事实"), l("one model call", "一次模型调用"))}
       <Arrow d="M 406 54 L 436 54" />
-      {step(444, 26, 176, "embed", "text → vector")}
+      {step(444, 26, 176, l("embed", "向量化"), l("text → vector", "文本 → 向量"))}
       <Arrow d="M 628 54 L 658 54" />
       <rect x="666" y="26" width="176" height="56" rx="13" fill="url(#dg)" />
       <text x="754" y="50" textAnchor="middle" className="fill-white text-[14px] font-semibold">
@@ -183,19 +195,19 @@ export function RagPaths() {
       />
 
       <text x="0" y="152" className={`${MUTED} font-mono text-[12px] uppercase tracking-[0.14em]`}>
-        read · every single turn
+        {l("read · every single turn", "读取 · 每一轮")}
       </text>
-      {step(0, 164, 176, "your question", "text")}
+      {step(0, 164, 176, l("your question", "你的问题"), l("text", "文本"))}
       <Arrow d="M 184 192 L 214 192" />
-      {step(222, 164, 176, "embed", "same model")}
+      {step(222, 164, 176, l("embed", "向量化"), l("same model", "同一个模型"))}
       <Arrow d="M 406 192 L 436 192" />
-      {step(444, 164, 176, "nearest neighbours", "top 6")}
+      {step(444, 164, 176, l("nearest neighbours", "最近邻"), l("top 6", "取 6 条"))}
       <Arrow d="M 628 192 L 658 192" />
-      {step(666, 164, 176, "into the prompt", "as grounding")}
+      {step(666, 164, 176, l("into the prompt", "注入提示词"), l("as grounding", "作为事实依据"))}
       <Arrow d="M 850 192 L 890 192" />
       <rect x="898" y="164" width="102" height="56" rx="13" fill="url(#dg)" />
       <text x="949" y="197" textAnchor="middle" className="fill-white text-[14px] font-semibold">
-        answer
+        {l("answer", "回答")}
       </text>
     </Frame>
   );
@@ -205,13 +217,14 @@ export function RagPaths() {
 
 /** A 2-D stand-in for a 1536-D space: related notes cluster, the query lands among them. */
 export function EmbeddingSpace() {
+  const l = useDeckLabel();
   const notes: { x: number; y: number; label: string }[] = [
-    { x: 168, y: 86, label: "coast trip in spring" },
-    { x: 232, y: 156, label: "booked the cottage" },
-    { x: 150, y: 178, label: "packed the tent" },
-    { x: 390, y: 76, label: "renewed my passport" },
-    { x: 404, y: 200, label: "dentist on Thursday" },
-    { x: 322, y: 272, label: "learning Go" },
+    { x: 168, y: 86, label: l("coast trip in spring", "春天的海边旅行") },
+    { x: 232, y: 156, label: l("booked the cottage", "订了那间小屋") },
+    { x: 150, y: 178, label: l("packed the tent", "收好了帐篷") },
+    { x: 390, y: 76, label: l("renewed my passport", "换了新护照") },
+    { x: 404, y: 200, label: l("dentist on Thursday", "周四看牙医") },
+    { x: 322, y: 272, label: l("learning Go", "在学 Go") },
   ];
   const q = { x: 196, y: 132 };
   const r = 82;
@@ -261,11 +274,11 @@ export function EmbeddingSpace() {
         strokeDasharray="3 4"
       />
       <text x={q.x} y={q.y + 126} textAnchor="middle" className={`${LABEL} text-[14px] font-semibold`}>
-        &ldquo;that seaside trip?&rdquo;
+        {l("“that seaside trip?”", "“那次海边旅行？”")}
       </text>
 
       <text x="0" y="322" className={`${MUTED} font-mono text-[12px]`}>
-        1536 dimensions, drawn in 2 · distance = cosine
+        {l("1536 dimensions, drawn in 2 · distance = cosine", "1536 维，这里画成 2 维 · 距离用余弦")}
       </text>
     </Frame>
   );
@@ -275,26 +288,27 @@ export function EmbeddingSpace() {
 
 /** Vector / full-text / trigram each rank independently; RRF fuses the ranks. */
 export function ThreeLanes() {
+  const l = useDeckLabel();
   const lanes = [
-    { label: "vector", sub: "meaning · HNSW cosine", y: 20 },
-    { label: "full-text", sub: "words · GIN tsvector", y: 100 },
-    { label: "trigram", sub: "fragments, typos · pg_trgm", y: 180 },
+    { label: l("vector", "向量"), sub: l("meaning · HNSW cosine", "语义 · HNSW 余弦"), y: 20 },
+    { label: l("full-text", "全文"), sub: l("words · GIN tsvector", "词 · GIN tsvector"), y: 100 },
+    { label: l("trigram", "三元组"), sub: l("fragments, typos · pg_trgm", "片段、错字 · pg_trgm"), y: 180 },
   ];
   return (
     <Frame viewBox="0 0 1000 268">
-      {lanes.map((l) => (
-        <g key={l.label}>
-          <rect x="0" y={l.y} width="288" height="62" rx="14" className={BOX} strokeWidth={1.5} />
-          <text x="24" y={l.y + 27} className={`${LABEL} text-[16px] font-semibold`}>
-            {l.label}
+      {lanes.map((lane) => (
+        <g key={lane.label}>
+          <rect x="0" y={lane.y} width="288" height="62" rx="14" className={BOX} strokeWidth={1.5} />
+          <text x="24" y={lane.y + 27} className={`${LABEL} text-[16px] font-semibold`}>
+            {lane.label}
           </text>
-          <text x="24" y={l.y + 48} className={`${MUTED} font-mono text-[12px]`}>
-            {l.sub}
+          <text x="24" y={lane.y + 48} className={`${MUTED} font-mono text-[12px]`}>
+            {lane.sub}
           </text>
-          <text x="266" y={l.y + 38} textAnchor="end" className={`${MUTED} font-mono text-[12px]`}>
-            top 50
+          <text x="266" y={lane.y + 38} textAnchor="end" className={`${MUTED} font-mono text-[12px]`}>
+            {l("top 50", "前 50")}
           </text>
-          <Arrow d={`M 296 ${l.y + 31} L 386 ${l.y + 31} L 420 ${l.y + 31}`} />
+          <Arrow d={`M 296 ${lane.y + 31} L 386 ${lane.y + 31} L 420 ${lane.y + 31}`} />
         </g>
       ))}
 
@@ -306,24 +320,27 @@ export function ThreeLanes() {
         1 / (60 + rank)
       </text>
       <text x="534" y="164" textAnchor="middle" className="fill-white/70 font-mono text-[11px]">
-        summed per document
+        {l("summed per document", "按文档累加")}
       </text>
 
       <Arrow d="M 648 131 L 716 131" />
 
       <rect x="724" y="70" width="276" height="122" rx="18" className={BOX} strokeWidth={1.5} />
       <text x="748" y="104" className={`${LABEL} text-[16px] font-semibold`}>
-        one fused list
+        {l("one fused list", "融合成一个列表")}
       </text>
       <text x="748" y="130" className={`${MUTED} text-[14px]`}>
-        re-rank: recency, dedupe, cutoff
+        {l("re-rank: recency, dedupe, cutoff", "重排：时效、去重、阈值")}
       </text>
       <text x="748" y="156" className={`${MUTED} text-[14px]`}>
-        keep 6 → into the system prompt
+        {l("keep 6 → into the system prompt", "留 6 条 → 进系统指令")}
       </text>
 
       <text x="0" y="258" className={`${MUTED} font-mono text-[12px]`}>
-        fused by RANK, not by score — a cosine distance and a ts_rank have no exchange rate
+        {l(
+          "fused by RANK, not by score — a cosine distance and a ts_rank have no exchange rate",
+          "按名次融合，不按分数 — 余弦距离和 ts_rank 之间没有汇率",
+        )}
       </text>
     </Frame>
   );
@@ -333,20 +350,21 @@ export function ThreeLanes() {
 
 /** The model asks; your code acts; the result goes back in. Repeat until it writes prose. */
 export function ToolLoop() {
+  const l = useDeckLabel();
   return (
     <Frame viewBox="0 0 560 330">
       <rect x="150" y="6" width="260" height="66" rx="16" fill="url(#dg)" />
       <text x="280" y="34" textAnchor="middle" className="fill-white text-[16px] font-semibold">
-        model
+        {l("model", "模型")}
       </text>
       <text x="280" y="55" textAnchor="middle" className="fill-white/75 font-mono text-[12px]">
-        + tool declarations
+        {l("+ tool declarations", "+ 工具声明")}
       </text>
 
       {/* ask */}
       <Arrow d="M 410 42 L 470 42 L 470 150 L 410 150" />
       <text x="482" y="98" className={`${MUTED} text-[13px]`} textAnchor="start">
-        asks
+        {l("asks", "请求")}
       </text>
 
       <rect x="150" y="120" width="260" height="66" rx="16" className={BOX} strokeWidth={1.5} />
@@ -361,16 +379,16 @@ export function ToolLoop() {
 
       <rect x="70" y="234" width="420" height="66" rx="16" className={BOX} strokeWidth={1.5} />
       <text x="280" y="262" textAnchor="middle" className={`${LABEL} text-[15px] font-semibold`}>
-        your code runs it
+        {l("your code runs it", "你的代码去执行")}
       </text>
       <text x="280" y="283" textAnchor="middle" className={`${MUTED} font-mono text-[12px]`}>
-        HTTP · SQL · filesystem · anything
+        {l("HTTP · SQL · filesystem · anything", "HTTP · SQL · 文件系统 · 任何东西")}
       </text>
 
       {/* result back */}
       <Arrow d="M 70 267 L 34 267 L 34 42 L 142 42" />
       <text x="46" y="160" className={`${MUTED} text-[13px]`}>
-        result
+        {l("result", "结果")}
       </text>
     </Frame>
   );
@@ -380,6 +398,7 @@ export function ToolLoop() {
 
 /** One host, one domain: nginx in front, a disposable app container, a database that never stops. */
 export function Architecture() {
+  const l = useDeckLabel();
   return (
     <Frame viewBox="0 0 1000 300">
       <rect x="0" y="14" width="220" height="54" rx="13" className={BOX} strokeWidth={1.5} />
@@ -400,7 +419,7 @@ export function Architecture() {
         strokeDasharray="6 6"
       />
       <text x="22" y="142" className={`${MUTED} font-mono text-[12px] uppercase tracking-[0.14em]`}>
-        app container · disposable
+        {l("app container · disposable", "应用容器 · 可随时丢弃")}
       </text>
 
       <rect x="22" y="154" width="176" height="104" rx="14" className={BOX} strokeWidth={1.5} />
@@ -432,7 +451,7 @@ export function Architecture() {
 
       <Arrow d="M 454 180 L 700 180" />
       <text x="530" y="170" className={`${MUTED} font-mono text-[11px]`}>
-        :5432 · trust auth, never exposed
+        {l(":5432 · trust auth, never exposed", ":5432 · trust 认证，从不对外")}
       </text>
 
       <rect x="708" y="130" width="292" height="136" rx="20" fill="url(#dg)" />
@@ -440,10 +459,10 @@ export function Architecture() {
         Postgres 18 + pgvector
       </text>
       <text x="854" y="206" textAnchor="middle" className="fill-white/80 text-[13px]">
-        memories · files · config · secrets
+        {l("memories · files · config · secrets", "记忆 · 文件 · 配置 · 密钥")}
       </text>
       <text x="854" y="230" textAnchor="middle" className="fill-white/70 font-mono text-[12px]">
-        own container · never restarts
+        {l("own container · never restarts", "独立容器 · 从不重启")}
       </text>
     </Frame>
   );

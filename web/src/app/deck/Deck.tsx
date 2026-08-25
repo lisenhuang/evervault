@@ -3,7 +3,7 @@
 // The deck runtime: navigation, layout, the overview grid and the print sheet. All the words live
 // in slides.tsx; this file only decides which slide is showing and what shape it takes.
 //
-// TWO LAYOUTS, ONE SET OF SLIDES.
+// TWO LAYOUTS, AND TWO LANGUAGES OVER THE SAME STRUCTURE.
 //
 // * canvas — the slide is laid out against a constant 1280x720 box and the whole box is scaled with
 //   a CSS transform to fit the viewport. Because the fit is min(w, h), any landscape ratio works and
@@ -18,6 +18,9 @@
 // The threshold is deliberately expressed in terms of the resulting text size rather than a device
 // guess, so an odd viewport (a narrow desktop window, a split-screen tablet) is judged on whether
 // the canvas would still be legible in it.
+//
+// Language is a third axis over both layouts, and unlike theme it is deliberately NOT remembered:
+// see the `lang` state below for why.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -34,7 +37,9 @@ import {
   X,
 } from "lucide-react";
 import { useTheme, type ThemePreference } from "@/components/theme/ThemeProvider";
-import { SLIDES } from "./slides";
+import { SLIDES, type SlideDef } from "./slides";
+import { SLIDES_ZH } from "./slidesZh";
+import { DeckLangContext, type DeckLang } from "./lang";
 import { Kbd } from "./ui";
 
 /** The canvas every slide is laid out against. 16:9. */
@@ -65,6 +70,11 @@ function measure(): Layout {
 
 export default function Deck() {
   const [index, setIndex] = useState(0);
+  // Reading language. Held in state only: never a cookie, never localStorage, never the URL. The
+  // deck must open in English every single time, including after a refresh mid-rehearsal, because
+  // the English deck is the one the audience sees. Chinese is a comprehension aid you step into on
+  // purpose and lose the moment the page reloads — which is the desired behaviour, not a gap.
+  const [lang, setLang] = useState<DeckLang>("en");
   // Server render and first client render must agree, so start at the canvas default and measure
   // in an effect. The slide is invisible for one frame either way.
   const [layout, setLayout] = useState<Layout>({ mode: "canvas", scale: 1, thumb: 252 });
@@ -76,18 +86,25 @@ export default function Deck() {
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  const last = SLIDES.length - 1;
+  // Both decks carry the same ids in the same order (slidesZh.tsx asserts it in development), so
+  // switching language keeps you on the slide you were reading.
+  const slides: SlideDef[] = lang === "zh" ? SLIDES_ZH : SLIDES;
+  const count = slides.length;
+  const last = count - 1;
   const flow = layout.mode === "flow";
   const clamp = useCallback((n: number) => Math.max(0, Math.min(last, n)), [last]);
 
-  const go = useCallback((n: number) => {
-    setIndex((current) => {
-      const next = Math.max(0, Math.min(SLIDES.length - 1, n));
-      // replaceState, not push: a talk should not leave 22 entries in the back button.
-      if (next !== current) window.history.replaceState(null, "", `#${next + 1}`);
-      return next;
-    });
-  }, []);
+  const go = useCallback(
+    (n: number) => {
+      setIndex((current) => {
+        const next = Math.max(0, Math.min(count - 1, n));
+        // replaceState, not push: a talk should not leave 25 entries in the back button.
+        if (next !== current) window.history.replaceState(null, "", `#${next + 1}`);
+        return next;
+      });
+    },
+    [count],
+  );
 
   /* --------------------------------------------------- measure the viewport */
 
@@ -151,7 +168,7 @@ export default function Deck() {
 
       const step = (d: number) =>
         setIndex((i) => {
-          const n = Math.max(0, Math.min(SLIDES.length - 1, i + d));
+          const n = Math.max(0, Math.min(count - 1, i + d));
           if (n !== i) window.history.replaceState(null, "", `#${n + 1}`);
           return n;
         });
@@ -174,12 +191,12 @@ export default function Deck() {
         go(0);
       } else if (k === "End") {
         e.preventDefault();
-        go(SLIDES.length - 1);
+        go(count - 1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overview, help, go, flow]);
+  }, [overview, help, go, flow, count]);
 
   /* --------------------------------------------------------------- fullscreen */
 
@@ -252,6 +269,10 @@ export default function Deck() {
     >
       <DeckStyles />
 
+      {/* Everything that renders a slide sits inside the provider — the stage and the overview
+          thumbnails both contain diagrams that pick their labels from it. */}
+      <DeckLangContext.Provider value={lang}>
+
       {/* The page's single light source, same gradient as the marketing site. */}
       <div
         aria-hidden="true"
@@ -260,8 +281,11 @@ export default function Deck() {
 
       {/* ---------------------------------------------------------- the stage */}
       {flow ? (
-        <div className="deck-flow relative w-full">
-          {SLIDES.map((slide, i) => (
+        <div
+          className={`deck-flow relative w-full ${lang === "zh" ? "deck-zh" : ""}`}
+          lang={lang === "zh" ? "zh-Hans" : "en"}
+        >
+          {slides.map((slide, i) => (
             <div
               key={slide.id}
               id={`slide-${i + 1}`}
@@ -279,10 +303,11 @@ export default function Deck() {
           }}
         >
           <div
-            className="deck-stage relative"
+            className={`deck-stage relative ${lang === "zh" ? "deck-zh" : ""}`}
+            lang={lang === "zh" ? "zh-Hans" : "en"}
             style={{ width: W, height: H, transform: `scale(${layout.scale})` }}
           >
-            {SLIDES.map((slide, i) => (
+            {slides.map((slide, i) => (
               <div
                 key={slide.id}
                 id={`slide-${i + 1}`}
@@ -321,6 +346,7 @@ export default function Deck() {
           className={`pointer-events-auto absolute right-3 top-3 flex items-center gap-1 ${pill}`}
           onClick={(e) => e.stopPropagation()}
         >
+          <LangButton lang={lang} onToggle={() => setLang((v) => (v === "en" ? "zh" : "en"))} />
           <ThemeButton />
           <IconButton label="Overview (O)" onClick={() => setOverview(true)}>
             <Grid2x2 size={16} />
@@ -344,7 +370,7 @@ export default function Deck() {
             ?
           </button>
           <span className="mr-1 font-mono text-[12px] tabular-nums text-black/45 dark:text-white/45">
-            {index + 1} / {SLIDES.length}
+            {index + 1} / {count}
           </span>
           <IconButton label="Previous" onClick={() => go(index - 1)} disabled={index === 0}>
             <ChevronLeft size={16} />
@@ -358,7 +384,7 @@ export default function Deck() {
         <div className="absolute bottom-0 left-0 h-[3px] w-full bg-black/[0.06] dark:bg-white/10">
           <div
             className="h-full bg-linear-to-r from-blue-500 to-violet-500 transition-[width] duration-200"
-            style={{ width: `${((index + 1) / SLIDES.length) * 100}%` }}
+            style={{ width: `${((index + 1) / count) * 100}%` }}
           />
         </div>
       </div>
@@ -366,6 +392,8 @@ export default function Deck() {
       {overview ? (
         <Overview
           index={index}
+          slides={slides}
+          lang={lang}
           thumb={layout.thumb}
           onPick={(i) => {
             go(i);
@@ -376,11 +404,40 @@ export default function Deck() {
       ) : null}
 
       {help ? <Help onClose={() => setHelp(false)} flow={flow} /> : null}
+      </DeckLangContext.Provider>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ pieces */
+
+/**
+ * EN / 中. A text toggle rather than an icon, because a globe says "there are languages" while
+ * these two say which one you are about to get. The inactive side stays visible and dimmed so the
+ * control reads as a two-position switch rather than a button whose effect you have to remember.
+ */
+function LangButton({ lang, onToggle }: { lang: DeckLang; onToggle: () => void }) {
+  const label = lang === "en" ? "Switch to Chinese" : "切换到英文";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={label}
+      aria-label={label}
+      className="flex items-center gap-1 rounded-md px-2 py-1.5 text-[12px] font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+    >
+      <span className={lang === "en" ? "text-black/80 dark:text-white/80" : "text-black/30 dark:text-white/30"}>
+        EN
+      </span>
+      <span className="text-black/20 dark:text-white/20" aria-hidden="true">
+        /
+      </span>
+      <span className={lang === "zh" ? "text-black/80 dark:text-white/80" : "text-black/30 dark:text-white/30"}>
+        中
+      </span>
+    </button>
+  );
+}
 
 const THEME_ICON = { light: Sun, dark: Moon, system: SunMoon } as const;
 const THEME_LABEL: Record<ThemePreference, string> = {
@@ -443,23 +500,32 @@ function IconButton({
  *  It lives outside `.deck-flow`, so the thumbnails keep the canvas type scale on every device. */
 function Overview({
   index,
+  slides,
+  lang,
   thumb,
   onPick,
   onClose,
 }: {
   index: number;
+  slides: SlideDef[];
+  lang: DeckLang;
   thumb: number;
   onPick: (i: number) => void;
   onClose: () => void;
 }) {
   const t = thumb / W;
   return (
-    <div className="deck-chrome fixed inset-0 z-40 overflow-y-auto bg-white/85 backdrop-blur-md dark:bg-black/85">
+    <div
+      className={`deck-chrome fixed inset-0 z-40 overflow-y-auto bg-white/85 backdrop-blur-md dark:bg-black/85 ${
+        lang === "zh" ? "deck-zh" : ""
+      }`}
+      lang={lang === "zh" ? "zh-Hans" : "en"}
+    >
       <div className="sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-white/70 px-6 py-3 backdrop-blur dark:border-white/10 dark:bg-black/50">
         <span className="text-sm font-semibold tracking-tight">
           All slides
           <span className="ml-2 font-mono text-xs font-normal text-black/40 dark:text-white/40">
-            {SLIDES.length}
+            {slides.length}
           </span>
         </span>
         <button
@@ -473,7 +539,7 @@ function Overview({
       </div>
 
       <div className="mx-auto grid max-w-6xl grid-cols-2 gap-5 px-6 py-6 sm:grid-cols-3 lg:grid-cols-4">
-        {SLIDES.map((slide, i) => (
+        {slides.map((slide, i) => (
           <button
             key={slide.id}
             type="button"
@@ -591,6 +657,27 @@ function DeckStyles() {
         --dk-row-v: 17px;
       }
 
+      /* Chinese needs its own steps. A CJK glyph is full-width, so the same pixel size reads
+         noticeably larger and denser than Latin at the same value — matching the English scale
+         literally would put 62px headlines over two lines on half the slides. Latin and digits
+         inside Chinese text still render in Geist; only the ideographs fall through to the system
+         face, which is what the stack below is for. */
+      .deck-zh {
+        --dk-h1: 52px;
+        --dk-h2: 37px;
+        --dk-lead: 21px;
+        --dk-body: 18px;
+        --dk-sm: 16px;
+        --dk-xs: 14px;
+        --dk-title: 20px;
+        --dk-stat: 34px;
+        --dk-mono: 12px;
+        --dk-row-k: 17px;
+        --dk-row-v: 16px;
+        font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans SC", "Source Han Sans SC", sans-serif;
+      }
+
       /* Screen only: a print job always renders the canvas scale, whatever device started it. */
       @media screen {
         .deck-flow {
@@ -634,6 +721,22 @@ function DeckStyles() {
         }
         .deck-flow .dk-figure > svg {
           min-width: var(--dk-fig-min, 560px);
+        }
+        /* flow AND Chinese: two single-class rules would tie, and whichever came last would win
+           outright — giving a phone the desktop Chinese scale, or Chinese the Latin phone scale.
+           The compound selector settles it. */
+        .deck-flow.deck-zh {
+          --dk-h1: 26px;
+          --dk-h2: 21px;
+          --dk-lead: 16px;
+          --dk-body: 15px;
+          --dk-sm: 14px;
+          --dk-xs: 12px;
+          --dk-title: 16px;
+          --dk-stat: 24px;
+          --dk-mono: 11px;
+          --dk-row-k: 15px;
+          --dk-row-v: 13px;
         }
         .deck-flow .dk-figure-hint {
           display: block;
