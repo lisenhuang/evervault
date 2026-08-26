@@ -1085,6 +1085,63 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
 
   /* ----------------------------------------------------------------- 26 */
   {
+    id: "fundamentals",
+    title: "What did not flatten",
+    node: (
+      <Slide>
+        <Eyebrow icon={Sparkles} tone="violet">
+          What I actually learned
+        </Eyebrow>
+        <div className="mt-[16px] max-w-[1020px]">
+          <H2>
+            AI flattened what you can look up. <Grad>Not what you can understand.</Grad>
+          </H2>
+        </div>
+        <div className="mt-[22px]">
+          <Cols ratio="1.02fr 0.98fr" gap={48} align="start">
+            <div className="space-y-[14px]">
+              <Numbered
+                items={[
+                  {
+                    title: "At school I did hard maths problems for fun,",
+                    body: "and only the hard ones. One of them I could not solve.",
+                  },
+                  {
+                    title: "A classmate solved it.",
+                    body: "The one who usually came to me for help. I asked him how. He pointed at a formula every one of us had been taught years earlier.",
+                  },
+                  {
+                    title: "The gap was not above what I knew. It was a hole underneath it,",
+                    body: "and I could not see it, because from the outside nobody could tell which of us actually understood the problem.",
+                  },
+                ]}
+              />
+            </div>
+            <div className="space-y-[14px]">
+              <Card title="Which is what generated code looks like">
+                It compiles either way. Whether anyone understands it is invisible until something
+                breaks, and at that moment the difference is the whole thing.
+              </Card>
+              <Bullets
+                items={[
+                  "Two years of building with these tools closed a real gap: syntax, APIs, boilerplate, the blank page. That part is genuinely levelled.",
+                  "The part that widened is knowing what to ask for, knowing when the answer is confidently wrong, and finding out why it broke at 2am.",
+                  "Every fix in this talk came from understanding the substrate, not from generating code. Autoplay rules. Echo physics. Where a recalled memory belongs in a prompt.",
+                ]}
+              />
+              <Note>
+                Which is also why every failure here writes its raw log to the database. You cannot
+                reason about a bug you cannot see.
+              </Note>
+            </div>
+          </Cols>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 27 */
+  {
     id: "close",
     title: "Close",
     node: (
