@@ -86,6 +86,12 @@ const ko: Messages = {
     openMenu: "메뉴 열기",
     menu: "메뉴",
     accountMenu: "계정 메뉴",
+    hide: "사이드바 숨기기",
+    show: "사이드바 표시",
+    resize: "사이드바 너비 조절",
+    resetWidth: "두 번 클릭하면 기본 너비로",
+    label: "사이드바",
+    widthValue: (px: number) => `사이드바 너비 ${px}픽셀`,
     deleteAccount: "계정 삭제",
   },
   history: {

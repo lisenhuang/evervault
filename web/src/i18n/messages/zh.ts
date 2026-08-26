@@ -87,6 +87,12 @@ const zh: Messages = {
     openMenu: "打开菜单",
     menu: "菜单",
     accountMenu: "账号菜单",
+    hide: "隐藏侧边栏",
+    show: "显示侧边栏",
+    resize: "调整侧边栏宽度",
+    resetWidth: "双击恢复默认宽度",
+    label: "侧边栏",
+    widthValue: (px: number) => `侧边栏宽度 ${px} 像素`,
     deleteAccount: "删除账号",
   },
   history: {

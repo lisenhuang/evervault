@@ -53,6 +53,12 @@ const STYLE_OWNER = "ev:styleCacheOwner";
 // monitor is absurd — so pushing it up to /api/chat/settings would let one tap on a phone blow up
 // the desktop transcript.
 const CHAT_SCALE = "ev:chatScale";
+// Desktop layout of the left rail: how wide it is, and whether it is currently hidden. Per-BROWSER
+// for the same reason as the text size above — how much of a window you can spare for a nav rail is a
+// property of the screen in front of you, not of the person. A 27" monitor and a 13" laptop signed into
+// one account want different answers, and syncing would make each one keep overwriting the other.
+const SIDEBAR_WIDTH = "ev:sidebarWidth";
+const SIDEBAR_HIDDEN = "ev:sidebarHidden";
 
 export const DEFAULT_TEXT_MODEL = "gemini-flash-lite-latest";
 export const DEFAULT_AUDIO_MODEL = "gemini-2.5-flash-preview-tts";
@@ -76,6 +82,56 @@ export type { LiveReasoning };
 /** The chat text-size ladder, smallest first. 10% steps: fine enough that no tap overshoots. */
 export const CHAT_SCALE_STEPS = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5] as const;
 export const DEFAULT_CHAT_SCALE = 1;
+
+/**
+ * Desktop rail width, in px. The default is the 240px (`w-60`) the rail shipped with, so an install
+ * that never touches the handle looks exactly as it did. The floor is the narrowest a conversation
+ * title stays readable at; the ceiling stops the rail from turning into the main event.
+ *
+ * The three are deliberately on ONE 16px grid — 208 = 240 − 2×16, 480 = 240 + 15×16 — because the
+ * arrow keys step by 16 from wherever they start. Off-grid bounds would put the default out of
+ * reach from the keyboard entirely (200 → 216 → 232 → 248 steps straight over 240), leaving
+ * double-click, a pointer-only gesture, as the only way back to it.
+ */
+export const DEFAULT_SIDEBAR_WIDTH = 240;
+export const SIDEBAR_MIN_WIDTH = 208;
+export const SIDEBAR_MAX_WIDTH = 480;
+
+/**
+ * The widest the rail may be **in the window it is currently in**: never more than half of it, so
+ * the transcript always keeps the larger share however small the window gets.
+ *
+ * This is a rendering cap, not a preference, and CSS enforces it on its own as
+ * `min(var(--rail), 50vw)` — which is what makes a window resized *after the fact* correct with no
+ * listener. The number is needed here only while the user is actively dragging or stepping, where
+ * the rail has to stop exactly under the cursor rather than under a value CSS is about to cap.
+ */
+export function maxSidebarWidth(): number {
+  const half = typeof window === "undefined" ? SIDEBAR_MAX_WIDTH : Math.round(window.innerWidth / 2);
+  // max() before min(): below ~416px half the window is under the floor, and a max that sits under
+  // the min would invert the clamp and pin the rail to the ceiling instead.
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, half));
+}
+
+/**
+ * Snap a candidate width into the range that may be *stored*.
+ *
+ * Deliberately NOT window-aware. The stored number is the user's preference, and the window they
+ * happen to have open today is not a reason to rewrite it: clamping on read would quietly turn the
+ * 480 chosen on a 27" monitor into 400 the first time the same profile opened an 800px window, and
+ * the next drag would then persist that 400 for good. CSS caps what is *drawn*; this caps only what
+ * is meaningful to remember.
+ */
+export function clampSidebarWidth(px: number): number {
+  const candidate = Number.isFinite(px) ? px : DEFAULT_SIDEBAR_WIDTH;
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(candidate)));
+}
+
+/** Snap a candidate width to what can actually be shown right now — the storage clamp, then the
+ *  window's half-width cap. Used while dragging and stepping, so the edge lands under the cursor. */
+export function clampSidebarWidthToViewport(px: number): number {
+  return Math.min(maxSidebarWidth(), clampSidebarWidth(px));
+}
 
 function get(key: string): string {
   if (typeof localStorage === "undefined") return "";
@@ -123,6 +179,20 @@ export const store = {
     return (CHAT_SCALE_STEPS as readonly number[]).includes(v) ? v : DEFAULT_CHAT_SCALE;
   },
   setChatScale: (v: number) => set(CHAT_SCALE, v === DEFAULT_CHAT_SCALE ? "" : String(v)),
+  // Desktop rail width. Clamped on read as well as write, but only against the fixed bounds — see
+  // clampSidebarWidth on why the current window deliberately does not get a say in what is stored.
+  // The `|| DEFAULT` is on the RAW string, deliberately: an absent key reads back as "", and
+  // Number("") is 0 — a perfectly finite number that would clamp to the minimum and silently
+  // narrow the rail of every install that has never touched the handle.
+  getSidebarWidth: () => clampSidebarWidth(Number(get(SIDEBAR_WIDTH) || DEFAULT_SIDEBAR_WIDTH)),
+  setSidebarWidth: (v: number) => {
+    const px = clampSidebarWidth(v);
+    set(SIDEBAR_WIDTH, px === DEFAULT_SIDEBAR_WIDTH ? "" : String(px));
+  },
+  // Whether the desktop rail is hidden. Only "1" is stored, so an untouched install (and a cleared
+  // key) reads back as "showing" — the pre-existing behaviour.
+  getSidebarHidden: () => get(SIDEBAR_HIDDEN) === "1",
+  setSidebarHidden: (v: boolean) => set(SIDEBAR_HIDDEN, v ? "1" : ""),
   getVoice: () => get(VOICE) || DEFAULT_VOICE,
   setVoice: (v: string) => set(VOICE, v),
   // Whether the user has explicitly picked a voice — so the admin's default only applies before they do.

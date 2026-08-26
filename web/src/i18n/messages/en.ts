@@ -86,6 +86,12 @@ const en = {
     openMenu: "Open menu",
     menu: "Menu",
     accountMenu: "Account menu",
+    hide: "Hide sidebar",
+    show: "Show sidebar",
+    resize: "Resize sidebar",
+    resetWidth: "Double-click to reset",
+    label: "Sidebar",
+    widthValue: (px: number) => `Sidebar width ${px} pixels`,
     deleteAccount: "Delete account",
   },
   history: {

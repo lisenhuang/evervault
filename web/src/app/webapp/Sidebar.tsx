@@ -1,14 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ChevronUp, LogOut, MessageCircle, Settings2, SquarePen } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronUp, LogOut, MessageCircle, PanelLeftClose, Settings2, SquarePen } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import ConversationList from "./ConversationList";
+import SidebarResizer from "./SidebarResizer";
+import { sidebarShortcutLabel } from "./lib/sidebarShortcut";
 import type { Conversation } from "./conversationsApi";
 import type { Me } from "./authApi";
 
 const ROW =
   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black/70 transition hover:bg-black/5 dark:text-white/70 dark:hover:bg-white/10";
+
+/** The 34px icon button used for the rail's own chrome — same hit box as the mobile header's hamburger.
+ *  Exported because the "show" half of the control lives in the content column (see Chat), and the two
+ *  halves of one toggle must not drift apart visually. */
+export const CHROME_BUTTON =
+  "shrink-0 rounded-md p-2 text-black/50 transition hover:bg-black/5 hover:text-black/80 dark:text-white/50 dark:hover:bg-white/10 dark:hover:text-white/80";
 
 /**
  * Left navigation for the chat app: New chat, the history of past conversations, and the account.
@@ -16,7 +24,14 @@ const ROW =
  * Renders the same body in two wrappers: a persistent rail on desktop (md+) and a slide-in overlay on
  * mobile (driven by `open`/`onClose`, mirroring the right-side drawers). Each action closes the mobile
  * overlay after running — a harmless no-op on the persistent desktop rail. Because `body` is mounted
- * twice, nothing in here may own state or fetch anything; the history list is handed in as props.
+ * twice, nothing in here may own state or fetch anything; the history list is handed in as props. The
+ * `desktop` flag it takes is what keeps the rail-only chrome (the hide button) out of the overlay copy,
+ * where it would be a second, unreachable duplicate in the accessibility tree.
+ *
+ * The desktop rail is **resizable and hideable**, and both live in `Chat` rather than here: the width
+ * is a persisted per-browser preference, and a rail that owned it would forget it on every remount.
+ * Width reaches the DOM as the `--rail` custom property so a drag can repaint it without going through
+ * React at all (see SidebarResizer), and everything derives from that one property.
  *
  * Preferences live behind the user's name rather than in the rail. Settings, language and theme are
  * things you set once, and the standing space belongs to the chats you actually move between.
@@ -36,6 +51,11 @@ export default function Sidebar({
   onSignOut,
   open,
   onClose,
+  width,
+  hidden,
+  onToggleHidden,
+  onWidthChange,
+  hideButtonRef,
 }: {
   user: Me;
   conversations: Conversation[];
@@ -51,6 +71,15 @@ export default function Sidebar({
   onSignOut: () => void;
   open: boolean;
   onClose: () => void;
+  /** Desktop rail width in px. Ignored below md, where the overlay has its own fixed width. */
+  width: number;
+  /** Desktop only: the rail is hidden, and the way back lives in the content column. */
+  hidden: boolean;
+  onToggleHidden: () => void;
+  /** Called once at the end of a resize gesture with the settled width. */
+  onWidthChange: (px: number) => void;
+  /** So `Chat` can hand focus to the hide button when the rail comes back. */
+  hideButtonRef?: React.Ref<HTMLButtonElement>;
 }) {
   const t = useT();
   const act = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
@@ -60,6 +89,9 @@ export default function Sidebar({
 
   // Account menu opened by clicking the user's name: settings, plus the two account actions.
   const [menuOpen, setMenuOpen] = useState(false);
+
+  /** The desktop rail element. The resizer writes `--rail` onto it during a drag. */
+  const railRef = useRef<HTMLElement | null>(null);
 
   // Close the menu on outside click or Escape, only while it's open. `body` is rendered in BOTH the
   // desktop rail and the mobile overlay, so we can't rely on a single ref (it would bind to only one
@@ -88,16 +120,32 @@ export default function Sidebar({
     onClose();
   };
 
-  const body = (
+  const body = (desktop: boolean) => (
     <div className="flex h-full flex-col gap-1 p-3">
       <div className="flex items-center gap-2 px-2 py-2">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-violet-500 shadow-sm">
           <MessageCircle size={18} className="text-white" aria-hidden="true" />
         </div>
         {/* Just the wordmark — which model powers the chat is intentionally not shown to end users. */}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="font-semibold leading-tight">EverVault</div>
         </div>
+        {/* Desktop only. On mobile the same job is done by tapping the backdrop or swiping away, and a
+            second control for it would just crowd the wordmark on the narrowest screens. */}
+        {desktop && (
+          <button
+            ref={hideButtonRef}
+            type="button"
+            onClick={onToggleHidden}
+            title={`${t.sidebar.hide} (${sidebarShortcutLabel()})`}
+            aria-label={t.sidebar.hide}
+            aria-expanded={!hidden}
+            aria-controls="ev-sidebar"
+            className={`-mr-1 ${CHROME_BUTTON}`}
+          >
+            <PanelLeftClose size={18} aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       <nav className="mt-2 flex flex-col gap-0.5">
@@ -181,9 +229,32 @@ export default function Sidebar({
 
   return (
     <>
-      {/* Desktop: persistent left rail */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-black/10 md:flex dark:border-white/10">
-        {body}
+      {/* Desktop: persistent left rail.
+          - Width is `min(var(--rail), 50vw)` so the transcript always keeps the larger half, whatever
+            the window does after the width was chosen — no resize listener needed.
+          - Hiding animates the width to 0 rather than unmounting, which is what makes it a slide
+            instead of a jump; `inert` is what keeps the still-mounted contents out of the tab order
+            and the accessibility tree while it is closed.
+          - The inner wrapper holds the rail's OWN width so the contents don't reflow — without it the
+            history titles would re-wrap frantically through the whole animation. */}
+      <aside
+        id="ev-sidebar"
+        ref={railRef}
+        // <aside> is an implicit `complementary` landmark. Unnamed, it is announced as a bare
+        // "complementary" in every landmark list, which is no use when there are two asides.
+        aria-label={t.sidebar.label}
+        inert={hidden}
+        style={{ "--rail": `${width}px`, width: hidden ? 0 : "min(var(--rail), 50vw)" } as React.CSSProperties}
+        className={`relative hidden shrink-0 flex-col overflow-hidden border-black/10 transition-[width,border-right-width] duration-200 ease-out md:flex motion-reduce:transition-none dark:border-white/10 ${
+          // The divider goes with it. A border is outside the width box, so keeping it would leave a
+          // 1px rule standing against the edge of the screen with nothing on either side of it.
+          hidden ? "border-r-0" : "border-r"
+        }`}
+      >
+        <div className="h-full shrink-0" style={{ width: "min(var(--rail), 50vw)" }}>
+          {body(true)}
+        </div>
+        <SidebarResizer railRef={railRef} width={width} onCommit={onWidthChange} onToggle={onToggleHidden} />
       </aside>
 
       {/* Mobile: slide-in overlay (mirrors the right-side drawers, left-anchored) */}
@@ -197,7 +268,7 @@ export default function Sidebar({
             open ? "translate-x-0" : "-translate-x-full"
           }`}
         >
-          {body}
+          {body(false)}
         </aside>
       </div>
     </>

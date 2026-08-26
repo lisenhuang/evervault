@@ -86,6 +86,12 @@ const ja: Messages = {
     openMenu: "メニューを開く",
     menu: "メニュー",
     accountMenu: "アカウントメニュー",
+    hide: "サイドバーを隠す",
+    show: "サイドバーを表示",
+    resize: "サイドバーの幅を調整",
+    resetWidth: "ダブルクリックで既定の幅に戻す",
+    label: "サイドバー",
+    widthValue: (px: number) => `サイドバーの幅 ${px} ピクセル`,
     deleteAccount: "アカウントを削除",
   },
   history: {

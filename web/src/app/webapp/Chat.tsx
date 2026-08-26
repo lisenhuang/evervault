@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Hand, Menu, MessageCircle, Sparkles } from "lucide-react";
-import Sidebar from "./Sidebar";
+import { Hand, Menu, MessageCircle, PanelLeftOpen, Sparkles, SquarePen } from "lucide-react";
+import Sidebar, { CHROME_BUTTON } from "./Sidebar";
 import CallBar from "./CallBar";
 import CallEndedModal from "./CallEndedModal";
 import Composer, { type VoiceState } from "./Composer";
@@ -21,6 +21,7 @@ import { LiveSession, type LiveState } from "./lib/liveSession";
 import { LiveVoiceMessage, renderConversation } from "./lib/liveVoiceMessage";
 import { toLiveAttachments } from "./lib/liveAttachments";
 import { setAudioSessionType } from "./lib/liveAudio";
+import { isSidebarShortcut, sidebarShortcutLabel } from "./lib/sidebarShortcut";
 import { buildRecentContext, retrieveContext } from "./lib/recall";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, NO_REPETITION, SAFETY_BOUNDS } from "./lib/persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./lib/recallTool";
@@ -296,6 +297,16 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
   const settingsActiveRef = useRef(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  // Desktop rail geometry: how wide it is, and whether it is hidden right now. Per-browser (see the
+  // store) and read in the initialiser for the same reason the text size above is — Chat only ever
+  // mounts client-side, so there is no server render to disagree with.
+  const [railWidth, setRailWidth] = useState(store.getSidebarWidth());
+  const [railHidden, setRailHidden] = useState(store.getSidebarHidden());
+  /** Readable from the ⌘B handler, which is bound once and would otherwise close over a stale flag. */
+  const railHiddenRef = useRef(railHidden);
+  /** The two halves of the show/hide control — one exists at a time, and focus moves between them. */
+  const showRailRef = useRef<HTMLButtonElement | null>(null);
+  const hideRailRef = useRef<HTMLButtonElement | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   /** The conversation the user is about to remove from their history, pending confirmation. */
@@ -765,6 +776,47 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
     store.setChatScale(v);
     setChatScale(v);
   }
+
+  /** Settle a resize. Called once, at the end of a gesture — the drag itself never touches state. */
+  const commitRailWidth = useCallback((px: number) => {
+    store.setSidebarWidth(px);
+    setRailWidth(px);
+  }, []);
+
+  /**
+   * Show or hide the desktop rail.
+   *
+   * The focus move is the whole reason this isn't a one-line setState: the control you just pressed is
+   * about to stop existing, and leaving a keyboard user standing on <body> would cost them their place.
+   * It is conditional on purpose — ⌘B pressed mid-sentence must leave the caret in the composer, so
+   * focus only follows when it was inside the rail (the hide button, or the resize handle's Enter) or
+   * on the show button that is being taken away.
+   */
+  const toggleRail = useCallback(() => {
+    const next = !railHiddenRef.current;
+    railHiddenRef.current = next;
+    store.setSidebarHidden(next);
+    setRailHidden(next);
+    const from = document.activeElement as HTMLElement | null;
+    const followFocus = from === showRailRef.current || !!from?.closest?.("#ev-sidebar");
+    // A frame later: the control being moved to is only in the document after this state has painted.
+    if (followFocus) requestAnimationFrame(() => (next ? showRailRef : hideRailRef).current?.focus());
+  }, []);
+
+  // ⌘B / Ctrl+B, the binding people already have from VS Code and Slack. Bound to the window rather than
+  // a surface so it works wherever you are — including while typing, which is exactly when the extra
+  // reading width is worth reaching for. Desktop only: below md the rail is a slide-in overlay with its
+  // own control, and there is no keyboard to press this on anyway.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isSidebarShortcut(e)) return;
+      if (!window.matchMedia("(min-width: 48rem)").matches) return;
+      e.preventDefault(); // Firefox opens its bookmarks sidebar on Ctrl+B otherwise
+      toggleRail();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleRail]);
 
   // Persist + apply a response-style choice. Each surface is independent (the model reads its own style
   // on the next turn / next call). We write the localStorage cache for an instant, offline-safe value,
@@ -2639,6 +2691,11 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
         onSignOut={() => setConfirmLogout(true)}
         open={navOpen}
         onClose={() => setNavOpen(false)}
+        width={railWidth}
+        hidden={railHidden}
+        onToggleHidden={toggleRail}
+        onWidthChange={commitRailWidth}
+        hideButtonRef={hideRailRef}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -2658,6 +2715,41 @@ export default function Chat({ user, onLogout }: { user: Me; onLogout: () => voi
           {/* Mobile-only: on a laptop the browser's own zoom is better and always at hand. */}
           <TextSizeControl value={chatScale} onChange={pickChatScale} />
         </header>
+
+        {/* The way back, desktop only and only while the rail is hidden.
+            It takes real height rather than floating over the transcript: at a window barely past the
+            md breakpoint the centred `max-w-3xl` column reaches nearly to the edge, and a floating
+            control would sit on top of the first message. 48px of chrome is the cheaper trade.
+            Below md this is display:none and the md:hidden header above owns the job instead — so a
+            desktop window narrowed past the breakpoint can never strand someone with a hidden rail
+            and no control left to bring it back. */}
+        {railHidden && (
+          <div className="hidden shrink-0 items-center gap-1 px-3 pt-3 md:flex">
+            <button
+              ref={showRailRef}
+              type="button"
+              onClick={toggleRail}
+              title={`${t.sidebar.show} (${sidebarShortcutLabel()})`}
+              aria-label={t.sidebar.show}
+              aria-expanded={false}
+              aria-controls="ev-sidebar"
+              className={CHROME_BUTTON}
+            >
+              <PanelLeftOpen size={18} aria-hidden="true" />
+            </button>
+            {/* New chat comes along for the ride. It is the one thing in the rail you reach for often
+                enough that having to open the rail first would make hiding it not worth doing. */}
+            <button
+              type="button"
+              onClick={startNewChat}
+              title={t.sidebar.newChat}
+              aria-label={t.sidebar.newChat}
+              className={CHROME_BUTTON}
+            >
+              <SquarePen size={18} aria-hidden="true" />
+            </button>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
