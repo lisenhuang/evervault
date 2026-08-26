@@ -61,7 +61,7 @@ export const SLIDES_ZH: SlideDef[] = [
           <H1>
             记住一切。
             <br />
-            <Grad>什么都不用带。</Grad>
+            <Grad>无需牵挂。</Grad>
           </H1>
         </div>
         <div className="mt-[26px] max-w-[820px]">
@@ -405,16 +405,122 @@ export const SLIDES_ZH: SlideDef[] = [
             </div>
           </Cols>
         </div>
-        <div className="mt-[22px]">
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 11 */
+  {
+    id: "architecture",
+    title: "架构",
+    node: (
+      <Slide>
+        <Eyebrow icon={Server}>它是怎么搭起来的</Eyebrow>
+        <div className="mt-[18px] max-w-[940px]">
+          <H2>
+            一台机器，一个域名，一句 <Mono>make up</Mono>。
+          </H2>
+        </div>
+        <div className="mt-[20px]">
+          <Architecture />
+        </div>
+        <div className="mt-[20px] grid grid-cols-3 gap-[18px]">
+          <Card title="全部跑在同一个端口">
+            nginx 和前端、后端一起跑在应用容器里，所以站点和 API 同源。将来的移动 App 只需要一个 base URL，也不用处理 CORS。
+          </Card>
+          <Card title="应用容器是可丢弃的">
+            一次部署把它整个换掉。数据库是另一个从不停止的容器，所以每次发版数据都还在。
+          </Card>
+          <Card title="没有第二个存储">
+            记忆、文件、配置、加密后的密钥，全都在同一个 Postgres 里。向量检索是一个扩展，不是一个服务。
+          </Card>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 12 */
+  {
+    id: "write-path",
+    title: "写入链路",
+    node: (
+      <Slide>
+        <Eyebrow icon={Server}>它是怎么搭起来的</Eyebrow>
+        <div className="mt-[18px] max-w-[940px]">
+          <H2>写入链路：一段对话怎么变成记忆。</H2>
+        </div>
+        <div className="mt-[26px]">
+          <Cols ratio="1.05fr 0.95fr" gap={48} align="start">
+            <Bullets
+              items={[
+                "抽取跑在浏览器里，用的是和聊天同一个模型。服务端既不做向量化，也不做抽取。",
+                "触发时机：一轮对话结束 20 秒后（且至少已有 4 轮是新的）、标签页隐藏时、挂断通话时、以及开一段新对话时。",
+                "窗口：最近 20 轮，通话之后是 60 轮，锚在一个游标上。调用失败会把游标回退，而不是把这个窗口丢掉。",
+                "一次调用同时返回事实、任务完成、状态变化、生活事件，以及一段简短的摘要。",
+              ]}
+            />
+            <div className="space-y-[18px]">
+              <Card title="覆盖靠的这个锚">
+                <Mono>UNIQUE (user, category, key)</Mono>。重新学到一个事实是覆盖它，而不是堆出一串各答对一半的近似重复。
+              </Card>
+              <Quote cite="web/src/app/webapp/lib/digest.ts">
+                周报摘要补上的是中间那一层：把一整周讲成一段简短的叙述，于是一个跨度很长的问题拿到的是故事，而不是碎片。
+              </Quote>
+            </div>
+          </Cols>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 13 */
+  {
+    id: "read-path",
+    title: "读取链路",
+    node: (
+      <Slide>
+        <Eyebrow icon={Server}>它是怎么搭起来的</Eyebrow>
+        <div className="mt-[18px] max-w-[1000px]">
+          <H2>读取链路，以及召回的记忆该放在哪里。</H2>
+        </div>
+        <div className="mt-[26px]">
+          <Cols ratio="1fr 1fr" gap={48} align="start">
+            <div className="space-y-[18px]">
+              <Bullets
+                items={[
+                  "每一轮都自动做：用最近 3 轮加当前这条消息拼出查询，跑混合检索，重排，留 6 条。",
+                  "另外，模型也可以自己调用 recall_memory，去做一次明确的查找或者按日期范围检索。",
+                ]}
+              />
+              <Card title="决定了这个设计的那个 bug">
+                召回的记忆原本是作为对话注入的。有个用户说把一个域名注册加进清单，结果收到的回复是「好的，联系锁匠修门锁这件事已经在你 8 月 13 日的清单上了」。他真正的请求原封不动，两天前的那个却被替他回答了。
+              </Card>
+            </div>
+            <div className="space-y-[18px]">
+              <Quote cite="web/src/app/webapp/lib/recall.ts">
+                召回的记忆是事实依据，不是对话。所以现在它去了其它事实依据待的地方。
+              </Quote>
+              <Rows
+                rows={[
+                  ["注入到", "系统指令里"],
+                  ["余弦阈值", "0.6，另加一个相对阈值"],
+                  ["时效衰减", "48 小时，之后 30 天半衰"],
+                  ["去重", "Jaccard 0.6"],
+                ]}
+              />
+            </div>
+          </Cols>
+        </div>
+        <div className="mt-[20px]">
           <Note>
-            这就引出了下一个问题：检索能找到一行，却写不了一行。那需要一双手。
+            以上这些都不需要模型开口。但它也可以主动要——查一次、按日期范围找、加一个任务、取一个文件——那需要一套完全不同的机制。
           </Note>
         </div>
       </Slide>
     ),
   },
 
-  /* ----------------------------------------------------------------- 11 */
+  /* ----------------------------------------------------------------- 14 */
   {
     id: "tool-calling",
     title: "工具调用",
@@ -456,7 +562,7 @@ export const SLIDES_ZH: SlideDef[] = [
     ),
   },
 
-  /* ----------------------------------------------------------------- 12 */
+  /* ----------------------------------------------------------------- 15 */
   {
     id: "tools",
     title: "12 个工具",
@@ -498,7 +604,7 @@ export const SLIDES_ZH: SlideDef[] = [
     ),
   },
 
-  /* ----------------------------------------------------------------- 13 */
+  /* ----------------------------------------------------------------- 16 */
   {
     id: "tool-traps",
     title: "四个坑",
@@ -533,112 +639,6 @@ export const SLIDES_ZH: SlideDef[] = [
             <Quote cite="web/src/app/webapp/lib/forgetTool.ts">
               在一个删除流程里，模型是最不可信的一方。一个由模型自己写下的「用户已确认」标记，是自我认证，一文不值。
             </Quote>
-          </Cols>
-        </div>
-      </Slide>
-    ),
-  },
-
-  /* ----------------------------------------------------------------- 14 */
-  {
-    id: "architecture",
-    title: "架构",
-    node: (
-      <Slide>
-        <Eyebrow icon={Server}>它是怎么搭起来的</Eyebrow>
-        <div className="mt-[18px] max-w-[940px]">
-          <H2>
-            一台机器，一个域名，一句 <Mono>make up</Mono>。
-          </H2>
-        </div>
-        <div className="mt-[20px]">
-          <Architecture />
-        </div>
-        <div className="mt-[20px] grid grid-cols-3 gap-[18px]">
-          <Card title="全部跑在同一个端口">
-            nginx 和前端、后端一起跑在应用容器里，所以站点和 API 同源。将来的移动 App 只需要一个 base URL，也不用处理 CORS。
-          </Card>
-          <Card title="应用容器是可丢弃的">
-            一次部署把它整个换掉。数据库是另一个从不停止的容器，所以每次发版数据都还在。
-          </Card>
-          <Card title="没有第二个存储">
-            记忆、文件、配置、加密后的密钥，全都在同一个 Postgres 里。向量检索是一个扩展，不是一个服务。
-          </Card>
-        </div>
-      </Slide>
-    ),
-  },
-
-  /* ----------------------------------------------------------------- 15 */
-  {
-    id: "write-path",
-    title: "写入链路",
-    node: (
-      <Slide>
-        <Eyebrow icon={Server}>它是怎么搭起来的</Eyebrow>
-        <div className="mt-[18px] max-w-[940px]">
-          <H2>写入链路：一段对话怎么变成记忆。</H2>
-        </div>
-        <div className="mt-[26px]">
-          <Cols ratio="1.05fr 0.95fr" gap={48} align="start">
-            <Bullets
-              items={[
-                "抽取跑在浏览器里，用的是和聊天同一个模型。服务端既不做向量化，也不做抽取。",
-                "触发时机：一轮对话结束 20 秒后（且至少已有 4 轮是新的）、标签页隐藏时、挂断通话时、以及开一段新对话时。",
-                "窗口：最近 20 轮，通话之后是 60 轮，锚在一个游标上。调用失败会把游标回退，而不是把这个窗口丢掉。",
-                "一次调用同时返回事实、任务完成、状态变化、生活事件，以及一段简短的摘要。",
-              ]}
-            />
-            <div className="space-y-[18px]">
-              <Card title="覆盖靠的这个锚">
-                <Mono>UNIQUE (user, category, key)</Mono>。重新学到一个事实是覆盖它，而不是堆出一串各答对一半的近似重复。
-              </Card>
-              <Quote cite="web/src/app/webapp/lib/digest.ts">
-                周报摘要补上的是中间那一层：把一整周讲成一段简短的叙述，于是一个跨度很长的问题拿到的是故事，而不是碎片。
-              </Quote>
-            </div>
-          </Cols>
-        </div>
-      </Slide>
-    ),
-  },
-
-  /* ----------------------------------------------------------------- 16 */
-  {
-    id: "read-path",
-    title: "读取链路",
-    node: (
-      <Slide>
-        <Eyebrow icon={Server}>它是怎么搭起来的</Eyebrow>
-        <div className="mt-[18px] max-w-[1000px]">
-          <H2>读取链路，以及召回的记忆该放在哪里。</H2>
-        </div>
-        <div className="mt-[26px]">
-          <Cols ratio="1fr 1fr" gap={48} align="start">
-            <div className="space-y-[18px]">
-              <Bullets
-                items={[
-                  "每一轮都自动做：用最近 3 轮加当前这条消息拼出查询，跑混合检索，重排，留 6 条。",
-                  "另外，模型也可以自己调用 recall_memory，去做一次明确的查找或者按日期范围检索。",
-                ]}
-              />
-              <Card title="决定了这个设计的那个 bug">
-                召回的记忆原本是作为对话注入的。有个用户说把一个域名注册加进清单，结果收到的回复是「好的，联系锁匠修门锁这件事已经在你 8 月 13 日的清单上了」。他真正的请求原封不动，两天前的那个却被替他回答了。
-              </Card>
-            </div>
-            <div className="space-y-[18px]">
-              <Quote cite="web/src/app/webapp/lib/recall.ts">
-                召回的记忆是事实依据，不是对话。所以现在它去了其它事实依据待的地方。
-              </Quote>
-              <Rows
-                rows={[
-                  ["注入到", "系统指令里"],
-                  ["余弦阈值", "0.6，另加一个相对阈值"],
-                  ["时效衰减", "48 小时，之后 30 天半衰"],
-                  ["去重", "Jaccard 0.6"],
-                ]}
-              />
-            </div>
           </Cols>
         </div>
       </Slide>
@@ -943,7 +943,7 @@ export const SLIDES_ZH: SlideDef[] = [
               />
             </div>
             <div className="space-y-[18px]">
-              <Card title="它会长成什么：一个 AI 版本的你">
+              <Card title="它会长成什么：一个「AI 版的你」">
                 当发生在你身上的事、以及你对这些事的看法都攒够了，这份记忆装下的就不只是你的事实，而是你怎么推理。于是家人想找你说话而你没有时间时，他们可以去跟那个已经听了你三年的版本聊。不是一个套着你名字的聊天机器人：是你的经历，和你得出结论的方式。
               </Card>
               <Note>这是我最没把握做对、也最想做的一部分。</Note>
@@ -1012,16 +1012,16 @@ export const SLIDES_ZH: SlideDef[] = [
               <Numbered
                 items={[
                   {
-                    title: "中学时我把做数学题当爱好，",
-                    body: "而且只挑最难的做。有一道，我没做出来。",
+                    title: "中学时我把做数学题当爱好，而且只挑最难的做。",
+                    body: "有一道，我没做出来。",
                   },
                   {
-                    title: "班上另一个同学做出来了。",
-                    body: "平时是他来问我题的那个人。我问他怎么解的，他指着一个公式——一个我们几年前就学过的公式。",
+                    title: "班上另一个同学做出来了——平时是他来问我题的那个人。",
+                    body: "我问他怎么解的。他指着一个公式，一个我们那阵子刚学不久的公式。我笔记上有它。他是真的读进去了。",
                   },
                   {
-                    title: "差距不在我会的那一层之上，而是在它下面的一个洞，",
-                    body: "而我看不见它。因为从外面看，没人分得清我们俩谁是真的懂了这道题。",
+                    title: "所以差距从来不在我有没有这个东西，而在我读得有多细，",
+                    body: "而且它是看不见的：手里有这个公式，和真的看懂这个公式，在题目用到它之前长得一模一样。",
                   },
                 ]}
               />
@@ -1066,7 +1066,7 @@ export const SLIDES_ZH: SlideDef[] = [
                 这场分享中间的几乎每一页，最初都只是某个星期二惹恼我的一件小事。这就是「自己做一个」的全部理由。
               </Body>
               <Chips
-                items={["克隆你自己的声音", "用电话提醒你", "按你的节奏找你聊", "一份留得住的记忆"]}
+                items={["以你自己的声音说话", "语音来电提醒", "按你的节奏交谈", "长久留存的记忆"]}
               />
             </div>
             <div className="rounded-[18px] border border-black/10 bg-white/70 p-[28px] text-center shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">

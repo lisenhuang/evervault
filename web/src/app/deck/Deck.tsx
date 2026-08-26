@@ -164,6 +164,11 @@ export default function Deck() {
         void toggleFullscreen();
         return;
       }
+      if (k === "l" || k === "L") {
+        e.preventDefault();
+        setLang((v) => (v === "en" ? "zh" : "en"));
+        return;
+      }
       if (overview || help) return;
 
       const step = (d: number) =>
@@ -475,7 +480,7 @@ export default function Deck() {
  * control reads as a two-position switch rather than a button whose effect you have to remember.
  */
 function LangButton({ lang, onToggle }: { lang: DeckLang; onToggle: () => void }) {
-  const label = lang === "en" ? "Switch to Chinese" : "切换到英文";
+  const label = lang === "en" ? "Switch to Chinese (L)" : "切换到英文（L）";
   return (
     <button
       type="button"
@@ -684,6 +689,7 @@ function Help({ onClose, flow }: { onClose: () => void; flow: boolean }) {
     ],
     [<Kbd key="o">O</Kbd>, "Overview of every slide"],
     [<Kbd key="f">F</Kbd>, "Fullscreen"],
+    [<Kbd key="lang">L</Kbd>, "English / 中文"],
     [<Kbd key="q">?</Kbd>, "This panel"],
   ];
   return (

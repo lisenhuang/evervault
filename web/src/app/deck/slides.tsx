@@ -437,17 +437,130 @@ export const SLIDES: SlideDef[] = [
             </div>
           </Cols>
         </div>
-        <div className="mt-[22px]">
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 11 */
+  {
+    id: "architecture",
+    title: "Architecture",
+    node: (
+      <Slide>
+        <Eyebrow icon={Server}>How it is built</Eyebrow>
+        <div className="mt-[18px] max-w-[940px]">
+          <H2>
+            One host, one domain, one <Mono>make up</Mono>.
+          </H2>
+        </div>
+        <div className="mt-[20px]">
+          <Architecture />
+        </div>
+        <div className="mt-[20px] grid grid-cols-3 gap-[18px]">
+          <Card title="Everything on one port">
+nginx runs inside the app container alongside the frontend and the backend, so the API and the site share an origin. The mobile app then has one base URL and no CORS.
+          </Card>
+          <Card title="The app container is disposable">
+            A deploy swaps it whole. The database is a separate container that never stops, so data
+            survives every release.
+          </Card>
+          <Card title="No second datastore">
+Memories, files, config and encrypted secrets all live in the same Postgres. Vector search is an extension, not a service.
+          </Card>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 12 */
+  {
+    id: "write-path",
+    title: "Write path",
+    node: (
+      <Slide>
+        <Eyebrow icon={Server}>How it is built</Eyebrow>
+        <div className="mt-[18px] max-w-[940px]">
+          <H2>The write path: how a conversation becomes memory.</H2>
+        </div>
+        <div className="mt-[26px]">
+          <Cols ratio="1.05fr 0.95fr" gap={48} align="start">
+            <Bullets
+              items={[
+                "Extraction runs in the browser, on the same model as the chat. The server never embeds and never extracts.",
+                "Triggers: twenty seconds after a turn once at least four are new, on tab hide, on hanging up a call, and on starting a new chat.",
+                "Window: the last twenty turns, sixty after a call, anchored on a cursor. A failed call rewinds the cursor rather than losing the window.",
+                "One call returns facts, task completions, state changes, life events and a short summary.",
+              ]}
+            />
+            <div className="space-y-[18px]">
+              <Card title="The supersede anchor">
+                <Mono>UNIQUE (user, category, key)</Mono>. Re-learning a fact overwrites it instead of
+                piling up near-duplicates that all half-answer the same question.
+              </Card>
+              <Quote cite="web/src/app/webapp/lib/digest.ts">
+                A digest is the missing middle: one short account of a whole week, so a long-horizon
+                question gets a story instead of fragments.
+              </Quote>
+            </div>
+          </Cols>
+        </div>
+      </Slide>
+    ),
+  },
+
+  /* ----------------------------------------------------------------- 13 */
+  {
+    id: "read-path",
+    title: "Read path",
+    node: (
+      <Slide>
+        <Eyebrow icon={Server}>How it is built</Eyebrow>
+        <div className="mt-[18px] max-w-[1000px]">
+          <H2>The read path, and where a recalled memory must go.</H2>
+        </div>
+        <div className="mt-[26px]">
+          <Cols ratio="1fr 1fr" gap={48} align="start">
+            <div className="space-y-[18px]">
+              <Bullets
+                items={[
+                  "Every turn, automatically: build a query from the last three turns plus the current message, run the hybrid search, re-rank, keep six.",
+                  "Separately, the model can call recall_memory itself for an explicit lookup or a date range.",
+                ]}
+              />
+              <Card title="The bug that decided the design">
+                Recall used to be injected as conversation. A user asked for a domain registration to
+                go on their list and got back “Done, texting the locksmith to repair your door lock is
+                on your list for August 13.” Their actual request untouched, and a two-day-old one
+                answered in its place.
+              </Card>
+            </div>
+            <div className="space-y-[18px]">
+              <Quote cite="web/src/app/webapp/lib/recall.ts">
+                Recalled memory is grounding, not conversation, so it now goes where the rest of the
+                grounding lives.
+              </Quote>
+              <Rows
+                rows={[
+                  ["injected into", "the system instruction"],
+                  ["cosine cutoff", "0.6, plus a relative cutoff"],
+                  ["recency fade", "48 hours, then a 30-day half-life"],
+                  ["dedupe", "Jaccard 0.6"],
+                ]}
+              />
+            </div>
+          </Cols>
+        </div>
+        <div className="mt-[20px]">
           <Note>
-            Which raises the next problem: retrieval can find a row, but it cannot write one. That
-            needs hands.
+            All of that happens without the model asking. It can also ask — for a lookup, a date
+            range, a task, a file — and that needs a different mechanism entirely.
           </Note>
         </div>
       </Slide>
     ),
   },
 
-  /* ----------------------------------------------------------------- 11 */
+  /* ----------------------------------------------------------------- 14 */
   {
     id: "tool-calling",
     title: "Tool calling",
@@ -492,7 +605,7 @@ export const SLIDES: SlideDef[] = [
     ),
   },
 
-  /* ----------------------------------------------------------------- 12 */
+  /* ----------------------------------------------------------------- 15 */
   {
     id: "tools",
     title: "The 12 tools",
@@ -539,7 +652,7 @@ export const SLIDES: SlideDef[] = [
     ),
   },
 
-  /* ----------------------------------------------------------------- 13 */
+  /* ----------------------------------------------------------------- 16 */
   {
     id: "tool-traps",
     title: "Four traps",
@@ -575,119 +688,6 @@ export const SLIDES: SlideDef[] = [
               The model is the least trustworthy party in a deletion flow. A model-authored “the user
               confirmed” flag would be self-certification and worth nothing.
             </Quote>
-          </Cols>
-        </div>
-      </Slide>
-    ),
-  },
-
-  /* ----------------------------------------------------------------- 14 */
-  {
-    id: "architecture",
-    title: "Architecture",
-    node: (
-      <Slide>
-        <Eyebrow icon={Server}>How it is built</Eyebrow>
-        <div className="mt-[18px] max-w-[940px]">
-          <H2>
-            One host, one domain, one <Mono>make up</Mono>.
-          </H2>
-        </div>
-        <div className="mt-[20px]">
-          <Architecture />
-        </div>
-        <div className="mt-[20px] grid grid-cols-3 gap-[18px]">
-          <Card title="Everything on one port">
-nginx runs inside the app container alongside the frontend and the backend, so the API and the site share an origin. The mobile app then has one base URL and no CORS.
-          </Card>
-          <Card title="The app container is disposable">
-            A deploy swaps it whole. The database is a separate container that never stops, so data
-            survives every release.
-          </Card>
-          <Card title="No second datastore">
-Memories, files, config and encrypted secrets all live in the same Postgres. Vector search is an extension, not a service.
-          </Card>
-        </div>
-      </Slide>
-    ),
-  },
-
-  /* ----------------------------------------------------------------- 15 */
-  {
-    id: "write-path",
-    title: "Write path",
-    node: (
-      <Slide>
-        <Eyebrow icon={Server}>How it is built</Eyebrow>
-        <div className="mt-[18px] max-w-[940px]">
-          <H2>The write path: how a conversation becomes memory.</H2>
-        </div>
-        <div className="mt-[26px]">
-          <Cols ratio="1.05fr 0.95fr" gap={48} align="start">
-            <Bullets
-              items={[
-                "Extraction runs in the browser, on the same model as the chat. The server never embeds and never extracts.",
-                "Triggers: twenty seconds after a turn once at least four are new, on tab hide, on hanging up a call, and on starting a new chat.",
-                "Window: the last twenty turns, sixty after a call, anchored on a cursor. A failed call rewinds the cursor rather than losing the window.",
-                "One call returns facts, task completions, state changes, life events and a short summary.",
-              ]}
-            />
-            <div className="space-y-[18px]">
-              <Card title="The supersede anchor">
-                <Mono>UNIQUE (user, category, key)</Mono>. Re-learning a fact overwrites it instead of
-                piling up near-duplicates that all half-answer the same question.
-              </Card>
-              <Quote cite="web/src/app/webapp/lib/digest.ts">
-                A digest is the missing middle: one short account of a whole week, so a long-horizon
-                question gets a story instead of fragments.
-              </Quote>
-            </div>
-          </Cols>
-        </div>
-      </Slide>
-    ),
-  },
-
-  /* ----------------------------------------------------------------- 16 */
-  {
-    id: "read-path",
-    title: "Read path",
-    node: (
-      <Slide>
-        <Eyebrow icon={Server}>How it is built</Eyebrow>
-        <div className="mt-[18px] max-w-[1000px]">
-          <H2>The read path, and where a recalled memory must go.</H2>
-        </div>
-        <div className="mt-[26px]">
-          <Cols ratio="1fr 1fr" gap={48} align="start">
-            <div className="space-y-[18px]">
-              <Bullets
-                items={[
-                  "Every turn, automatically: build a query from the last three turns plus the current message, run the hybrid search, re-rank, keep six.",
-                  "Separately, the model can call recall_memory itself for an explicit lookup or a date range.",
-                ]}
-              />
-              <Card title="The bug that decided the design">
-                Recall used to be injected as conversation. A user asked for a domain registration to
-                go on their list and got back “Done, texting the locksmith to repair your door lock is
-                on your list for August 13.” Their actual request untouched, and a two-day-old one
-                answered in its place.
-              </Card>
-            </div>
-            <div className="space-y-[18px]">
-              <Quote cite="web/src/app/webapp/lib/recall.ts">
-                Recalled memory is grounding, not conversation, so it now goes where the rest of the
-                grounding lives.
-              </Quote>
-              <Rows
-                rows={[
-                  ["injected into", "the system instruction"],
-                  ["cosine cutoff", "0.6, plus a relative cutoff"],
-                  ["recency fade", "48 hours, then a 30-day half-life"],
-                  ["dedupe", "Jaccard 0.6"],
-                ]}
-              />
-            </div>
           </Cols>
         </div>
       </Slide>
@@ -1103,16 +1103,16 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
               <Numbered
                 items={[
                   {
-                    title: "At school I did hard maths problems for fun,",
-                    body: "and only the hard ones. One of them I could not solve.",
+                    title: "At school I did maths for fun, and only the hard problems.",
+                    body: "One of them beat me.",
                   },
                   {
-                    title: "A classmate solved it.",
-                    body: "The one who usually came to me for help. I asked him how. He pointed at a formula every one of us had been taught years earlier.",
+                    title: "A classmate solved it — the one who usually came to me for help.",
+                    body: "I asked him how. He pointed at a formula we had both been taught that same term. I had it in my notes. He had actually read it.",
                   },
                   {
-                    title: "The gap was not above what I knew. It was a hole underneath it,",
-                    body: "and I could not see it, because from the outside nobody could tell which of us actually understood the problem.",
+                    title: "So the gap was never in what I had access to. It was in how carefully I had read it,",
+                    body: "and it was invisible: holding the formula and understanding the formula look exactly alike, right up until a problem needs it.",
                   },
                 ]}
               />
@@ -1162,7 +1162,7 @@ A call listens continuously, so it takes in whatever the room is doing. Holding 
               </Body>
               <Chips
                 items={[
-                  "your own cloned voice",
+                  "speaks in your own voice",
                   "audio-call reminders",
                   "talk on your own schedule",
                   "a memory that lasts",
