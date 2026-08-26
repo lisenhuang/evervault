@@ -257,8 +257,15 @@ export default function Sidebar({
         <SidebarResizer railRef={railRef} width={width} onCommit={onWidthChange} onToggle={onToggleHidden} />
       </aside>
 
-      {/* Mobile: slide-in overlay (mirrors the right-side drawers, left-anchored) */}
-      <div className={`fixed inset-0 z-30 md:hidden ${open ? "" : "pointer-events-none"}`} aria-hidden={!open}>
+      {/* Mobile: slide-in overlay (mirrors the right-side drawers, left-anchored).
+          `inert` alongside aria-hidden, not instead of it: while closed the overlay is still mounted
+          and on screen (translated off), and pointer-events-none stops the mouse but NOT the Tab key
+          — so without this a keyboard user tabs into a drawer they cannot see. */}
+      <div
+        className={`fixed inset-0 z-30 md:hidden ${open ? "" : "pointer-events-none"}`}
+        aria-hidden={!open}
+        inert={!open}
+      >
         <div
           className={`absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity ${open ? "opacity-100" : "opacity-0"}`}
           onClick={onClose}
