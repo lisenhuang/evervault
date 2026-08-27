@@ -16,7 +16,16 @@ export type AiKeysDto = {
 };
 
 // Validity is checked on demand and shown only in the page — never persisted.
-export type KeyCheckResult = { id: number; keyHint: string; ok: boolean; message: string };
+// embeddingOk/embeddingMessage are set only for providers with a separate embedding capability
+// (Gemini probes the gemini-embedding-002 model); null for others.
+export type KeyCheckResult = {
+  id: number;
+  keyHint: string;
+  ok: boolean;
+  message: string;
+  embeddingOk?: boolean | null;
+  embeddingMessage?: string | null;
+};
 export type CheckKeysResult = { results: KeyCheckResult[] };
 
 export type ModelInfo = {

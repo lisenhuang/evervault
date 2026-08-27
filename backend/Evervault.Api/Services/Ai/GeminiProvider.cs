@@ -10,6 +10,11 @@ namespace Evervault.Api.Services.Ai;
 public class GeminiProvider : IAiProvider
 {
     private const string Base = "https://generativelanguage.googleapis.com";
+
+    /// <summary>Model used to probe embedding capability during a key check — the 2nd-gen Gemini embedding
+    /// model. A key that lists models but lacks embedding access will fail this probe.</summary>
+    private const string EmbeddingProbeModel = "gemini-embedding-002";
+
     private readonly IHttpClientFactory _http;
 
     public GeminiProvider(IHttpClientFactory http) => _http = http;
@@ -29,6 +34,25 @@ public class GeminiProvider : IAiProvider
         using var res = await client.SendAsync(Req(HttpMethod.Get, "/v1beta/models", rawKey), ct);
         var body = await res.Content.ReadAsStringAsync(ct);
         if (res.IsSuccessStatusCode) return (true, "Valid");
+        return (false, ExtractError(body, res.StatusCode));
+    }
+
+    /// <summary>Probe embedding capability by running a tiny embedContent request against the 2nd-gen
+    /// Gemini embedding model. Confirms the key not only authenticates but can actually embed.</summary>
+    public async Task<(bool Ok, string Message)?> ValidateEmbeddingAsync(string rawKey, CancellationToken ct)
+    {
+        var payload = new
+        {
+            model = $"models/{EmbeddingProbeModel}",
+            content = new { parts = new[] { new { text = "ping" } } },
+        };
+
+        var client = _http.CreateClient();
+        var req = Req(HttpMethod.Post, $"/v1beta/models/{EmbeddingProbeModel}:embedContent", rawKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var res = await client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (res.IsSuccessStatusCode) return (true, $"Embedding OK ({EmbeddingProbeModel})");
         return (false, ExtractError(body, res.StatusCode));
     }
 
