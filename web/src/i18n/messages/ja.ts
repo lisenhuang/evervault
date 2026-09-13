@@ -95,6 +95,13 @@ const ja: Messages = {
     deleteAccount: "アカウントを削除",
   },
   history: {
+    search: "チャットを検索",
+    searchHint: "タイトルとメッセージを検索",
+    clearSearch: "検索をクリア",
+    noResults: "一致するチャットはありません。",
+    searchError: "チャットを検索できませんでした。もう一度お試しください。",
+    searchRetry: "再検索",
+    searchMore: "さらに表示",
     pinned: "ピン留め",
     today: "今日",
     yesterday: "昨日",

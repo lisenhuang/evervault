@@ -96,6 +96,13 @@ const zh: Messages = {
     deleteAccount: "删除账号",
   },
   history: {
+    search: "搜索聊天",
+    searchHint: "搜索标题和消息内容",
+    clearSearch: "清除搜索",
+    noResults: "没有找到匹配的聊天。",
+    searchError: "无法搜索聊天，请重试。",
+    searchRetry: "重新搜索",
+    searchMore: "加载更多结果",
     pinned: "已置顶",
     today: "今天",
     yesterday: "昨天",

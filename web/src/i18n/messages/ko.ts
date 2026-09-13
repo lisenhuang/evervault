@@ -95,6 +95,13 @@ const ko: Messages = {
     deleteAccount: "계정 삭제",
   },
   history: {
+    search: "채팅 검색",
+    searchHint: "제목과 메시지 내용 검색",
+    clearSearch: "검색 지우기",
+    noResults: "일치하는 채팅이 없습니다.",
+    searchError: "채팅을 검색할 수 없습니다. 다시 시도해 주세요.",
+    searchRetry: "다시 검색",
+    searchMore: "결과 더 보기",
     pinned: "고정됨",
     today: "오늘",
     yesterday: "어제",

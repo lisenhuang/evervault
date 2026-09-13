@@ -38,6 +38,16 @@ export async function listConversations(opts?: { skip?: number; take?: number })
   return [];
 }
 
+/** Search errors must stay distinct from a successful search with no matches. */
+export async function searchConversations(
+  query: string, skip: number, take: number, signal: AbortSignal,
+): Promise<Conversation[]> {
+  const params = new URLSearchParams({ q: query, skip: String(skip), take: String(take) });
+  const res = await api(`/api/chat/conversations/search?${params}`, { signal });
+  if (!res.ok) throw new Error(`History search failed (${res.status})`);
+  return (await res.json()) as Conversation[];
+}
+
 /** Pin or unpin one conversation. Returns whether it stuck, so the caller can undo an optimistic flip. */
 export async function setConversationPinned(conversationId: string, pinned: boolean): Promise<boolean> {
   return patchConversation(conversationId, { pinned });

@@ -27,6 +27,11 @@ export default function ConversationList({
   conversations,
   activeId,
   loading,
+  searching = false,
+  searchError = false,
+  searchHasMore = false,
+  onSearchRetry,
+  onSearchMore,
   onOpen,
   onTogglePin,
   onRename,
@@ -37,6 +42,11 @@ export default function ConversationList({
   /** The conversation currently on screen, highlighted. Null while a brand-new chat is still empty. */
   activeId: string | null;
   loading: boolean;
+  searching?: boolean;
+  searchError?: boolean;
+  searchHasMore?: boolean;
+  onSearchRetry?: () => void;
+  onSearchMore?: () => void;
   onOpen: (conversationId: string) => void;
   onTogglePin: (conversationId: string, pinned: boolean) => void;
   /** Rename. An empty name means "forget it" — the row goes back to its opening words. */
@@ -209,10 +219,18 @@ export default function ConversationList({
   // and scrolls inside it rather than pushing them off the ends.
   return (
     <div className="-mx-1 mt-2 min-h-0 flex-1 overflow-y-auto px-1">
-      {conversations.length === 0 && (
-        <p className="px-3 py-2 text-xs text-black/40 dark:text-white/40">
-          {loading ? t.history.loading : t.history.empty}
+      {(loading || (conversations.length === 0 && !searchError)) && (
+        <p role="status" className="px-3 py-2 text-xs text-black/40 dark:text-white/40">
+          {loading ? t.history.loading : searching ? t.history.noResults : t.history.empty}
         </p>
+      )}
+      {searchError && (
+        <div role="status" className="px-3 py-2 text-xs text-black/60 dark:text-white/60">
+          <p>{t.history.searchError}</p>
+          <button type="button" onClick={onSearchRetry} className="mt-1 rounded py-1 text-blue-600 underline dark:text-blue-400">
+            {t.history.searchRetry}
+          </button>
+        </div>
       )}
 
       {groups.map((group) => (
@@ -315,6 +333,13 @@ export default function ConversationList({
           </ul>
         </section>
       ))}
+
+      {searchHasMore && (
+        <button type="button" onClick={onSearchMore} disabled={loading}
+          className="w-full rounded-lg px-3 py-2 text-left text-xs text-blue-600 hover:bg-black/5 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-white/10">
+          {t.history.searchMore}
+        </button>
+      )}
 
       {menu && (
         <ConversationMenu

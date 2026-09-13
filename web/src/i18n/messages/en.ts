@@ -95,6 +95,13 @@ const en = {
     deleteAccount: "Delete account",
   },
   history: {
+    search: "Search chats",
+    searchHint: "Search titles and messages",
+    clearSearch: "Clear search",
+    noResults: "No matching chats.",
+    searchError: "Couldn’t search your chats. Please try again.",
+    searchRetry: "Retry search",
+    searchMore: "Load more results",
     pinned: "Pinned",
     today: "Today",
     yesterday: "Yesterday",

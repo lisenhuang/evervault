@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, LogOut, MessageCircle, PanelLeftClose, Settings2, SquarePen } from "lucide-react";
+import { ChevronUp, LogOut, MessageCircle, PanelLeftClose, Search, Settings2, SquarePen, X } from "lucide-react";
 import { useT } from "@/i18n/LanguageProvider";
 import ConversationList from "./ConversationList";
 import SidebarResizer from "./SidebarResizer";
 import { sidebarShortcutLabel } from "./lib/sidebarShortcut";
 import type { Conversation } from "./conversationsApi";
 import type { Me } from "./authApi";
+import { useConversationSearch } from "./useConversationSearch";
 
 const ROW =
   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black/70 transition hover:bg-black/5 dark:text-white/70 dark:hover:bg-white/10";
@@ -24,7 +25,7 @@ export const CHROME_BUTTON =
  * Renders the same body in two wrappers: a persistent rail on desktop (md+) and a slide-in overlay on
  * mobile (driven by `open`/`onClose`, mirroring the right-side drawers). Each action closes the mobile
  * overlay after running — a harmless no-op on the persistent desktop rail. Because `body` is mounted
- * twice, nothing in here may own state or fetch anything; the history list is handed in as props. The
+ * twice, its children must not fetch history independently; search is owned once by Sidebar. The
  * `desktop` flag it takes is what keeps the rail-only chrome (the hide button) out of the overlay copy,
  * where it would be a second, unreachable duplicate in the accessibility tree.
  *
@@ -82,6 +83,7 @@ export default function Sidebar({
   hideButtonRef?: React.Ref<HTMLButtonElement>;
 }) {
   const t = useT();
+  const search = useConversationSearch(conversations);
   const act = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
     fn(...args);
     onClose();
@@ -155,10 +157,44 @@ export default function Sidebar({
         </button>
       </nav>
 
+      <div role="search" aria-label={t.history.search} className="mx-1 mt-2">
+        <div className="flex items-center gap-2 rounded-lg border border-black/10 px-2.5 focus-within:border-blue-500 dark:border-white/15 dark:focus-within:border-blue-400">
+          <Search size={16} className="shrink-0 text-black/40 dark:text-white/40" aria-hidden="true" />
+          <input
+            type="search"
+            value={search.input}
+            onChange={(event) => search.setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && search.input) {
+                event.preventDefault();
+                event.stopPropagation();
+                search.setInput("");
+              }
+            }}
+            maxLength={200}
+            aria-label={t.history.search}
+            placeholder={t.history.search}
+            className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-black/40 dark:placeholder:text-white/40 [&::-webkit-search-cancel-button]:appearance-none"
+          />
+          {search.input && (
+            <button type="button" onClick={() => search.setInput("")} aria-label={t.history.clearSearch}
+              className="shrink-0 rounded p-1 text-black/50 hover:bg-black/5 dark:text-white/50 dark:hover:bg-white/10">
+              <X size={14} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        <p className="px-1 pt-1.5 text-[11px] text-black/40 dark:text-white/40">{t.history.searchHint}</p>
+      </div>
+
       <ConversationList
-        conversations={conversations}
+        conversations={search.items}
         activeId={activeConversationId}
-        loading={historyLoading}
+        loading={search.searching ? search.loading : historyLoading}
+        searching={search.searching}
+        searchError={search.error}
+        searchHasMore={search.hasMore}
+        onSearchRetry={search.retry}
+        onSearchMore={() => void search.loadMore()}
         // Opening a chat is navigation, so on mobile the overlay gets out of the way to reveal it.
         onOpen={act(onOpenConversation)}
         // Pinning and renaming are not — they act on the list you are looking at, so the overlay stays put.

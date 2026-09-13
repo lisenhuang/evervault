@@ -85,7 +85,20 @@ public class ChatConversationsController : ControllerBase
     /// <summary>The conversation list: pinned first, then most recently spoken in. Derived from the
     /// transcript on every call — there is no list to keep in sync, and nothing to backfill.</summary>
     [HttpGet]
-    public async Task<IReadOnlyList<ConversationDto>> List([FromQuery] int skip = 0, [FromQuery] int take = 50)
+    public Task<IReadOnlyList<ConversationDto>> List([FromQuery] int skip = 0, [FromQuery] int take = 50)
+        => ListCore(skip, take);
+
+    /// <summary>Search stored titles and every recorded message, including older conversations outside
+    /// the normal history window. Hidden conversations and other users' records are never returned.</summary>
+    [HttpGet("search")]
+    public Task<IReadOnlyList<ConversationDto>> Search(
+        [FromQuery, System.ComponentModel.DataAnnotations.StringLength(200)] string q,
+        [FromQuery] int skip = 0, [FromQuery] int take = 50)
+        => string.IsNullOrWhiteSpace(q)
+            ? Task.FromResult<IReadOnlyList<ConversationDto>>([])
+            : ListCore(skip, take, q.Trim());
+
+    private async Task<IReadOnlyList<ConversationDto>> ListCore(int skip, int take, string? query = null)
     {
         var uid = Uid;
         var t = Math.Clamp(take, 1, 200);
@@ -101,13 +114,34 @@ public class ChatConversationsController : ControllerBase
         // this is the list they asked not to see, not a deletion.
         var hidden = prefs.Where(p => p.Value.Hidden).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
 
-        var groups = await GroupConversations(uid).OrderByDescending(g => g.LastId).Take(MaxConversations).ToListAsync();
-
-        // A conversation pinned long ago can sit outside the most-recent window above, and dropping it
-        // would quietly undo the one thing a pin is for. Fetch any such stragglers by id.
         var pinnedIds = prefs.Where(p => p.Value.Pinned && !p.Value.Hidden).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
-        pinnedIds.ExceptWith(groups.Select(g => g.ConversationId));
-        if (pinnedIds.Count > 0) groups.AddRange(await GroupConversations(uid, pinnedIds.ToList()).ToListAsync());
+        List<ConversationGroup> groups;
+        if (query is not null)
+        {
+            // Treat %, _ and the escape character literally, as typed into the search field.
+            var pattern = "%" + query.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            var matchingIds = _db.ChatTranscripts.Where(m => m.EndUserId == uid
+                    && EF.Functions.ILike(m.Content, pattern, "\\"))
+                .Select(m => m.ConversationId)
+                .Union(_db.ChatConversations.Where(c => c.EndUserId == uid && c.Title != null
+                    && EF.Functions.ILike(c.Title, pattern, "\\")).Select(c => c.ConversationId));
+            // Match and exclude hidden chats BEFORE pagination. Never apply the recent-history cap
+            // to search, and aggregate all messages so matching a single turn keeps the full count.
+            groups = await GroupConversations(uid, matching: matchingIds)
+                .Where(g => !hidden.Contains(g.ConversationId))
+                .OrderByDescending(g => pinnedIds.Contains(g.ConversationId))
+                .ThenByDescending(g => g.LastId)
+                .Skip(s).Take(t).ToListAsync(HttpContext.RequestAborted);
+        }
+        else
+        {
+            groups = await GroupConversations(uid).OrderByDescending(g => g.LastId).Take(MaxConversations).ToListAsync();
+
+            // A conversation pinned long ago can sit outside the most-recent window above, and dropping it
+            // would quietly undo the one thing a pin is for. Fetch any such stragglers by id.
+            pinnedIds.ExceptWith(groups.Select(g => g.ConversationId));
+            if (pinnedIds.Count > 0) groups.AddRange(await GroupConversations(uid, pinnedIds.ToList()).ToListAsync());
+        }
 
         // One row per conversation carries the timestamp and the title; read them in a single pass by id
         // rather than dragging every message's text through the grouping above.
@@ -142,7 +176,7 @@ public class ChatConversationsController : ControllerBase
             })
             .OrderByDescending(c => c.Pinned)
             .ThenByDescending(c => c.LastMessageAt)
-            .Skip(s)
+            .Skip(query is null ? s : 0)
             .Take(t)
             .ToList();
     }
@@ -214,12 +248,14 @@ public class ChatConversationsController : ControllerBase
     /// thing the user said in it (what the title comes from), and how many messages it holds. Every
     /// column here is served by IX_ChatTranscripts_EndUserId_ConversationId_Id, so this stays an index
     /// pass rather than a walk over the text of every message the user has ever sent.</summary>
-    private IQueryable<ConversationGroup> GroupConversations(int uid, IReadOnlyList<string>? only = null)
+    private IQueryable<ConversationGroup> GroupConversations(
+        int uid, IReadOnlyList<string>? only = null, IQueryable<string>? matching = null)
     {
         var rows = _db.ChatTranscripts.AsNoTracking().Where(m => m.EndUserId == uid);
         // Narrowing BEFORE the grouping, not after: a filter on the grouped projection becomes a HAVING
         // over every conversation the user has, where this stays an index range read of the few asked for.
         if (only is not null) rows = rows.Where(m => only.Contains(m.ConversationId));
+        if (matching is not null) rows = rows.Where(m => matching.Contains(m.ConversationId));
         return rows
             .GroupBy(m => m.ConversationId)
             // Member-init, not a constructor: EF translates a grouped aggregate only when the projection
