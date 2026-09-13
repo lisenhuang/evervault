@@ -110,5 +110,14 @@ public class VoiceSamplesController : ControllerBase
                 $"Storage error while preparing the '{voice}' sample.", ex.Message, Request.Headers.UserAgent.ToString());
             return StatusCode(502, new { error = "Storage error while preparing the voice sample.", referenceCode = code });
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // client navigated away / aborted the fetch — no response to send
+        }
+        catch (Exception ex) // last-resort: never let an unexpected error escape as a bodiless 500,
+        {                    // which the webapp can only show as the generic "Could not load" fallback.
+            _log.LogError(ex, "Voice sample {Voice}: unexpected error", voice);
+            return StatusCode(502, new { error = "Could not prepare the voice sample. Please try again." });
+        }
     }
 }
