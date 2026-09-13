@@ -16,8 +16,15 @@ public record AiKeysDto(IReadOnlyList<AiKeyDto> Gemini, IReadOnlyList<AiKeyDto> 
 public record AddKeysInput(string RawText);
 
 /// <summary>Transient result of validating a single stored key against its provider (not persisted).
-/// <c>Id</c> lets the UI map the result back to its key row.</summary>
-public record KeyCheckResult(int Id, string KeyHint, bool Ok, string Message);
+/// <c>Id</c> lets the UI map the result back to its key row. <c>EmbeddingOk</c>/<c>EmbeddingMessage</c> are
+/// populated only for providers that expose a separate embedding capability (Gemini) — null otherwise.</summary>
+public record KeyCheckResult(
+    int Id,
+    string KeyHint,
+    bool Ok,
+    string Message,
+    bool? EmbeddingOk = null,
+    string? EmbeddingMessage = null);
 
 public record CheckKeysResult(IReadOnlyList<KeyCheckResult> Results);
 

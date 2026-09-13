@@ -104,6 +104,12 @@ public interface IAiProvider
 {
     string Name { get; }
     Task<(bool Ok, string Message)> ValidateKeyAsync(string rawKey, CancellationToken ct);
+
+    /// <summary>Optionally verify the key can run an embedding request (i.e. the account has access to the
+    /// provider's embedding model). Returns null when the provider has no separate embedding capability to
+    /// probe — only Gemini implements this today. Read-only, like <see cref="ValidateKeyAsync"/>.</summary>
+    Task<(bool Ok, string Message)?> ValidateEmbeddingAsync(string rawKey, CancellationToken ct)
+        => Task.FromResult<(bool Ok, string Message)?>(null);
     Task<IReadOnlyList<AiModelInfo>> ListModelsAsync(string rawKey, CancellationToken ct);
     /// <summary>List models for a purpose: "chat" (generateContent) or "embedding" (embedContent).
     /// Defaults to the chat list for providers that don't distinguish.</summary>

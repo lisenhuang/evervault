@@ -105,8 +105,31 @@ public class AiKeyService : IAiKeyService
 
         try
         {
-            var (ok, message) = await _factory.Get(k.Provider).ValidateKeyAsync(raw, CancellationToken.None);
-            return new KeyCheckResult(k.Id, k.KeyHint, ok, ok ? "Valid" : message);
+            var provider = _factory.Get(k.Provider);
+            var (ok, message) = await provider.ValidateKeyAsync(raw, CancellationToken.None);
+
+            // Only probe embedding when the key itself is valid (a bad key would just fail again).
+            bool? embeddingOk = null;
+            string? embeddingMessage = null;
+            if (ok)
+            {
+                try
+                {
+                    var emb = await provider.ValidateEmbeddingAsync(raw, CancellationToken.None);
+                    if (emb is { } e)
+                    {
+                        embeddingOk = e.Ok;
+                        embeddingMessage = e.Message;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    embeddingOk = false;
+                    embeddingMessage = ex.Message;
+                }
+            }
+
+            return new KeyCheckResult(k.Id, k.KeyHint, ok, ok ? "Valid" : message, embeddingOk, embeddingMessage);
         }
         catch (Exception ex)
         {
