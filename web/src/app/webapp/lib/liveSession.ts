@@ -20,6 +20,7 @@ import {
 } from "./liveShared";
 import { type LiveReasoning, liveAnswersAsync } from "./liveThinking";
 import { type OutgoingLink } from "./linkTool";
+import { LiveTrace } from "./liveTrace";
 import { type Lang } from "@/i18n/config";
 
 export type LiveState = "connecting" | "listening" | "speaking" | "error" | "closed";
@@ -120,6 +121,10 @@ export class LiveSession {
   /** When the last turnComplete said the model is still working (see liveTurnStillWorking): it spoke a
    *  "let me check that" and the answer is still to come. Null once a turnComplete says it's done. */
   private stillWorkingSinceMs: number | null = null;
+  /** Diagnostics for tool-backed replies; see liveTrace.ts. */
+  private trace!: LiveTrace;
+  /** What the model has said in the reply the trace is following, for the report. */
+  private traceReplyText = "";
   /** Tap-to-interrupt: swallow the rest of the current turn's audio and transcript. */
   private discardTurnAudio = false;
   /**
@@ -220,6 +225,7 @@ export class LiveSession {
     this.conversationId = opts.conversationId;
     this.onTasksChanged = opts.onTasksChanged;
     this.onLink = opts.onLink;
+    this.trace = new LiveTrace("call", this.model, this.reasoning);
   }
 
   /** The model is working on an answer it hasn't spoken yet. Capped, so a follow-up that never comes
@@ -501,6 +507,8 @@ export class LiveSession {
    */
   private onSocketError(e: ErrorEvent) {
     const msg = e?.message || "";
+    this.trace.add(`socket error ${msg}`);
+    this.trace.problem(`socket error: ${msg || "unknown"}`);
     // Resumable: let the onclose that follows reconnect. On a quota/auth error, advance to the next key
     // first so the resume mints its token from a different key — that's what fails the call over.
     if (!this.stopped && !this.fatal && this.resumptionHandle && this.reconnectAttempts < MAX_RECONNECTS) {
@@ -522,6 +530,12 @@ export class LiveSession {
   private onSocketClose(e?: CloseEvent) {
     if (this.stopped || this.reconnecting || this.fatal) return;
     const reason = e?.reason || "";
+    // A close mid-reply is exactly what a tool response Google rejects looks like (1007 + a reason), and
+    // the resume below would otherwise hide it completely.
+    this.trace.add(`socket closed code=${e?.code ?? "?"} reason=${reason || "-"}`);
+    if (e?.code !== 1000) this.trace.problem(`socket closed ${e?.code ?? "?"}: ${reason || "no reason"}`);
+    this.trace.finish(this.traceReplyText, "socket closed");
+    this.traceReplyText = "";
     // Resume if we can. On a quota/auth close, advance to the next key first so the resume mints from a
     // different key (failover); a plain connection cycle keeps the same key so resumption stays in-project.
     if (this.resumptionHandle && this.reconnectAttempts < MAX_RECONNECTS) {
@@ -590,6 +604,7 @@ export class LiveSession {
     // A socket just came up healthy (initial connect or a resume): clear the failure counter so the
     // next connection-limit drop gets a fresh budget of resume attempts.
     if (m.setupComplete) {
+      this.trace.add("setupComplete");
       this.reconnectAttempts = 0;
       // A fresh socket just came up — treat that as activity so a slow connect/resume never counts
       // as idle time and hangs up the moment the user is finally live.
@@ -601,7 +616,14 @@ export class LiveSession {
     if (resume?.resumable && resume.newHandle) this.resumptionHandle = resume.newHandle;
     // Server is about to close the connection (its per-connection cap). No action needed — the onclose
     // that follows resumes from the stored handle; we just log how much runway it gave us.
-    if (m.goAway) console.info("[live] server goAway; will resume", m.goAway.timeLeft);
+    if (m.goAway) {
+      console.info("[live] server goAway; will resume", m.goAway.timeLeft);
+      this.trace.add(`goAway timeLeft=${m.goAway.timeLeft ?? "?"}`);
+    }
+    if (m.toolCallCancellation) {
+      this.trace.add(`toolCallCancellation ids=${(m.toolCallCancellation.ids ?? []).join(",")}`);
+      this.trace.problem("server cancelled a tool call");
+    }
 
     // The model asked to search memory, manage tasks or look up a file: run the tool(s) and send the
     // results back. Live always populates the call `id`, which sendToolResponse must echo so the model
@@ -612,6 +634,8 @@ export class LiveSession {
       // Bounded and error-proof: the model says nothing more until it has them, so a dispatch that threw
       // or hung used to leave the call silent for good after "let me check that".
       this.toolCallsPending += 1;
+      this.trace.toolCall(m.toolCall.functionCalls);
+      const startedMs = Date.now();
       try {
         const functionResponses = await dispatchLiveToolCallsSafely(
           m.toolCall.functionCalls,
@@ -619,9 +643,13 @@ export class LiveSession {
           this.onTasksChanged,
           this.onLink,
         );
+        for (const r of functionResponses) this.trace.toolResult(r.name, Date.now() - startedMs, r.response.output);
+        if (!this.session) this.trace.problem("no socket to send the tool response on");
         this.session?.sendToolResponse({ functionResponses });
-      } catch {
-        /* socket already down — the close handler resumes or ends the call */
+        this.trace.add(`toolResponse sent ids=${functionResponses.map((r) => r.id ?? "MISSING").join(",")}`);
+      } catch (e) {
+        // Socket already down — the close handler resumes or ends the call.
+        this.trace.problem(`sendToolResponse threw: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
         this.toolCallsPending -= 1;
         this.markVoiceActivity(); // the dispatch time was ours; the user's idle window starts now
@@ -631,6 +659,7 @@ export class LiveSession {
 
     const sc = m.serverContent;
     if (sc?.interrupted) {
+      this.trace.add("interrupted");
       this.player.clear(); // barge-in: drop whatever the model was saying
       this.modelTurnActive = false;
       this.discardTurnAudio = false;
@@ -641,6 +670,7 @@ export class LiveSession {
       // After a tap-to-interrupt, the server keeps streaming the rest of the turn (there's no
       // cancel message in the Live API) — swallow it so nothing plays or re-enters "speaking".
       if (data && !this.discardTurnAudio) {
+        this.trace.audio();
         this.player.enqueue(data);
         // The model is speaking again, so the gate re-engages: whatever the user barged in with has
         // been answered, and from here the mic can hear the speaker once more.
@@ -656,7 +686,12 @@ export class LiveSession {
     }
     // Also drop the discarded turn's transcript: the chat log (and the memories built from it)
     // should only contain speech the user actually heard, matching real barge-in semantics.
-    if (sc?.outputTranscription?.text && !this.discardTurnAudio) this.cb.onModelText(sc.outputTranscription.text);
+    if (sc?.outputTranscription?.text && !this.discardTurnAudio) {
+      this.trace.text(sc.outputTranscription.text);
+      this.traceReplyText += sc.outputTranscription.text;
+      this.cb.onModelText(sc.outputTranscription.text);
+    }
+    if (sc?.generationComplete) this.trace.add("generationComplete");
     if (sc?.turnComplete) {
       this.modelTurnActive = false;
       this.discardTurnAudio = false;
@@ -668,7 +703,12 @@ export class LiveSession {
       const stillWorking =
         liveTurnStillWorking(sc) || (this.toolCallsPending > 0 && liveAnswersAsync(this.model));
       this.stillWorkingSinceMs = stillWorking ? Date.now() : null;
-      if (!stillWorking) this.cb.onTurnComplete();
+      this.trace.turnComplete((sc as { interactionStatus?: string }).interactionStatus);
+      if (!stillWorking) {
+        this.trace.finish(this.traceReplyText, "turn done");
+        this.traceReplyText = "";
+        this.cb.onTurnComplete();
+      }
       if (!this.player.isPlaying) this.cb.onState("listening");
     }
   }
@@ -769,6 +809,8 @@ export class LiveSession {
   }
 
   async stop() {
+    // A hang-up right after "a system error occurred" is the case the trace exists for.
+    if (!this.stopped) this.trace.finish(this.traceReplyText, "call ended");
     this.stopped = true;
     this.stopIdleMonitor();
     this.mic.stop();

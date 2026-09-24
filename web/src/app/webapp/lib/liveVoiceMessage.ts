@@ -25,6 +25,7 @@ import {
 import { type LiveReasoning, liveAnswersAsync } from "./liveThinking";
 import { renderAttachments, renderQuotedReply, renderTypedMessage, type LiveAttachment } from "./liveAttachments";
 import { type OutgoingLink } from "./linkTool";
+import { LiveTrace } from "./liveTrace";
 import type { Content } from "./gemini";
 import type { Lang } from "@/i18n/config";
 
@@ -154,6 +155,8 @@ export class LiveVoiceMessage {
    *  not with a thinking level above minimal: there the filler's generationComplete can come several
    *  seconds before the tool call, and the tail would finalize the reply on the filler alone. */
   private generationTailSafe = true;
+  /** Diagnostics for tool-backed replies; see liveTrace.ts. */
+  private trace: LiveTrace;
 
   private settled = false;
   private resolveReply?: () => void;
@@ -164,6 +167,7 @@ export class LiveVoiceMessage {
   onPlaybackIdle?: () => void;
 
   constructor(private opts: LiveVoiceOpts) {
+    this.trace = new LiveTrace("voice", opts.model, opts.reasoning ?? "");
     // No loopback for a one-shot turn (the mic is closed while the reply plays, so there's no echo path):
     // route audio straight to the speaker. Without this it would play into a MediaStream and stay silent.
     this.player.useDirectOutput();
@@ -255,8 +259,17 @@ export class LiveVoiceMessage {
         callbacks: {
           onopen: () => {},
           onmessage: (m: LiveServerMessage) => void this.onMessage(m),
-          onerror: () => this.onSocketDown(),
-          onclose: () => this.onSocketDown(),
+          onerror: (e: ErrorEvent) => {
+            this.trace.add(`socket error ${e?.message ?? ""}`);
+            this.onSocketDown();
+          },
+          onclose: (e: CloseEvent) => {
+            this.trace.add(`socket closed code=${e?.code ?? "?"} reason=${e?.reason || "-"}`);
+            if (!this.replyComplete && e?.code !== 1000) {
+              this.trace.problem(`socket closed ${e?.code ?? "?"}: ${e?.reason || "no reason"}`);
+            }
+            this.onSocketDown();
+          },
         },
       });
       if (this.stopped) {
@@ -317,6 +330,7 @@ export class LiveVoiceMessage {
   /** The reply is done — resolve a pending awaitReply (or mark it done for one that hasn't started),
    *  then drop the socket: the reply audio is already scheduled in the player and plays on without it. */
   private completeReply() {
+    if (!this.replyComplete) this.trace.finish(this.modelText, "complete");
     this.replyComplete = true;
     if (!this.settled) {
       this.settled = true;
@@ -357,6 +371,8 @@ export class LiveVoiceMessage {
     if (this.hasUsableReply() && !this.awaitingPostToolContent) {
       this.completeReply();
     } else {
+      this.trace.problem("stalled waiting for the answer");
+      this.trace.finish(this.modelText, "timed out → TTS fallback");
       this.settled = true;
       this.rejectReply?.(new Error("live-timeout"));
     }
@@ -374,6 +390,7 @@ export class LiveVoiceMessage {
       if (this.generationDone && this.hasUsableReply()) {
         this.completeReply();
       } else {
+        this.trace.finish(this.modelText, "socket down → TTS fallback");
         this.settled = true;
         if (this.replyTimer) clearTimeout(this.replyTimer);
         this.rejectReply(new Error("live-unavailable"));
@@ -396,8 +413,15 @@ export class LiveVoiceMessage {
   private async onMessage(m: LiveServerMessage) {
     // Anything from the server proves the reply is alive — give the stall watchdog fresh rope.
     this.armReplyWatchdog();
+    if (m.setupComplete) this.trace.add("setupComplete");
+    if (m.toolCallCancellation) {
+      this.trace.add(`toolCallCancellation ids=${(m.toolCallCancellation.ids ?? []).join(",")}`);
+      this.trace.problem("server cancelled a tool call");
+    }
     if (m.toolCall?.functionCalls?.length) {
       const calls = m.toolCall.functionCalls;
+      this.trace.toolCall(calls);
+      const startedMs = Date.now();
       // The turn continues past this call, so a generationComplete latched for the PRE-tool segment
       // is stale: left set, the 2s tail would fire during the post-tool first-token wait and cut the
       // actual answer down to the pre-tool filler ("let me check that…"). Cleared here, again after
@@ -409,10 +433,14 @@ export class LiveVoiceMessage {
       // the turn would never complete, and the stall watchdog would kill a healthy reply.
       const responses = await dispatchLiveToolCallsSafely(
         calls, this.opts.conversationId, this.opts.onTasksChanged, this.opts.onLink);
+      for (const r of responses) this.trace.toolResult(r.name, Date.now() - startedMs, r.response.output);
       try {
+        if (!this.session) this.trace.problem("no socket to send the tool response on");
         this.session?.sendToolResponse({ functionResponses: responses });
-      } catch {
-        /* socket may already be down — onSocketDown handles the turn */
+        this.trace.add(`toolResponse sent ids=${responses.map((r) => r.id ?? "MISSING").join(",")}`);
+      } catch (e) {
+        // The socket may already be down; onSocketDown handles the turn.
+        this.trace.problem(`sendToolResponse threw: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
         this.toolCallsPending -= 1;
         this.generationDone = false; // a stale pre-tool generationComplete processed mid-dispatch must not shrink the post-tool window
@@ -425,6 +453,7 @@ export class LiveVoiceMessage {
     for (const p of sc?.modelTurn?.parts ?? []) {
       const data = p.inlineData?.data;
       if (data) {
+        this.trace.audio();
         this.generationDone = false; // new audio = generation is demonstrably NOT done — back to the full stall window
         this.awaitingPostToolContent = false; // the post-tool generation is underway
         this.player.enqueue(data); // stream the spoken reply as it arrives
@@ -436,6 +465,7 @@ export class LiveVoiceMessage {
       this.opts.onUserText?.(sc.inputTranscription.text);
     }
     if (sc?.outputTranscription?.text) {
+      this.trace.text(sc.outputTranscription.text);
       this.awaitingPostToolContent = false; // model content in any form counts
       this.modelText += sc.outputTranscription.text;
       this.opts.onModelText(sc.outputTranscription.text);
@@ -455,7 +485,9 @@ export class LiveVoiceMessage {
       this.generationDone = true;
       this.armReplyWatchdog();
     }
+    if (sc?.generationComplete) this.trace.add("generationComplete");
     if (sc?.turnComplete) {
+      this.trace.turnComplete((sc as { interactionStatus?: string }).interactionStatus);
       // An asynchronous model ends the "let me check that" turn while its tool call or reasoning is
       // still running, and speaks the answer as a later turn on this same socket. Closing here is what
       // left voice messages ending on the filler. Keep listening, with the filler marked as not the

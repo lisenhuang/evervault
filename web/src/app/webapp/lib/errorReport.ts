@@ -3,7 +3,7 @@
 // ones where the server is unreachable, so undeliverable reports queue in localStorage and re-flush
 // later (next report, connectivity return, next page load).
 import { api } from "../authApi";
-import type { FriendlyAiError } from "./aiError";
+import { newErrorCode, type FriendlyAiError } from "./aiError";
 
 type QueuedReport = {
   code: string;
@@ -108,6 +108,19 @@ export function reportAiError(err: FriendlyAiError, area: string): void {
     writeQueue(queue);
   }
   void flushErrorReports();
+}
+
+/**
+ * Queue + send a diagnostic that isn't an error shown to the user (there is no code on screen for it),
+ * so it still lands in /admin/errors. Returns the code it was filed under.
+ */
+export function reportClientIssue(area: string, message: string, detail: string): string {
+  const code = newErrorCode();
+  const queue = readQueue();
+  queue.push({ code, area, message: message.slice(0, 500), detail: detail.slice(0, 7500) });
+  writeQueue(queue);
+  void flushErrorReports();
+  return code;
 }
 
 // Re-flush when connectivity returns or on the next page load with a leftover backlog.
