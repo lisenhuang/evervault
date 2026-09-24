@@ -10,13 +10,19 @@
 // streams back the model's spoken reply + both transcripts. If anything about the Live path fails, the
 // caller still holds the recorded WAV and falls back to the classic TTS pipeline.
 
-import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
+import { GoogleGenAI, Modality, ThinkingLevel, type LiveServerMessage } from "@google/genai";
 import { api } from "../authApi";
 import { AudioPlayer, MicStreamer, isIOS, setAudioSessionType } from "./liveAudio";
 import { arrayBufferToBase64, encodeWav, mergeFloat32, voicedSeconds } from "./audio";
 import { fixSpokenBrandName } from "./brandName";
-import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls, liveThinkingConfig } from "./liveShared";
-import { type LiveReasoning } from "./liveThinking";
+import {
+  buildLiveSystemInstruction,
+  buildLiveToolDeclarations,
+  dispatchLiveToolCallsSafely,
+  liveThinkingConfig,
+  liveTurnStillWorking,
+} from "./liveShared";
+import { type LiveReasoning, liveAnswersAsync } from "./liveThinking";
 import { renderAttachments, renderQuotedReply, renderTypedMessage, type LiveAttachment } from "./liveAttachments";
 import { type OutgoingLink } from "./linkTool";
 import type { Content } from "./gemini";
@@ -94,9 +100,11 @@ const REPLY_STALL_MS = 15_000;
 // instead of holding the socket (and a pooled key/token slot) through the playback-paced wait for
 // turnComplete — which can be the entire remaining duration of the spoken reply.
 const GENERATION_TAIL_MS = 2_000;
-// A tool dispatch (our backend round-trips) must be bounded: while it runs the server is silently
-// waiting for the response, so an unbounded hang would leave the turn stuck streaming forever.
-const TOOL_DISPATCH_TIMEOUT_MS = 20_000;
+// The stall window while all we hold is a "let me check that" and the answer is still being worked
+// out: after our tool response, or after an asynchronous model's in-progress turnComplete. Longer than
+// REPLY_STALL_MS because this silence is the model thinking and running tools, which at a high thinking
+// level can take a while, and the filler on its own is not an answer worth keeping.
+const AWAITING_ANSWER_STALL_MS = 30_000;
 // A slow connect shouldn't buffer unbounded audio; ~30 s of 16 kHz chunks is far more than any message.
 const MAX_PENDING_CHUNKS = 400;
 
@@ -135,11 +143,17 @@ export class LiveVoiceMessage {
   /** generationComplete seen with no tool call in flight — the reply is fully generated; the watchdog
    *  drops to GENERATION_TAIL_MS so the turn ends as soon as the trailing deltas have drained. */
   private generationDone = false;
-  /** A tool response has been sent and the model hasn't produced any content since. While set, a
+  /** A tool response has been sent, or an asynchronous model ended a turn while still working (see
+   *  liveTurnStillWorking), and the model hasn't produced any content since. While set, a
    *  generationComplete is stale (it belonged to the PRE-tool segment — the real one follows the
    *  post-tool content), and a stall must reject rather than finalize: the only text on hand is the
    *  pre-tool filler ("let me check that…"), which must not be presented as the whole answer. */
   private awaitingPostToolContent = false;
+  /** Whether generationComplete can be trusted to mean the reply is finished, so the watchdog may drop
+   *  to GENERATION_TAIL_MS. Not on an asynchronous model, whose answer can follow as a later turn, and
+   *  not with a thinking level above minimal: there the filler's generationComplete can come several
+   *  seconds before the tool call, and the tail would finalize the reply on the filler alone. */
+  private generationTailSafe = true;
 
   private settled = false;
   private resolveReply?: () => void;
@@ -192,6 +206,9 @@ export class LiveVoiceMessage {
       if (this.stopped) return;
       const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
       const thinking = liveThinkingConfig(this.opts.reasoning, this.opts.model);
+      this.generationTailSafe =
+        !liveAnswersAsync(this.opts.model) &&
+        (!thinking?.thinkingLevel || thinking.thinkingLevel === ThinkingLevel.MINIMAL);
       this.session = await ai.live.connect({
         model: this.opts.model,
         config: {
@@ -314,7 +331,12 @@ export class LiveVoiceMessage {
   private armReplyWatchdog() {
     if (this.settled || !this.rejectReply) return;
     if (this.replyTimer) clearTimeout(this.replyTimer);
-    this.replyTimer = setTimeout(() => this.onReplyStalled(), this.generationDone ? GENERATION_TAIL_MS : REPLY_STALL_MS);
+    const ms = this.generationDone
+      ? GENERATION_TAIL_MS
+      : this.awaitingPostToolContent
+        ? AWAITING_ANSWER_STALL_MS
+        : REPLY_STALL_MS;
+    this.replyTimer = setTimeout(() => this.onReplyStalled(), ms);
   }
 
   /** The stream went quiet without the turn ending. With reply text already streamed, keep it — the
@@ -325,7 +347,7 @@ export class LiveVoiceMessage {
     if (this.settled) return;
     // A tool dispatch is still running — the silence is OUR backend's latency, not a server stall,
     // and finalizing now would drop the tool response and kill the post-tool answer. Wait another
-    // round; the dispatch itself is bounded (TOOL_DISPATCH_TIMEOUT_MS), so this cannot loop forever.
+    // round; the dispatch itself is bounded (LIVE_TOOL_DISPATCH_TIMEOUT_MS), so this cannot loop forever.
     if (this.toolCallsPending > 0) {
       this.armReplyWatchdog();
       return;
@@ -383,26 +405,10 @@ export class LiveVoiceMessage {
       // generationComplete can't shrink the post-tool window no matter where its frame landed.
       this.generationDone = false;
       this.toolCallsPending += 1;
-      const errorResponses = () =>
-        calls.map((c) => ({ id: c.id, name: c.name, response: { output: "The tool failed to run — answer without it." } }));
-      let responses: Awaited<ReturnType<typeof dispatchLiveToolCalls>>;
-      let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        // Bounded and error-proof: with no response the model would wait for the tool result forever,
-        // the turn would never complete, and the stall watchdog would kill a healthy reply.
-        const dispatched = dispatchLiveToolCalls(
-          calls, this.opts.conversationId, this.opts.onTasksChanged, this.opts.onLink);
-        dispatched.catch(() => {}); // a dispatch that loses the race must not become an unhandled rejection
-        responses = await Promise.race([
-          dispatched,
-          new Promise<never>((_, rej) => {
-            dispatchTimer = setTimeout(() => rej(new Error("tool-timeout")), TOOL_DISPATCH_TIMEOUT_MS);
-          }),
-        ]);
-      } catch {
-        responses = errorResponses();
-      }
-      if (dispatchTimer) clearTimeout(dispatchTimer);
+      // Bounded and error-proof: with no response the model would wait for the tool result forever,
+      // the turn would never complete, and the stall watchdog would kill a healthy reply.
+      const responses = await dispatchLiveToolCallsSafely(
+        calls, this.opts.conversationId, this.opts.onTasksChanged, this.opts.onLink);
       try {
         this.session?.sendToolResponse({ functionResponses: responses });
       } catch {
@@ -440,11 +446,30 @@ export class LiveVoiceMessage {
     // and can lag by the whole remaining duration of the clip. Not resolved immediately: an in-flight
     // delta finalized away would truncate the bubble text. Guarded on in-flight tool calls — a
     // mid-dispatch turn genuinely isn't done (the model continues after our tool response).
-    if (sc?.generationComplete && this.toolCallsPending === 0 && !this.awaitingPostToolContent) {
+    if (
+      sc?.generationComplete &&
+      this.generationTailSafe &&
+      this.toolCallsPending === 0 &&
+      !this.awaitingPostToolContent
+    ) {
       this.generationDone = true;
       this.armReplyWatchdog();
     }
     if (sc?.turnComplete) {
+      // An asynchronous model ends the "let me check that" turn while its tool call or reasoning is
+      // still running, and speaks the answer as a later turn on this same socket. Closing here is what
+      // left voice messages ending on the filler. Keep listening, with the filler marked as not the
+      // answer. A tool call still in our hands means the same on any model.
+      const stillWorking =
+        liveTurnStillWorking(sc) ||
+        this.toolCallsPending > 0 ||
+        (this.awaitingPostToolContent && liveAnswersAsync(this.opts.model));
+      if (stillWorking) {
+        this.generationDone = false;
+        this.awaitingPostToolContent = true;
+        this.armReplyWatchdog();
+        return;
+      }
       this.completeReply();
     }
   }

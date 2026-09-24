@@ -511,8 +511,9 @@ function WebappModelsCard() {
                 </>
               ) : (
                 <>
-                  Not available on this model — only Gemini 3.x Live models accept a thinking level. Any
-                  level saved here stays put and applies again if you switch back to a 3.x model.
+                  Not available on this model. Gemini 3.1 Live and 3.8 Live Extended Thinking accept a
+                  thinking level; plain 3.8 Live and older models reject one. Any level saved here stays
+                  put and applies again if you switch to a model that takes it.
                 </>
               )}
             </span>
@@ -577,8 +578,9 @@ function WebappModelsCard() {
                 </>
               ) : (
                 <>
-                  Not available on this model — only Gemini 3.x Live models accept a thinking level. Any
-                  level saved here stays put and applies again if you switch back to a 3.x model.
+                  Not available on this model. Gemini 3.1 Live and 3.8 Live Extended Thinking accept a
+                  thinking level; plain 3.8 Live and older models reject one. Any level saved here stays
+                  put and applies again if you switch to a model that takes it.
                 </>
               )}
             </span>

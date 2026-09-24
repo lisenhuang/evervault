@@ -33,9 +33,57 @@ export function normalizeLiveReasoning(value: string | null | undefined): LiveRe
  * of guessing wrong is asymmetric: a false negative just means the model uses its own default, which
  * is exactly today's behavior, while a false positive breaks every call on that model. So anything we
  * don't positively recognize — older families, and any Live model Google ships next — gets nothing.
+ * From 3.8 on, the exception is a model named "extended thinking", which exists to be given a level.
  *
  * Mirrors the family test the REST path already uses (GeminiProvider.ThinkingConfig, backend).
  */
 export function liveSupportsThinking(model: string): boolean {
-  return /gemini-3/i.test(model);
+  // The 3.8 generation split thinking out into its own model: 3.8 Live Extended Thinking takes a level,
+  // while plain 3.8 Live rejects any thinkingConfig at setup. So below 3.8 the whole 3.x family
+  // qualifies, and from 3.8 on only a model that says so in its name does.
+  const v = liveModelVersion(model);
+  if (v === null) return false;
+  if (v.major === 3 && v.minor < 8) return true;
+  return isExtendedThinking(model) && atLeast38(v);
+}
+
+/**
+ * Whether this Live model's setup accepts the MINIMAL level. Extended Thinking takes low/medium/high
+ * only and rejects MINIMAL, which would fail the whole session — so there "minimal" is sent as no
+ * level at all, which still leaves the model on its fastest default.
+ */
+export function liveAcceptsMinimalThinking(model: string): boolean {
+  return !isExtendedThinking(model);
+}
+
+/**
+ * Whether this Live model may keep working after it says turnComplete: running tool calls in the
+ * background and speaking again once they return. Gemini 3.8 Live made that the default (asynchronous,
+ * NON_BLOCKING function calls), and on 3.8 Live Extended Thinking it is the only mode. On these models a
+ * "let me check that" is its own complete turn, and the answer follows as a later one.
+ *
+ * Unlike the thinking gate, the unknown case is assumed to be TRUE. The costs run the other way here:
+ * treating a synchronous model as asynchronous only waits for turnComplete instead of finishing a
+ * moment earlier on generationComplete, while the reverse cuts every tool-backed answer down to the
+ * filler before it. Only a model we can date to before 3.8 is treated as synchronous.
+ */
+export function liveAnswersAsync(model: string): boolean {
+  const v = liveModelVersion(model);
+  return v === null || atLeast38(v);
+}
+
+function atLeast38(v: { major: number; minor: number }): boolean {
+  return v.major > 3 || (v.major === 3 && v.minor >= 8);
+}
+
+/** Loose on purpose ("…-extended-thinking", "…-thinking-preview"): either word marks the model that
+ *  exists to be given a thinking level. */
+function isExtendedThinking(model: string): boolean {
+  return /extended|thinking/i.test(model);
+}
+
+/** "gemini-3.8-live" → {3, 8}; "gemini-2.0-flash-live-001" → {2, 0}; anything else → null. */
+function liveModelVersion(model: string): { major: number; minor: number } | null {
+  const m = /gemini-(\d+)(?:\.(\d+))?/i.exec(model);
+  return m ? { major: Number(m[1]), minor: Number(m[2] ?? 0) } : null;
 }

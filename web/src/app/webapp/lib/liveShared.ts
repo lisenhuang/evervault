@@ -4,8 +4,8 @@
 // with the exact same persona, memory blocks, and tools as a call — the only difference between the two
 // surfaces is how audio flows (continuous duplex vs. a single push-to-talk turn).
 
-import { type FunctionCall, type ThinkingConfig, ThinkingLevel } from "@google/genai";
-import { type LiveReasoning, liveSupportsThinking } from "./liveThinking";
+import { type FunctionCall, type LiveServerContent, type ThinkingConfig, ThinkingLevel } from "@google/genai";
+import { type LiveReasoning, liveAcceptsMinimalThinking, liveSupportsThinking } from "./liveThinking";
 import { BRAND_NAME_HEARING } from "./brandName";
 import { ANSWER_FIRST, CAPABILITY_BOUNDS, CONFIDENTIALITY, NO_REPETITION, SAFETY_BOUNDS } from "./persona";
 import { MEMORY_PERSONA, RECALL_MEMORY_DECLARATION, runRecallTool } from "./recallTool";
@@ -53,6 +53,7 @@ export function liveThinkingConfig(
   model: string,
 ): ThinkingConfig | undefined {
   if (!reasoning || !liveSupportsThinking(model)) return undefined;
+  if (reasoning === "minimal" && !liveAcceptsMinimalThinking(model)) return undefined;
   const level = THINKING_LEVELS[reasoning];
   return level ? { thinkingLevel: level } : undefined;
 }
@@ -248,4 +249,57 @@ export async function dispatchLiveToolCalls(
     }),
   );
   return calls.map((c, i) => ({ id: c.id, name: c.name, response: { output: results[i] } }));
+}
+
+/** How long a tool dispatch (our backend round-trips) may take before the model is told it failed. */
+export const LIVE_TOOL_DISPATCH_TIMEOUT_MS = 20_000;
+
+type LiveToolResponse = Awaited<ReturnType<typeof dispatchLiveToolCalls>>[number];
+
+/**
+ * dispatchLiveToolCalls, but it always settles with one response per call. On a Live socket the model
+ * waits for our functionResponses before it says anything more, so a dispatch that throws or hangs
+ * leaves it silent for good right after its "let me check that". A failure or a timeout comes back as a
+ * response telling the model the tool failed, so it can at least say so.
+ */
+export async function dispatchLiveToolCallsSafely(
+  calls: FunctionCall[],
+  conversationId?: string,
+  onTasksChanged?: () => void,
+  onLink?: (link: OutgoingLink) => void,
+): Promise<LiveToolResponse[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const dispatched = dispatchLiveToolCalls(calls, conversationId, onTasksChanged, onLink);
+  dispatched.catch(() => {}); // a dispatch that loses the race must not become an unhandled rejection
+  try {
+    return await Promise.race([
+      dispatched,
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error("tool-timeout")), LIVE_TOOL_DISPATCH_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return calls.map((c) => ({
+      id: c.id,
+      name: c.name,
+      response: { output: "The tool failed to run — answer without it." },
+    }));
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Whether this turnComplete ends the model's work, or only the part it has spoken so far.
+ *
+ * Asynchronous Live models (Gemini 3.8 on) send turnComplete when they finish speaking — which can be a
+ * "let me check your schedule" — while a tool call or background reasoning is still running, and mark
+ * that with interactionStatus IN_PROGRESS. The real answer follows as a later turn, so treating such a
+ * turnComplete as the end drops it. Older models never send the field, so this is always false there.
+ * The field is newer than our pinned @google/genai types; the SDK passes Gemini API messages through
+ * verbatim, so it is read by name.
+ */
+export function liveTurnStillWorking(sc: LiveServerContent | undefined): boolean {
+  const status = (sc as { interactionStatus?: unknown } | undefined)?.interactionStatus;
+  return status === "IN_PROGRESS";
 }

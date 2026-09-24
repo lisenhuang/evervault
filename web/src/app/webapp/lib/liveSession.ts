@@ -11,8 +11,14 @@ import { AudioPlayer, MicStreamer, isIOS } from "./liveAudio";
 import { EchoLoopback } from "./echoLoopback";
 import { EchoDetector } from "./echoDetector";
 import { BargeInDetector } from "./bargeIn";
-import { buildLiveSystemInstruction, buildLiveToolDeclarations, dispatchLiveToolCalls, liveThinkingConfig } from "./liveShared";
-import { type LiveReasoning } from "./liveThinking";
+import {
+  buildLiveSystemInstruction,
+  buildLiveToolDeclarations,
+  dispatchLiveToolCallsSafely,
+  liveThinkingConfig,
+  liveTurnStillWorking,
+} from "./liveShared";
+import { type LiveReasoning, liveAnswersAsync } from "./liveThinking";
 import { type OutgoingLink } from "./linkTool";
 import { type Lang } from "@/i18n/config";
 
@@ -64,6 +70,9 @@ const IDLE_CHECK_MS = 1_000;
 // is no more troubled by than it is on any full-duplex platform.
 const PREROLL_CHUNKS = 6;
 
+// How long an asynchronous model's "still working" may hold off the idle hang-up (see modelStillWorking).
+const STILL_WORKING_MAX_MS = 60_000;
+
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export class LiveSession {
@@ -105,6 +114,12 @@ export class LiveSession {
   private streamEndSent = false;
   /** A model turn is streaming audio (set on its first chunk, cleared on turnComplete/interrupted). */
   private modelTurnActive = false;
+  /** Tool calls we are running for the model. It says nothing until their responses go back, so this
+   *  silence is ours, not the user's turn, and must not count toward the idle hang-up. */
+  private toolCallsPending = 0;
+  /** When the last turnComplete said the model is still working (see liveTurnStillWorking): it spoke a
+   *  "let me check that" and the answer is still to come. Null once a turnComplete says it's done. */
+  private stillWorkingSinceMs: number | null = null;
   /** Tap-to-interrupt: swallow the rest of the current turn's audio and transcript. */
   private discardTurnAudio = false;
   /**
@@ -205,6 +220,12 @@ export class LiveSession {
     this.conversationId = opts.conversationId;
     this.onTasksChanged = opts.onTasksChanged;
     this.onLink = opts.onLink;
+  }
+
+  /** The model is working on an answer it hasn't spoken yet. Capped, so a follow-up that never comes
+   *  can't hold off the idle hang-up for the rest of the call. */
+  private get modelStillWorking(): boolean {
+    return this.stillWorkingSinceMs !== null && Date.now() - this.stillWorkingSinceMs < STILL_WORKING_MAX_MS;
   }
 
   /** The idle window in ms, or 0 when the admin turned the auto-hang-up off. */
@@ -315,7 +336,9 @@ export class LiveSession {
       if (this.stopped || this.fatal) return;
       // While the model is talking or a socket swap is underway, it's not the user's silent turn —
       // keep the window fresh so those spans never count toward the timeout.
-      if (this.modelTurnActive || this.reconnecting) return this.markVoiceActivity();
+      if (this.modelTurnActive || this.reconnecting || this.toolCallsPending > 0 || this.modelStillWorking) {
+        return this.markVoiceActivity();
+      }
       if (Date.now() - this.lastVoiceActivityMs >= this.idleTimeoutMs) this.handleIdleTimeout();
     }, IDLE_CHECK_MS);
   }
@@ -586,14 +609,23 @@ export class LiveSession {
     // arm above becomes a memory search — so each tool family needs its explicit arm here.
     if (m.toolCall?.functionCalls?.length) {
       // Run the requested tool(s) and echo the responses (with matching call ids) back over the socket.
-      this.session?.sendToolResponse({
-        functionResponses: await dispatchLiveToolCalls(
+      // Bounded and error-proof: the model says nothing more until it has them, so a dispatch that threw
+      // or hung used to leave the call silent for good after "let me check that".
+      this.toolCallsPending += 1;
+      try {
+        const functionResponses = await dispatchLiveToolCallsSafely(
           m.toolCall.functionCalls,
           this.conversationId,
           this.onTasksChanged,
           this.onLink,
-        ),
-      });
+        );
+        this.session?.sendToolResponse({ functionResponses });
+      } catch {
+        /* socket already down — the close handler resumes or ends the call */
+      } finally {
+        this.toolCallsPending -= 1;
+        this.markVoiceActivity(); // the dispatch time was ours; the user's idle window starts now
+      }
       return;
     }
 
@@ -630,7 +662,13 @@ export class LiveSession {
       this.discardTurnAudio = false;
       // The turn just ended — the user's silent turn starts now, so run the full idle window from here.
       this.markVoiceActivity();
-      this.cb.onTurnComplete();
+      // An asynchronous model (Gemini 3.8 on) ends its "let me check that" turn here while a tool call
+      // or background reasoning is still running, and speaks the answer as a later turn. Hold the turn
+      // open so the filler and the answer land as one reply rather than two half-transcripts.
+      const stillWorking =
+        liveTurnStillWorking(sc) || (this.toolCallsPending > 0 && liveAnswersAsync(this.model));
+      this.stillWorkingSinceMs = stillWorking ? Date.now() : null;
+      if (!stillWorking) this.cb.onTurnComplete();
       if (!this.player.isPlaying) this.cb.onState("listening");
     }
   }
