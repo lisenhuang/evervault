@@ -23,8 +23,8 @@ public class OpenAiProvider : IAiProvider
     // The /models endpoint gates its catalog by ?client_version= (each model carries a minimal_client_version),
     // so an old version hides newer models (5.5, 5.6, …). We present the current Codex CLI version, fetched
     // live from the npm registry (cached) so new models appear without a code change; the constant is only a
-    // last-resort fallback if npm is unreachable.
-    private const string FallbackClientVersion = "0.144.1";
+    // last-resort fallback if npm is unreachable (GPT-6 needs >= 0.155, so keep this recent).
+    private const string FallbackClientVersion = "0.156.1";
     private const string NpmLatestUrl = "https://registry.npmjs.org/@openai/codex/latest";
     private static readonly TimeSpan VersionTtl = TimeSpan.FromHours(6);
 
@@ -39,11 +39,13 @@ public class OpenAiProvider : IAiProvider
 
     private readonly IHttpClientFactory _http;
     private readonly IOpenAiAccountId _accountId;
+    private readonly ILogger<OpenAiProvider> _log;
 
-    public OpenAiProvider(IHttpClientFactory http, IOpenAiAccountId accountId)
+    public OpenAiProvider(IHttpClientFactory http, IOpenAiAccountId accountId, ILogger<OpenAiProvider> log)
     {
         _http = http;
         _accountId = accountId;
+        _log = log;
     }
 
     public string Name => "openai";
@@ -144,8 +146,16 @@ public class OpenAiProvider : IAiProvider
                     return ver;
                 }
             }
+            _log.LogWarning("Codex version lookup on npm returned {Status}; using {Version}",
+                (int)res.StatusCode, cached?.Version ?? FallbackClientVersion);
         }
-        catch { /* npm unreachable — use the last-known or fallback below */ }
+        catch (Exception ex)
+        {
+            // npm unreachable — use the last-known or fallback below. Logged because an old version
+            // silently hides newer models from the /models catalog.
+            _log.LogWarning(ex, "Codex version lookup on npm failed; using {Version}",
+                cached?.Version ?? FallbackClientVersion);
+        }
         return cached?.Version ?? FallbackClientVersion;
     }
 
